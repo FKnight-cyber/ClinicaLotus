@@ -1,0 +1,105 @@
+# Clínica — MVP Anamnese
+
+Aplicação em monorepo com Next.js, Nest.js e PostgreSQL.
+
+## Rodando com Docker em ambiente dev
+
+Pré-requisitos:
+
+- Docker Desktop instalado e em execução.
+
+Subir frontend, API e banco:
+
+```bash
+docker compose up -d --build
+```
+
+O parâmetro `-d` deixa os containers rodando em background. Se usar `docker compose up --build` sem `-d`, o terminal fica anexado aos containers e `Ctrl+C` encerra os serviços.
+
+Para ver o processo executando no terminal sem abrir outro comando de logs, rode sem `-d`:
+
+```bash
+docker compose up --build
+```
+
+Nesse modo, mantenha o terminal aberto. Use `Ctrl+C` apenas quando quiser parar os serviços.
+
+URLs locais:
+
+- Web: http://localhost:3000/anamnese
+- API healthcheck: http://localhost:3333/api/health
+- PostgreSQL: `localhost:5432`
+
+Credenciais locais do banco:
+
+```txt
+POSTGRES_DB=clinica
+POSTGRES_USER=clinica
+POSTGRES_PASSWORD=clinica_dev
+DATABASE_URL=postgresql://clinica:clinica_dev@localhost:5432/clinica
+```
+
+O compose monta o diretório do projeto dentro dos containers, então alterações em `apps/web` e `apps/api` são refletidas em tempo real pelos servidores de desenvolvimento.
+
+Acompanhar logs dos serviços:
+
+```bash
+docker compose logs -f web api
+```
+
+Se uma alteração de frontend não aparecer por causa do watcher do Docker/Windows, reinicie somente o serviço web:
+
+```bash
+docker compose restart web
+```
+
+Isso é bem mais leve do que derrubar tudo e mantém o banco rodando.
+
+Ver containers em execução:
+
+```bash
+docker compose ps
+```
+
+Se alterar dependências em algum `package.json`, normalmente basta reiniciar os serviços para o `npm install` rodar dentro dos containers:
+
+```bash
+docker compose restart web api
+```
+
+Se ainda assim o volume de dependências ficar inconsistente, recrie os volumes:
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+Parar os containers:
+
+```bash
+docker compose down
+```
+
+Parar e remover também volumes locais, incluindo dados do PostgreSQL:
+
+```bash
+docker compose down -v
+```
+
+## Rodando sem Docker
+
+No Windows, use `npm.cmd` caso o PowerShell bloqueie scripts `.ps1`.
+
+```bash
+npm.cmd install
+npm.cmd run dev:web
+npm.cmd run dev:api
+```
+
+## Validações úteis
+
+```bash
+npm.cmd run typecheck
+npm.cmd run lint
+npm.cmd run build
+```

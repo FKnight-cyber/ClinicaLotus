@@ -1,0 +1,220 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum AnamnesisStatus {
+  DRAFT
+  FINALIZED
+  CANCELED
+}
+
+enum QuestionType {
+  TEXT
+  TEXTAREA
+  DATE
+  TIME
+  NUMBER
+  YES_NO
+  YES_NO_DETAILS
+  SINGLE_CHOICE
+  MULTI_CHOICE
+  TABLE
+}
+
+enum TableRowSource {
+  TEMPLATE
+  CUSTOM
+}
+
+model User {
+  id                 String            @id @default(uuid())
+  login              String            @unique
+  name               String
+  email              String?           @unique
+  passwordHash       String
+  status             UserStatus        @default(ACTIVE)
+  mustChangePassword Boolean           @default(false)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  groups             UserAccessGroup[]
+  createdAnamneses   AnamnesisRecord[] @relation("AnamnesisCreatedBy")
+  updatedAnamneses   AnamnesisRecord[] @relation("AnamnesisUpdatedBy")
+  auditLogs          AuditLog[]
+}
+
+model AccessGroup {
+  id          String                  @id @default(uuid())
+  name        String                  @unique
+  description String?
+  active      Boolean                 @default(true)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  users       UserAccessGroup[]
+  permissions AccessGroupPermission[]
+}
+
+model Permission {
+  id          String                  @id @default(uuid())
+  key         String                  @unique
+  module      String
+  action      String
+  description String?
+  active      Boolean                 @default(true)
+  groups      AccessGroupPermission[]
+}
+
+model UserAccessGroup {
+  userId        String
+  accessGroupId String
+  assignedAt    DateTime    @default(now())
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessGroup   AccessGroup @relation(fields: [accessGroupId], references: [id], onDelete: Cascade)
+
+  @@id([userId, accessGroupId])
+}
+
+model AccessGroupPermission {
+  accessGroupId String
+  permissionId  String
+  assignedAt    DateTime    @default(now())
+  accessGroup   AccessGroup @relation(fields: [accessGroupId], references: [id], onDelete: Cascade)
+  permission    Permission  @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([accessGroupId, permissionId])
+}
+
+model Patient {
+  id              String            @id @default(uuid())
+  name            String
+  birthDate       DateTime?
+  document        String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  anamnesisRecord AnamnesisRecord[]
+}
+
+model AnamnesisTemplate {
+  id          String             @id @default(uuid())
+  key         String             @unique
+  title       String
+  description String?
+  active      Boolean            @default(true)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  sections    AnamnesisSection[]
+}
+
+model AnamnesisSection {
+  id         String              @id @default(uuid())
+  templateId String
+  key        String
+  title      String
+  sortOrder  Int                 @default(0)
+  active     Boolean             @default(true)
+  template   AnamnesisTemplate   @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  questions  AnamnesisQuestion[]
+
+  @@unique([templateId, key])
+}
+
+model AnamnesisQuestion {
+  id        String                    @id @default(uuid())
+  sectionId String
+  key       String
+  label     String
+  type      QuestionType
+  required  Boolean                   @default(false)
+  sortOrder Int                       @default(0)
+  active    Boolean                   @default(true)
+  section   AnamnesisSection          @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  options   AnamnesisQuestionOption[]
+  answers   AnamnesisAnswer[]
+  rows      AnamnesisTableRow[]
+
+  @@unique([sectionId, key])
+}
+
+model AnamnesisQuestionOption {
+  id         String            @id @default(uuid())
+  questionId String
+  label      String
+  sortOrder  Int               @default(0)
+  active     Boolean           @default(true)
+  question   AnamnesisQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+}
+
+model AnamnesisRecord {
+  id          String             @id @default(uuid())
+  code        String             @unique
+  status      AnamnesisStatus    @default(DRAFT)
+  patientName String
+  patientId   String?
+  createdById String?
+  updatedById String?
+  finalizedAt DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  patient     Patient?           @relation(fields: [patientId], references: [id])
+  createdBy   User?              @relation("AnamnesisCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?              @relation("AnamnesisUpdatedBy", fields: [updatedById], references: [id])
+  answers     AnamnesisAnswer[]
+  tableRows   AnamnesisTableRow[]
+}
+
+model AnamnesisAnswer {
+  id         String             @id @default(uuid())
+  recordId   String
+  questionId String
+  valueText  String?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+  record     AnamnesisRecord    @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  question   AnamnesisQuestion  @relation(fields: [questionId], references: [id])
+
+  @@unique([recordId, questionId])
+}
+
+model AnamnesisTableRow {
+  id         String               @id @default(uuid())
+  recordId   String
+  questionId String
+  label      String
+  source     TableRowSource       @default(TEMPLATE)
+  sortOrder  Int                  @default(0)
+  active     Boolean              @default(true)
+  record     AnamnesisRecord      @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  question   AnamnesisQuestion    @relation(fields: [questionId], references: [id])
+  cells      AnamnesisTableCell[]
+}
+
+model AnamnesisTableCell {
+  id        String            @id @default(uuid())
+  rowId     String
+  columnKey String
+  valueText String?
+  row       AnamnesisTableRow @relation(fields: [rowId], references: [id], onDelete: Cascade)
+
+  @@unique([rowId, columnKey])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  entity     String
+  entityId   String?
+  action     String
+  beforeData String?
+  afterData  String?
+  reason     String?
+  userId     String?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id])
+}

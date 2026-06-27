@@ -1,0 +1,17 @@
+{
+  "name": "clinica-anamnese-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "apps/api"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @clinica/web",
+    "dev:web": "npm run dev --workspace @clinica/web",
+    "dev:api": "npm run start:dev --workspace @clinica/api",
+    "build": "npm run build --workspace @clinica/web && npm run build --workspace @clinica/api",
+    "typecheck": "npm run typecheck --workspace @clinica/web && npm run typecheck --workspace @clinica/api",
+    "lint": "npm run lint --workspace @clinica/web"
+  }
+}

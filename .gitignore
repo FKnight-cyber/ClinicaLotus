@@ -1,0 +1,9 @@
+node_modules/
+.next/
+dist/
+coverage/
+.env
+.env.local
+.tmp_pdf_pages/
+*.tsbuildinfo
+npm-debug.log*
