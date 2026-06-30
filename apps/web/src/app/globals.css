@@ -218,6 +218,88 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.login-page {
+  align-items: center;
+  display: grid;
+  min-height: 100vh;
+  padding: 24px;
+  place-items: center;
+}
+
+.login-panel {
+  background: rgba(251, 253, 252, 0.96);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 24px;
+  max-width: 430px;
+  padding: 28px;
+  width: min(430px, 100%);
+}
+
+.login-brand {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+}
+
+.login-brand h1 {
+  font-size: 1.8rem;
+  margin: 0;
+}
+
+.login-logo {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #209fdd;
+  display: grid;
+  height: 64px;
+  place-items: center;
+  width: 64px;
+}
+
+.login-logo svg {
+  height: 48px;
+  width: 48px;
+}
+
+.login-form {
+  display: grid;
+  gap: 14px;
+}
+
+.login-form label {
+  display: grid;
+  gap: 7px;
+}
+
+.login-form label span {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.login-form button {
+  min-height: 44px;
+}
+
+.login-error {
+  align-items: center;
+  background: #fff4f4;
+  border: 1px solid #efb4b4;
+  border-radius: 8px;
+  color: var(--danger);
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.auth-loading {
+  margin: 24px;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
@@ -338,6 +420,24 @@ button:disabled {
   border-radius: 999px;
   color: var(--muted);
   padding: 9px 12px;
+}
+
+.operator-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.icon-button {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--primary-strong);
+  display: inline-flex;
+  height: 40px;
+  justify-content: center;
+  width: 40px;
 }
 
 .anamnese-layout {
@@ -869,6 +969,114 @@ td input {
   padding: 24px;
 }
 
+.access-page {
+  background: rgba(251, 253, 252, 0.92);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.access-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 18px 22px;
+}
+
+.access-grid-wide {
+  align-items: start;
+  border-top: 1px solid var(--line);
+}
+
+.access-form {
+  display: grid;
+  gap: 12px;
+}
+
+.access-form label:not(.choice-pill) {
+  display: grid;
+  gap: 7px;
+}
+
+.access-form label:not(.choice-pill) span {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.access-message {
+  background: var(--primary-soft);
+  border-bottom: 1px solid #a8d7ca;
+  color: var(--primary-strong);
+  font-weight: 700;
+  padding: 12px 22px;
+}
+
+.permission-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.permission-picker fieldset {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin: 0;
+  padding: 10px;
+}
+
+.permission-picker legend {
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.access-checklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.access-list {
+  display: grid;
+  gap: 12px;
+}
+
+.access-card {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.access-card.compact {
+  gap: 8px;
+}
+
+.access-card p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.access-card-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.access-card-heading strong,
+.access-card-heading span {
+  display: block;
+}
+
+.access-card-heading span {
+  color: var(--muted);
+  margin-top: 3px;
+}
+
 .page-intro {
   justify-content: flex-start;
   margin-bottom: 22px;
@@ -1144,7 +1352,8 @@ td input {
 @media (max-width: 1120px) {
   .app-shell,
   .anamnese-layout,
-  .placeholder-grid {
+  .placeholder-grid,
+  .access-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1172,6 +1381,14 @@ td input {
   .action-bar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .operator-actions {
+    width: 100%;
+  }
+
+  .operator-chip {
+    flex: 1;
   }
 
   .field-grid,

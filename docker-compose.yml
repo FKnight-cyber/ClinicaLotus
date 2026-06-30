@@ -23,13 +23,13 @@ services:
       dockerfile: Dockerfile.dev
     container_name: clinica-api
     restart: unless-stopped
-    command: sh -c "npm install && cd apps/api && rm -rf dist && npx prisma generate && npx prisma db push && npm run prisma:seed && npm run start:dev"
+    command: sh -c "npm install && cd apps/api && rm -rf dist tsconfig.tsbuildinfo && npx prisma generate && npx prisma db push && npm run prisma:seed && npm run start:dev"
     environment:
       API_PORT: 3333
       DATABASE_URL: postgresql://clinica:clinica_dev@postgres:5432/clinica
       JWT_SECRET: clinica_dev_secret_change_me
       ADMIN_PASSWORD: admin123
-      WEB_ORIGIN: http://localhost:3000
+      WEB_ORIGIN: http://localhost:3000,http://127.0.0.1:3000
       TSC_WATCHFILE: UseFsEventsWithFallbackDynamicPolling
       TSC_WATCHDIRECTORY: RecursiveDirectoryUsingDynamicPriorityPolling
     ports:

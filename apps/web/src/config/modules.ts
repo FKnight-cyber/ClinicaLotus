@@ -7,6 +7,7 @@ import {
   Hospital,
   NotebookTabs,
   Settings,
+  ShieldCheck,
   Stethoscope,
   UsersRound
 } from "lucide-react";
@@ -71,11 +72,20 @@ export const moduleItems: ModuleItem[] = [
   {
     slug: "cadastros",
     label: "Cadastros",
-    description: "Usuários, profissionais, permissões e cadastros auxiliares.",
+    description: "Pacientes, profissionais, convênios e cadastros auxiliares.",
     href: "/modulos/cadastros",
     icon: FolderCog,
     status: "locked",
-    actions: ["Cadastrar usuário", "Cadastrar profissional", "Gerenciar permissões"]
+    actions: ["Cadastrar paciente", "Cadastrar profissional", "Cadastrar convênio"]
+  },
+  {
+    slug: "controle-acesso",
+    label: "Controle de acesso",
+    description: "Usuários internos, grupos e permissões customizáveis por módulo.",
+    href: "/modulos/controle-acesso",
+    icon: ShieldCheck,
+    status: "active",
+    actions: ["Criar usuário", "Criar grupo", "Gerenciar permissões"]
   },
   {
     slug: "relatorios",

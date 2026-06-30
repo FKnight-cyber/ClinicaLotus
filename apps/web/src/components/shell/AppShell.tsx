@@ -1,6 +1,10 @@
+"use client";
+
 import Link from "next/link";
+import { LogOut } from "lucide-react";
 import { ClinicLogo } from "@/components/brand/ClinicLogo";
 import { moduleItems } from "@/config/modules";
+import { useAuth } from "@/features/auth/AuthProvider";
 
 type AppShellProps = {
   activeSlug: string;
@@ -8,6 +12,8 @@ type AppShellProps = {
 };
 
 export function AppShell({ activeSlug, children }: AppShellProps) {
+  const { logout, user } = useAuth();
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Menu principal">
@@ -46,8 +52,13 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
             <span className="eyebrow">Sistema clínico</span>
             <h1>Anamnese clínica</h1>
           </div>
-          <div className="operator-chip">
-            Profissional logado
+          <div className="operator-actions">
+            <span className="operator-chip">
+              {user?.name ?? "Profissional logado"}
+            </span>
+            <button className="icon-button" onClick={logout} title="Sair" type="button">
+              <LogOut aria-hidden="true" size={18} />
+            </button>
           </div>
         </header>
 

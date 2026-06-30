@@ -26,9 +26,18 @@ Nesse modo, mantenha o terminal aberto. Use `Ctrl+C` apenas quando quiser parar 
 
 URLs locais:
 
-- Web: http://localhost:3000/anamnese
+- Web: http://localhost:3000/login
 - API healthcheck: http://localhost:3333/api/health
 - PostgreSQL: `localhost:5432`
+
+Login inicial do sistema:
+
+```txt
+Usuario: admin
+Senha: admin123
+```
+
+No primeiro acesso o usuario admin fica marcado com `mustChangePassword=true`, preparando o fluxo futuro de troca obrigatoria de senha.
 
 Credenciais locais do banco:
 
@@ -85,6 +94,30 @@ Parar e remover também volumes locais, incluindo dados do PostgreSQL:
 ```bash
 docker compose down -v
 ```
+
+## Banco de dados, Prisma e seed
+
+O backend usa Prisma com PostgreSQL. Em Docker, o schema e o seed rodam automaticamente ao iniciar a API:
+
+```bash
+docker compose up -d --build
+```
+
+Comandos úteis dentro do container:
+
+```bash
+docker compose exec api sh -lc "cd apps/api && npx prisma generate"
+docker compose exec api sh -lc "cd apps/api && npx prisma db push"
+docker compose exec api sh -lc "cd apps/api && npm run prisma:seed"
+```
+
+O seed cria permissoes iniciais, o grupo `Administrador` e o usuario `admin` com acesso total.
+
+## Autenticacao e autorizacao
+
+A API expõe login interno por JWT em `POST /api/auth/login` e perfil em `GET /api/auth/me`.
+
+As permissoes ficam no banco e podem ser combinadas em grupos customizaveis. O modulo `/api/access` ja oferece a base para administradores listarem permissoes, criarem grupos, criarem usuarios e alterarem permissoes de grupos ou grupos de usuarios.
 
 ## Rodando sem Docker
 
