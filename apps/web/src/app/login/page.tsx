@@ -10,8 +10,8 @@ import { useAuth } from "@/features/auth/AuthProvider";
 export default function LoginPage() {
   const { login, status, user } = useAuth();
   const router = useRouter();
-  const [loginValue, setLoginValue] = useState("admin");
-  const [password, setPassword] = useState("admin123");
+  const [loginValue, setLoginValue] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
