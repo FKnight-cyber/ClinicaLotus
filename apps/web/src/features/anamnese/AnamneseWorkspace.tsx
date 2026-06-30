@@ -3,7 +3,7 @@
 import { AlertCircle, ArrowLeft, CheckCircle2, CircleDot, FileCheck2, FileText, Pencil, Plus, Printer, Save, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { AnamnesePrintDocument } from "./AnamnesePrintDocument";
 import { downloadAnamnesePdf } from "./pdfExport";
@@ -66,6 +66,19 @@ function getPatientName(record: AnamneseRecord) {
   if (typeof psychologicalName === "string" && psychologicalName.trim()) return psychologicalName.trim();
   if (typeof consentName === "string" && consentName.trim()) return consentName.trim();
   return record.patientName || "Paciente sem nome";
+}
+
+function getRecordSavePayload(record: AnamneseRecord) {
+  return {
+    patientName: getPatientName(record),
+    patientId: record.patientId,
+    answers: record.answers,
+    customFields: record.customFields
+  };
+}
+
+function getRecordSnapshot(record: AnamneseRecord) {
+  return JSON.stringify(getRecordSavePayload(record));
 }
 
 function validateRecord(record: AnamneseRecord, templates: FormTemplate[]): ValidationIssue[] {
@@ -433,14 +446,18 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const [newPatientBirthDate, setNewPatientBirthDate] = useState("");
   const [newPatientDocument, setNewPatientDocument] = useState("");
   const [medicalRecordEntries, setMedicalRecordEntries] = useState<MedicalRecordEntry[]>([]);
+  const lastSavedSnapshotRef = useRef<string | null>(null);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autosaveSequenceRef = useRef(0);
 
   useEffect(() => {
-    if (!token || !canReadPatients) return;
+    if (!token) return;
     let isCurrent = true;
 
     Promise.all([fetchAnamneseRecord(token, recordId), fetchAnamneseTemplates(token)])
       .then(([record, nextTemplates]) => {
         if (!isCurrent) return;
+        lastSavedSnapshotRef.current = getRecordSnapshot(record);
         setCurrentRecord(record);
         setTemplates(nextTemplates);
         setMessage("Anamnese carregada do banco");
@@ -487,6 +504,53 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
       isCurrent = false;
     };
   }, [canReadProntuario, currentRecord?.patientId, token]);
+
+  useEffect(() => {
+    if (!token || !currentRecord || !canUpdateAnamnese || currentRecord.status === "finalized") return;
+
+    const nextSnapshot = getRecordSnapshot(currentRecord);
+
+    if (lastSavedSnapshotRef.current === null) {
+      lastSavedSnapshotRef.current = nextSnapshot;
+      return;
+    }
+
+    if (nextSnapshot === lastSavedSnapshotRef.current) return;
+
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+    }
+
+    const sequence = autosaveSequenceRef.current + 1;
+    autosaveSequenceRef.current = sequence;
+    autosaveTimerRef.current = setTimeout(() => {
+      setMessage("Salvando rascunho automaticamente...");
+      const payload = getRecordSavePayload(currentRecord);
+      void saveAnamneseRecord(token, currentRecord.id, payload)
+        .then((savedRecord) => {
+          if (autosaveSequenceRef.current !== sequence) return;
+          lastSavedSnapshotRef.current = getRecordSnapshot(savedRecord);
+          setCurrentRecord((record) => record?.id === savedRecord.id ? savedRecord : record);
+          setMessage("Rascunho salvo automaticamente");
+        })
+        .catch((error) => {
+          if (autosaveSequenceRef.current !== sequence) return;
+          setMessage(error instanceof Error ? error.message : "Nao foi possivel salvar automaticamente.");
+        });
+    }, 800);
+
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+      }
+    };
+  }, [canUpdateAnamnese, currentRecord, token]);
+
+  useEffect(() => () => {
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+    }
+  }, []);
 
   if (!currentRecord) {
     return <div className="loading-panel">Carregando anamnese...</div>;
@@ -542,6 +606,9 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
 
   async function saveRecord(status: "draft" | "finalized") {
     if (!token) return;
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+    }
     const validationIssues = status === "finalized" ? validateRecord(loadedRecord, templates) : [];
     setIssues(validationIssues);
 
@@ -554,9 +621,11 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     const savedRecord = await saveAnamneseRecord(token, loadedRecord.id, {
       patientName: getPatientName(loadedRecord),
       patientId: loadedRecord.patientId,
-      answers: loadedRecord.answers
+      answers: loadedRecord.answers,
+      customFields: loadedRecord.customFields
     });
     const nextRecord = status === "finalized" ? await finalizeAnamneseRecord(token, savedRecord.id) : savedRecord;
+    lastSavedSnapshotRef.current = getRecordSnapshot(nextRecord);
     setCurrentRecord(nextRecord);
     setMessage(status === "finalized" ? "Anamnese finalizada no banco" : "Rascunho salvo no banco");
   }
@@ -564,6 +633,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   async function startNewRecord() {
     if (!token) return;
     const record = await createAnamneseRecord(token, { patientName: "Paciente sem nome" });
+    lastSavedSnapshotRef.current = getRecordSnapshot(record);
     setCurrentRecord(record);
     setIssues([]);
     setActiveTemplateId("nursing-admission");
@@ -764,11 +834,11 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
             <p>{selectedPatient ? `${medicalRecordEntries.length} evento(s) no prontuario` : "Vincule um paciente para registrar a anamnese no prontuario ao finalizar."}</p>
           </div>
           <div className="patient-link-fields">
-            <label>
+            <label className="patient-link-field is-search">
               <span>Buscar paciente</span>
               <input disabled={!canLinkPatient} onChange={(event) => setPatientSearch(event.target.value)} placeholder="Nome ou documento" value={patientSearch} />
             </label>
-            <label>
+            <label className="patient-link-field is-linked-patient">
               <span>Paciente vinculado</span>
               <select disabled={!canLinkPatient} onChange={(event) => linkPatient(event.target.value)} value={loadedRecord.patientId ?? ""}>
                 <option value="">Sem vinculo</option>
@@ -777,15 +847,15 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
             </label>
             {canCreateAndLinkPatient ? (
               <>
-                <label>
+                <label className="patient-link-field is-new-patient">
                   <span>Novo paciente</span>
                   <input onChange={(event) => setNewPatientName(event.target.value)} placeholder="Nome completo" value={newPatientName} />
                 </label>
-                <label>
+                <label className="patient-link-field is-birth-date">
                   <span>Nascimento</span>
                   <input onChange={(event) => setNewPatientBirthDate(event.target.value)} type="date" value={newPatientBirthDate} />
                 </label>
-                <label>
+                <label className="patient-link-field is-document">
                   <span>Documento</span>
                   <input onChange={(event) => setNewPatientDocument(event.target.value)} placeholder="CPF/RG" value={newPatientDocument} />
                 </label>

@@ -123,6 +123,7 @@ export class AnamnesisService {
         code: await this.nextCode(),
         patientName: dto.patientName,
         patientId: dto.patientId || null,
+        customFieldsJson: dto.customFields ? JSON.stringify(dto.customFields) : null,
         status: "DRAFT",
         createdById: userId,
         updatedById: userId
@@ -152,6 +153,7 @@ export class AnamnesisService {
       data: {
         patientName: dto.patientName ?? existingRecord.patientName,
         patientId: dto.patientId === undefined ? existingRecord.patientId : dto.patientId || null,
+        customFieldsJson: dto.customFields === undefined ? existingRecord.customFieldsJson : JSON.stringify(dto.customFields),
         updatedById: userId
       }
     });
@@ -342,7 +344,8 @@ export class AnamnesisService {
   private toRecordResponse(record: RecordWithAnswers) {
     return {
       ...this.toListItem(record),
-      answers: this.answersFromRecord(record)
+      answers: this.answersFromRecord(record),
+      customFields: record.customFieldsJson ? JSON.parse(record.customFieldsJson) : undefined
     };
   }
 
@@ -352,6 +355,7 @@ export class AnamnesisService {
     status: AnamnesisStatus;
     patientName: string;
     patientId: string | null;
+    customFieldsJson?: string | null;
     finalizedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;

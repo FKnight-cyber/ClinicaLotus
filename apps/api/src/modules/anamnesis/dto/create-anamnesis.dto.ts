@@ -12,4 +12,8 @@ export class CreateAnamnesisDto {
   @IsOptional()
   @IsObject()
   answers?: Record<string, Record<string, unknown>>;
+
+  @IsOptional()
+  @IsObject()
+  customFields?: Record<string, Record<string, unknown[]>>;
 }

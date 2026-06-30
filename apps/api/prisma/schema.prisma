@@ -179,6 +179,7 @@ model AnamnesisRecord {
   status      AnamnesisStatus    @default(DRAFT)
   patientName String
   patientId   String?
+  customFieldsJson String?
   createdById String?
   updatedById String?
   finalizedAt DateTime?

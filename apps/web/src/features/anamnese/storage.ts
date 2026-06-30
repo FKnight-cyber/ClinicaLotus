@@ -10,6 +10,7 @@ type AnamnesePayload = {
   patientName: string;
   patientId?: string | null;
   answers?: Record<string, TemplateAnswers>;
+  customFields?: AnamneseRecord["customFields"];
 };
 
 async function apiRequest<T>(token: string, path: string, options: RequestInit = {}) {

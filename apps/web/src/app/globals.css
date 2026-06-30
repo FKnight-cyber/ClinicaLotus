@@ -643,15 +643,30 @@ a.operator-chip {
 
 .patient-link-fields {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 10px;
   align-items: end;
 }
 
-.patient-link-fields label {
+.patient-link-field {
   display: grid;
   gap: 6px;
+  grid-column: span 3;
   min-width: 0;
+}
+
+.patient-link-field.is-search,
+.patient-link-field.is-linked-patient,
+.patient-link-field.is-new-patient {
+  grid-column: span 4;
+}
+
+.patient-link-field.is-birth-date {
+  grid-column: span 2;
+}
+
+.patient-link-field.is-document {
+  grid-column: span 3;
 }
 
 .patient-link-fields span {
@@ -666,7 +681,10 @@ a.operator-chip {
 }
 
 .patient-link-fields button {
+  grid-column: span 3;
   min-height: 42px;
+  min-width: 0;
+  width: 100%;
 }
 
 .medical-record-list {
@@ -885,10 +903,20 @@ select {
   background: #ffffff;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
+  box-sizing: border-box;
   color: var(--text);
+  font: inherit;
+  min-width: 0;
   outline: none;
   padding: 11px 12px;
   width: 100%;
+}
+
+select {
+  min-inline-size: 0;
+  overflow: hidden;
+  padding-right: 34px;
+  text-overflow: ellipsis;
 }
 
 textarea {
@@ -1696,6 +1724,20 @@ td input {
   .records-panel {
     position: static;
   }
+
+  .patient-link-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .patient-link-field,
+  .patient-link-field.is-search,
+  .patient-link-field.is-linked-patient,
+  .patient-link-field.is-new-patient,
+  .patient-link-field.is-birth-date,
+  .patient-link-field.is-document,
+  .patient-link-fields button {
+    grid-column: span 1;
+  }
 }
 
 @media (max-width: 760px) {
@@ -1733,6 +1775,16 @@ td input {
 
   .patient-link-fields {
     grid-template-columns: 1fr;
+  }
+
+  .patient-link-field,
+  .patient-link-field.is-search,
+  .patient-link-field.is-linked-patient,
+  .patient-link-field.is-new-patient,
+  .patient-link-field.is-birth-date,
+  .patient-link-field.is-document,
+  .patient-link-fields button {
+    grid-column: 1;
   }
 
   .prontuario-layout {
