@@ -7,6 +7,8 @@ export const metadata: Metadata = {
   description: "MVP inicial do sistema clínico com fluxo funcional de anamnese."
 };
 
+export const runtime = "edge";
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="pt-BR">

@@ -181,7 +181,7 @@ npm ci && npm run build --workspace @clinica/api
 Start command da API no Railway:
 
 ```bash
-cd apps/api && npx prisma generate && npx prisma db push && npm run prisma:seed && node dist/main.js
+npm run start:prod --workspace @clinica/api
 ```
 
 Esse start command faz, ao subir:

@@ -5,8 +5,6 @@ import { getModuleBySlug } from "@/config/modules";
 import { AccessAdminPage } from "@/features/access/AccessAdminPage";
 import { ProntuarioPage } from "@/features/prontuario/ProntuarioPage";
 
-export const runtime = "edge";
-
 type PlaceholderPageProps = {
   params: Promise<{ slug: string }>;
 };
