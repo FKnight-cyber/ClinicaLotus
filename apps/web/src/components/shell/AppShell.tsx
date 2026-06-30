@@ -12,7 +12,8 @@ type AppShellProps = {
 };
 
 export function AppShell({ activeSlug, children }: AppShellProps) {
-  const { logout, user } = useAuth();
+  const { hasPermission, logout, user } = useAuth();
+  const visibleModules = moduleItems.filter((module) => module.slug === "anamnese" || hasPermission(module.visibilityPermission));
 
   return (
     <div className="app-shell">
@@ -28,7 +29,7 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
         </div>
 
         <nav className="module-nav">
-          {moduleItems.map((module) => {
+          {visibleModules.map((module) => {
             const Icon = module.icon;
             const isActive = module.slug === activeSlug;
             return (
@@ -53,9 +54,9 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
             <h1>Anamnese clínica</h1>
           </div>
           <div className="operator-actions">
-            <span className="operator-chip">
+            <Link className="operator-chip" href={user ? `/usuarios/${user.id}` : "/login"} title="Abrir detalhes do usuário">
               {user?.name ?? "Profissional logado"}
-            </span>
+            </Link>
             <button className="icon-button" onClick={logout} title="Sair" type="button">
               <LogOut aria-hidden="true" size={18} />
             </button>

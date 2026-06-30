@@ -296,6 +296,21 @@ button:disabled {
   padding: 10px 12px;
 }
 
+.login-success {
+  align-items: center;
+  background: var(--primary-soft);
+  border: 1px solid #a8d7ca;
+  border-radius: 8px;
+  color: var(--primary-strong);
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.auth-link-button {
+  text-decoration: none;
+}
+
 .auth-loading {
   margin: 24px;
 }
@@ -420,6 +435,10 @@ button:disabled {
   border-radius: 999px;
   color: var(--muted);
   padding: 9px 12px;
+}
+
+a.operator-chip {
+  text-decoration: none;
 }
 
 .operator-actions {
@@ -977,6 +996,11 @@ td input {
   overflow: hidden;
 }
 
+.user-detail-page {
+  display: grid;
+  gap: 18px;
+}
+
 .access-grid {
   display: grid;
   gap: 16px;
@@ -989,9 +1013,39 @@ td input {
   border-top: 1px solid var(--line);
 }
 
+.access-management-layout {
+  align-items: start;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 16px;
+  grid-template-areas:
+    "groups permissions"
+    "users users";
+  grid-template-columns: minmax(300px, 0.78fr) minmax(0, 1.42fr);
+  padding: 18px 22px;
+}
+
+.access-groups-panel {
+  grid-area: groups;
+}
+
+.access-permissions-panel {
+  grid-area: permissions;
+}
+
+.access-users-panel {
+  grid-area: users;
+}
+
 .access-form {
   display: grid;
   gap: 12px;
+}
+
+.compact-form {
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 14px;
+  padding-bottom: 14px;
 }
 
 .access-form label:not(.choice-pill) {
@@ -1002,6 +1056,11 @@ td input {
 .access-form label:not(.choice-pill) span {
   color: var(--text);
   font-weight: 700;
+}
+
+.panel-hint {
+  color: var(--muted);
+  margin: 0;
 }
 
 .access-message {
@@ -1042,6 +1101,72 @@ td input {
   gap: 12px;
 }
 
+.access-search-box {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.access-search-box span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.group-directory {
+  display: grid;
+  gap: 8px;
+  max-height: 480px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.group-directory-item {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  text-align: left;
+}
+
+.group-directory-item.is-selected {
+  border-color: var(--primary);
+  box-shadow: inset 4px 0 0 var(--primary);
+}
+
+.group-directory-item span,
+.group-directory-item small {
+  color: var(--muted);
+}
+
+.access-user-list {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+}
+
+.access-section-heading {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.access-section-heading input {
+  max-width: max(280px, 30%);
+}
+
+.access-section-heading h3,
+.access-section-heading p {
+  margin: 0;
+}
+
+.access-section-heading p {
+  color: var(--muted);
+  margin-top: 4px;
+}
+
 .access-card {
   background: #ffffff;
   border: 1px solid var(--line);
@@ -1055,9 +1180,56 @@ td input {
   gap: 8px;
 }
 
+.user-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.user-card-heading {
+  align-items: start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.user-card-identity {
+  min-width: 0;
+}
+
+.user-card-identity strong,
+.user-card-identity span,
+.user-card p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-card .status-badge {
+  justify-self: start;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-card .secondary-button {
+  align-self: stretch;
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  width: auto;
+}
+
 .access-card p {
   color: var(--muted);
   margin: 0;
+}
+
+.user-access-panel {
+  display: grid;
+  gap: 16px;
+  margin: 0 22px 22px;
 }
 
 .access-card-heading {
@@ -1353,8 +1525,16 @@ td input {
   .app-shell,
   .anamnese-layout,
   .placeholder-grid,
+  .access-management-layout,
   .access-grid {
     grid-template-columns: 1fr;
+  }
+
+  .access-management-layout {
+    grid-template-areas:
+      "groups"
+      "permissions"
+      "users";
   }
 
   .sidebar {
@@ -1403,10 +1583,16 @@ td input {
   .action-bar button,
   .list-actions,
   .list-actions button,
+  .access-section-heading,
   .pagination-bar,
   .pagination-bar div,
   .pagination-bar button {
     width: 100%;
+  }
+
+  .access-section-heading {
+    align-items: stretch;
+    grid-template-columns: 1fr;
   }
 
   .list-header,

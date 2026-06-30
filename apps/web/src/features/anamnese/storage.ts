@@ -1,15 +1,81 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import { anamneseTemplates } from "./templates";
-import type { AnamneseRecord, FieldValue, ValidationIssue } from "./types";
+import type { AnamneseRecord, FieldValue, TemplateAnswers, TemplateId, ValidationIssue } from "./types";
 
-export const storageKey = "clinica.anamnese.records.v1";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
 
-const listeners = new Set<() => void>();
-const serverSnapshot: AnamneseRecord[] = [];
-let lastStoredValue: string | null = null;
-let lastSnapshot: AnamneseRecord[] = [];
+type AnamnesePayload = {
+  patientName: string;
+  patientId?: string | null;
+  answers?: Record<string, TemplateAnswers>;
+};
+
+async function apiRequest<T>(token: string, path: string, options: RequestInit = {}) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...options.headers
+    }
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.message ?? "Nao foi possivel salvar a anamnese.");
+  }
+
+  return response.json() as Promise<T>;
+}
+
+export function createEmptyAnswers() {
+  return Object.fromEntries(anamneseTemplates.map((template) => [template.id, {}])) as Record<TemplateId, TemplateAnswers>;
+}
+
+export function normalizeAnamneseRecord(record: AnamneseRecord): AnamneseRecord {
+  return {
+    ...record,
+    answers: {
+      ...createEmptyAnswers(),
+      ...record.answers
+    }
+  };
+}
+
+export async function fetchAnamneseRecords(token: string) {
+  const records = await apiRequest<AnamneseRecord[]>(token, "/api/anamneses");
+  return records.map(normalizeAnamneseRecord);
+}
+
+export async function fetchAnamneseRecord(token: string, recordId: string) {
+  const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}`);
+  return normalizeAnamneseRecord(record);
+}
+
+export async function createAnamneseRecord(token: string, payload: AnamnesePayload) {
+  const record = await apiRequest<AnamneseRecord>(token, "/api/anamneses", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  return normalizeAnamneseRecord(record);
+}
+
+export async function saveAnamneseRecord(token: string, recordId: string, payload: AnamnesePayload) {
+  const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+  return normalizeAnamneseRecord(record);
+}
+
+export async function finalizeAnamneseRecord(token: string, recordId: string) {
+  const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}/finalize`, {
+    method: "POST"
+  });
+  return normalizeAnamneseRecord(record);
+}
 
 export function createEmptyRecord(): AnamneseRecord {
   const now = new Date().toISOString();
@@ -21,59 +87,8 @@ export function createEmptyRecord(): AnamneseRecord {
     createdAt: now,
     updatedAt: now,
     patientName: "",
-    answers: {
-      "nursing-admission": {},
-      psychological: {},
-      "therapeutic-initial": {}
-    }
+    answers: createEmptyAnswers()
   };
-}
-
-export function readStoredRecords() {
-  if (typeof window === "undefined") {
-    return [];
-  }
-
-  const stored = window.localStorage.getItem(storageKey);
-
-  if (!stored) {
-    return [];
-  }
-
-  return JSON.parse(stored) as AnamneseRecord[];
-}
-
-export function writeStoredRecords(records: AnamneseRecord[]) {
-  const nextValue = JSON.stringify(records);
-  window.localStorage.setItem(storageKey, nextValue);
-  lastStoredValue = nextValue;
-  lastSnapshot = records;
-  listeners.forEach((listener) => listener());
-}
-
-function getSnapshot() {
-  if (typeof window === "undefined") {
-    return serverSnapshot;
-  }
-
-  const stored = window.localStorage.getItem(storageKey);
-
-  if (stored === lastStoredValue) {
-    return lastSnapshot;
-  }
-
-  lastStoredValue = stored;
-  lastSnapshot = stored ? JSON.parse(stored) as AnamneseRecord[] : [];
-  return lastSnapshot;
-}
-
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-export function useAnamneseRecords() {
-  return useSyncExternalStore(subscribe, getSnapshot, () => serverSnapshot);
 }
 
 export function useHasMounted() {
@@ -88,7 +103,7 @@ export function useHasMounted() {
 }
 
 export function saveAnamneseRecords(records: AnamneseRecord[]) {
-  writeStoredRecords(records);
+  return records;
 }
 
 export function upsertStoredRecord(recordToSave: AnamneseRecord, records: AnamneseRecord[]) {

@@ -4,15 +4,13 @@ import { AlertCircle, ArrowLeft, CheckCircle2, CircleDot, FileCheck2, FileText, 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useAuth } from "@/features/auth/AuthProvider";
 import { AnamnesePrintDocument } from "./AnamnesePrintDocument";
 import { downloadAnamnesePdf } from "./pdfExport";
-import { saveAnamneseRecords, useAnamneseRecords } from "./storage";
+import { createAnamneseRecord, fetchAnamneseRecord, finalizeAnamneseRecord, saveAnamneseRecord } from "./storage";
 import { anamneseTemplates } from "./templates";
 import type { AnamneseRecord, FieldValue, FormField, TableValue, TemplateAnswers, TemplateId, ValidationIssue } from "./types";
 
-const storageKey = "clinica.anamnese.records.v1";
-const canUpdateAnamneseOptions = true;
-const canUpdateAnamneseQuestions = true;
 const yesNoOptions = ["Sim", "Não"];
 
 function createEmptyRecord(): AnamneseRecord {
@@ -104,16 +102,6 @@ function requiredProgress(record: AnamneseRecord) {
   return { complete, total };
 }
 
-function useStoredRecords() {
-  const records = useAnamneseRecords();
-
-  function persist(nextRecords: AnamneseRecord[]) {
-    saveAnamneseRecords(nextRecords);
-  }
-
-  return { records, persist };
-}
-
 function calculateAge(birthDate: string) {
   const birth = new Date(`${birthDate}T00:00:00`);
 
@@ -135,10 +123,11 @@ function calculateAge(birthDate: string) {
 type FieldRendererProps = {
   field: FormField;
   value: FieldValue | undefined;
+  canUpdateAnamneseOptions: boolean;
   onChange: (value: FieldValue) => void;
 };
 
-function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
+function FieldRenderer({ canUpdateAnamneseOptions, field, value, onChange }: FieldRendererProps) {
   const [newTableRowName, setNewTableRowName] = useState("");
   const [editingRowName, setEditingRowName] = useState<string | null>(null);
   const [editingRowDraft, setEditingRowDraft] = useState("");
@@ -407,23 +396,42 @@ type AnamneseWorkspaceProps = {
 
 export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const router = useRouter();
-  const { records, persist } = useStoredRecords();
+  const { hasPermission, token } = useAuth();
+  const canCreateAnamnese = hasPermission("anamnese.create");
+  const canUpdateAnamnese = hasPermission("anamnese.update");
+  const canFinalizeAnamnese = hasPermission("anamnese.finalize");
+  const canPrintAnamnese = hasPermission("anamnese.print");
+  const canUpdateAnamneseOptions = canUpdateAnamnese;
+  const canUpdateAnamneseQuestions = canUpdateAnamnese;
   const [currentRecord, setCurrentRecord] = useState<AnamneseRecord | null>(null);
   const [activeTemplateId, setActiveTemplateId] = useState<TemplateId>("nursing-admission");
   const [activeSectionIndex, setActiveSectionIndex] = useState(0);
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
-  const [message, setMessage] = useState("Rascunho local não salvo");
+  const [message, setMessage] = useState("Carregando anamnese do banco...");
   const [newQuestionLabel, setNewQuestionLabel] = useState("");
   const [newQuestionType, setNewQuestionType] = useState<"textarea" | "yesNoDetails">("textarea");
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const [editingQuestionLabel, setEditingQuestionLabel] = useState("");
 
   useEffect(() => {
-    const foundRecord = records.find((record) => record.id === recordId);
-    const fallbackRecord = { ...createEmptyRecord(), id: recordId };
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCurrentRecord(foundRecord ?? fallbackRecord);
-  }, [recordId, records]);
+    if (!token) return;
+    let isCurrent = true;
+
+    fetchAnamneseRecord(token, recordId)
+      .then((record) => {
+        if (!isCurrent) return;
+        setCurrentRecord(record);
+        setMessage("Anamnese carregada do banco");
+      })
+      .catch((error) => {
+        if (!isCurrent) return;
+        setMessage(error instanceof Error ? error.message : "Nao foi possivel carregar a anamnese.");
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [recordId, token]);
 
   if (!currentRecord) {
     return <div className="loading-panel">Carregando anamnese...</div>;
@@ -466,12 +474,13 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
           [templateId]: nextAnswers
         }
       };
-      setMessage("Alterações locais pendentes");
+      setMessage("Alterações pendentes");
       return nextRecord;
     });
   }
 
-  function saveRecord(status: "draft" | "finalized") {
+  async function saveRecord(status: "draft" | "finalized") {
+    if (!token) return;
     const validationIssues = status === "finalized" ? validateRecord(loadedRecord) : [];
     setIssues(validationIssues);
 
@@ -480,29 +489,25 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
       return;
     }
 
-    const now = new Date().toISOString();
-    const recordToSave: AnamneseRecord = {
-      ...loadedRecord,
+    setMessage(status === "finalized" ? "Salvando e finalizando anamnese..." : "Salvando rascunho no banco...");
+    const savedRecord = await saveAnamneseRecord(token, loadedRecord.id, {
       patientName: getPatientName(loadedRecord),
-      status,
-      updatedAt: now,
-      finalizedAt: status === "finalized" ? now : loadedRecord.finalizedAt
-    };
-    const nextRecords = [recordToSave, ...records.filter((record) => record.id !== recordToSave.id)];
-    persist(nextRecords);
-    setCurrentRecord(recordToSave);
-    setMessage(status === "finalized" ? "Anamnese finalizada e salva localmente" : "Rascunho salvo localmente");
+      patientId: loadedRecord.patientId,
+      answers: loadedRecord.answers
+    });
+    const nextRecord = status === "finalized" ? await finalizeAnamneseRecord(token, savedRecord.id) : savedRecord;
+    setCurrentRecord(nextRecord);
+    setMessage(status === "finalized" ? "Anamnese finalizada no banco" : "Rascunho salvo no banco");
   }
 
-  function startNewRecord() {
-    const record = createEmptyRecord();
-    const nextRecords = [record, ...records];
-    persist(nextRecords);
+  async function startNewRecord() {
+    if (!token) return;
+    const record = await createAnamneseRecord(token, { patientName: "Paciente sem nome" });
     setCurrentRecord(record);
     setIssues([]);
     setActiveTemplateId("nursing-admission");
     setActiveSectionIndex(0);
-    setMessage("Novo rascunho iniciado");
+    setMessage("Novo rascunho criado no banco");
     router.replace(`/anamnese/${record.id}`);
   }
 
@@ -768,6 +773,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                 )}
                 {field.helper ? <em>{field.helper}</em> : null}
                 <FieldRenderer
+                  canUpdateAnamneseOptions={canUpdateAnamneseOptions}
                   field={field}
                   onChange={(value) => updateField(activeTemplate.id, field.id, value)}
                   value={loadedRecord.answers[activeTemplate.id][field.id]}
@@ -796,23 +802,23 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
         <div className="action-bar">
           <span>{message}</span>
           <div>
-            <button className="secondary-button" onClick={startNewRecord} type="button">
+            <button className="secondary-button" disabled={!canCreateAnamnese} onClick={startNewRecord} title={canCreateAnamnese ? "Nova anamnese" : "Requer permissao para criar anamnese"} type="button">
               <Plus size={17} />
               Nova
             </button>
-            <button className="secondary-button" onClick={() => saveRecord("draft")} type="button">
+            <button className="secondary-button" disabled={!canUpdateAnamnese || loadedRecord.status === "finalized"} onClick={() => saveRecord("draft")} title={canUpdateAnamnese ? "Salvar rascunho" : "Requer permissao para editar anamnese"} type="button">
               <Save size={17} />
               Salvar rascunho
             </button>
-            <button className="secondary-button" onClick={() => window.print()} type="button">
+            <button className="secondary-button" disabled={!canPrintAnamnese} onClick={() => window.print()} title={canPrintAnamnese ? "Imprimir" : "Requer permissao para imprimir anamnese"} type="button">
               <Printer size={17} />
               Imprimir
             </button>
-            <button className="secondary-button" onClick={() => { void downloadAnamnesePdf(loadedRecord); }} type="button">
+            <button className="secondary-button" disabled={!canPrintAnamnese} onClick={() => { void downloadAnamnesePdf(loadedRecord); }} title={canPrintAnamnese ? "Baixar PDF" : "Requer permissao para exportar anamnese"} type="button">
               <Printer size={17} />
               Baixar PDF
             </button>
-            <button className="primary-button" onClick={() => saveRecord("finalized")} type="button">
+            <button className="primary-button" disabled={!canFinalizeAnamnese || loadedRecord.status === "finalized"} onClick={() => saveRecord("finalized")} title={canFinalizeAnamnese ? "Finalizar anamnese" : "Requer permissao para finalizar anamnese"} type="button">
               <FileCheck2 size={17} />
               Finalizar anamnese
             </button>

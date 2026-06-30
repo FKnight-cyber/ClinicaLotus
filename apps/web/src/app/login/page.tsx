@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { LockKeyhole, LogIn } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ClinicLogo } from "@/components/brand/ClinicLogo";
 import { useAuth } from "@/features/auth/AuthProvider";
@@ -80,6 +81,9 @@ export default function LoginPage() {
             <LogIn aria-hidden="true" size={18} />
             {isSubmitting ? "Entrando..." : "Entrar"}
           </button>
+          <Link className="secondary-button auth-link-button" href="/cadastro">
+            Solicitar cadastro
+          </Link>
         </form>
       </section>
     </main>

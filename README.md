@@ -111,13 +111,15 @@ docker compose exec api sh -lc "cd apps/api && npx prisma db push"
 docker compose exec api sh -lc "cd apps/api && npm run prisma:seed"
 ```
 
-O seed cria permissoes iniciais, o grupo `Administrador` e o usuario `admin` com acesso total.
+O seed cria permissoes iniciais, o grupo `Administrador`, o grupo `Developer` e o usuario `admin`. O grupo `Developer` recebe todos os acessos, incluindo a visibilidade completa do menu lateral. Por enquanto, usuarios sem `Developer` veem apenas `Anamnese` no menu.
 
 ## Autenticacao e autorizacao
 
-A API expõe login interno por JWT em `POST /api/auth/login` e perfil em `GET /api/auth/me`.
+A API expõe login interno por JWT em `POST /api/auth/login`, cadastro pendente em `POST /api/auth/register` e perfil em `GET /api/auth/me`.
 
-As permissoes ficam no banco e podem ser combinadas em grupos customizaveis. O modulo `/api/access` ja oferece a base para administradores listarem permissoes, criarem grupos, criarem usuarios e alterarem permissoes de grupos ou grupos de usuarios.
+No frontend, novos usuarios podem solicitar cadastro em http://localhost:3000/cadastro. O cadastro nasce com status `PENDING` e so consegue entrar depois que um administrador aprovar o usuario na tela de detalhes.
+
+As permissoes ficam no banco e podem ser combinadas em grupos customizaveis. O modulo `/api/access` oferece a base para administradores listarem permissoes, criarem grupos e alterarem permissoes de grupos. A concessao de grupos a usuarios fica concentrada na tela de detalhes do usuario, separando administracao de usuarios da configuracao geral de autorizacoes.
 
 ## Rodando sem Docker
 

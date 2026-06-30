@@ -6,7 +6,9 @@ import { AccessService } from "./access.service";
 import { CreateAccessGroupDto } from "./dto/create-access-group.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateGroupPermissionsDto } from "./dto/update-group-permissions.dto";
+import { UpdateUserDto } from "./dto/update-user.dto";
 import { UpdateUserGroupsDto } from "./dto/update-user-groups.dto";
+import { UpdateUserStatusDto } from "./dto/update-user-status.dto";
 
 @Controller("access")
 @UseGuards(AuthGuard, PermissionsGuard)
@@ -43,10 +45,28 @@ export class AccessController {
     return this.accessService.listUsers();
   }
 
+  @Get("users/:userId")
+  @RequirePermissions("access.users.read")
+  getUser(@Param("userId") userId: string) {
+    return this.accessService.getUser(userId);
+  }
+
   @Post("users")
   @RequirePermissions("access.users.manage")
   createUser(@Body() dto: CreateUserDto) {
     return this.accessService.createUser(dto);
+  }
+
+  @Patch("users/:userId")
+  @RequirePermissions("access.users.manage")
+  updateUser(@Param("userId") userId: string, @Body() dto: UpdateUserDto) {
+    return this.accessService.updateUser(userId, dto);
+  }
+
+  @Patch("users/:userId/status")
+  @RequirePermissions("access.users.manage")
+  updateUserStatus(@Param("userId") userId: string, @Body() dto: UpdateUserStatusDto) {
+    return this.accessService.updateUserStatus(userId, dto);
   }
 
   @Patch("users/:userId/groups")

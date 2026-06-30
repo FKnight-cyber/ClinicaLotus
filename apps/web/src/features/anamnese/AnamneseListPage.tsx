@@ -1,10 +1,10 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Database, Eye, Filter, Plus, RotateCcw, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, Filter, Plus, RotateCcw, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
-import { sampleAnamneseRecords } from "./mockRecords";
-import { createEmptyRecord, formatDateTime, getPatientName, requiredProgress, saveAnamneseRecords, upsertStoredRecord, useAnamneseRecords, useHasMounted } from "./storage";
+import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/features/auth/AuthProvider";
+import { createAnamneseRecord, fetchAnamneseRecords, formatDateTime, getPatientName, requiredProgress } from "./storage";
 import type { AnamneseRecord } from "./types";
 
 const pageSize = 6;
@@ -32,12 +32,38 @@ const emptyFilters: ListFilters = {
 
 export function AnamneseListPage() {
   const router = useRouter();
-  const hasMounted = useHasMounted();
-  const records = useAnamneseRecords();
+  const { hasPermission, token } = useAuth();
+  const canCreateAnamnese = hasPermission("anamnese.create");
+  const [records, setRecords] = useState<AnamneseRecord[]>([]);
   const [filters, setFilters] = useState<ListFilters>(emptyFilters);
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
   const [page, setPage] = useState(1);
+  const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState("Registros disponíveis para consulta");
+
+  useEffect(() => {
+    if (!token) return;
+    let isCurrent = true;
+    setIsLoading(true);
+
+    fetchAnamneseRecords(token)
+      .then((nextRecords) => {
+        if (!isCurrent) return;
+        setRecords(nextRecords);
+        setMessage("Registros carregados do banco");
+      })
+      .catch((error) => {
+        if (!isCurrent) return;
+        setMessage(error instanceof Error ? error.message : "Nao foi possivel carregar os registros.");
+      })
+      .finally(() => {
+        if (isCurrent) setIsLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [token]);
 
   const filteredRecords = useMemo(() => {
     return records.filter((record) => {
@@ -59,31 +85,12 @@ export function AnamneseListPage() {
   const pageRecords = filteredRecords.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const activeFilterCount = Object.entries(filters).filter(([key, value]) => key === "status" || key === "required" ? value !== "all" : Boolean(value)).length;
 
-  function persist(nextRecords: AnamneseRecord[]) {
-    saveAnamneseRecords(nextRecords);
-  }
-
-  function createRecord() {
-    const record = createEmptyRecord();
-    const nextRecords = upsertStoredRecord(record, records);
-    persist(nextRecords);
+  async function createRecord() {
+    if (!token) return;
+    setMessage("Criando rascunho no banco...");
+    const record = await createAnamneseRecord(token, { patientName: "Paciente sem nome" });
+    setRecords((currentRecords) => [record, ...currentRecords]);
     router.push(`/anamnese/${record.id}`);
-  }
-
-  function loadSampleRecords() {
-    const existingIds = new Set(records.map((record) => record.id));
-    const recordsToAdd = sampleAnamneseRecords.filter((record) => !existingIds.has(record.id));
-    const sampleIds = new Set(sampleAnamneseRecords.map((record) => record.id));
-
-    if (recordsToAdd.length === 0) {
-      persist([...sampleAnamneseRecords, ...records.filter((record) => !sampleIds.has(record.id))]);
-      setMessage("Registros de exemplo atualizados");
-      return;
-    }
-
-    persist([...sampleAnamneseRecords, ...records.filter((record) => !sampleIds.has(record.id))]);
-    setPage(1);
-    setMessage(`${recordsToAdd.length} registros de exemplo carregados`);
   }
 
   function updateFilter<Key extends keyof ListFilters>(key: Key, value: ListFilters[Key]) {
@@ -97,8 +104,8 @@ export function AnamneseListPage() {
     setMessage("Filtros limpos");
   }
 
-  if (!hasMounted) {
-    return <div className="loading-panel">Carregando registros locais...</div>;
+  if (isLoading) {
+    return <div className="loading-panel">Carregando registros do banco...</div>;
   }
 
   return (
@@ -110,11 +117,7 @@ export function AnamneseListPage() {
           <p>Consulte rascunhos e anamneses finalizadas antes de abrir o preenchimento detalhado.</p>
         </div>
         <div className="list-actions">
-          <button className="secondary-button" onClick={loadSampleRecords} type="button">
-            <Database size={17} />
-            Carregar exemplos
-          </button>
-          <button className="primary-button" onClick={createRecord} type="button">
+          <button className="primary-button" disabled={!canCreateAnamnese} onClick={createRecord} title={canCreateAnamnese ? "Nova anamnese" : "Requer permissao para criar anamnese"} type="button">
             <Plus size={17} />
             Nova anamnese
           </button>

@@ -4,7 +4,9 @@ import { hashPassword } from "../auth/password";
 import { CreateAccessGroupDto } from "./dto/create-access-group.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateGroupPermissionsDto } from "./dto/update-group-permissions.dto";
+import { UpdateUserDto } from "./dto/update-user.dto";
 import { UpdateUserGroupsDto } from "./dto/update-user-groups.dto";
+import { UpdateUserStatusDto } from "./dto/update-user-status.dto";
 
 @Injectable()
 export class AccessService {
@@ -79,6 +81,21 @@ export class AccessService {
     return this.getUser(userId);
   }
 
+  async updateUser(userId: string, dto: UpdateUserDto) {
+    await this.getUser(userId);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { name: dto.name, email: dto.email || null }
+    });
+    return this.getUser(userId);
+  }
+
+  async updateUserStatus(userId: string, dto: UpdateUserStatusDto) {
+    await this.getUser(userId);
+    await this.prisma.user.update({ where: { id: userId }, data: { status: dto.status } });
+    return this.getUser(userId);
+  }
+
   private async getGroup(groupId: string) {
     const group = await this.prisma.accessGroup.findUnique({
       where: { id: groupId },
@@ -89,7 +106,7 @@ export class AccessService {
     return group;
   }
 
-  private async getUser(userId: string) {
+  async getUser(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {

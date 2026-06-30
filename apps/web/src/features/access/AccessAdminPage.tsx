@@ -1,7 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Save, ShieldCheck, UserPlus, UsersRound } from "lucide-react";
+import { Eye, Save, ShieldCheck, UsersRound } from "lucide-react";
+import Link from "next/link";
 import { useAuth } from "@/features/auth/AuthProvider";
 
 type Permission = {
@@ -58,10 +59,11 @@ export function AccessAdminPage() {
   const [groups, setGroups] = useState<AccessGroup[]>([]);
   const [users, setUsers] = useState<AccessUser[]>([]);
   const [groupDrafts, setGroupDrafts] = useState<Record<string, string[]>>({});
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [groupSearch, setGroupSearch] = useState("");
+  const [userSearch, setUserSearch] = useState("");
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupDescription, setNewGroupDescription] = useState("");
-  const [newGroupPermissions, setNewGroupPermissions] = useState<string[]>([]);
-  const [newUser, setNewUser] = useState({ login: "", name: "", email: "", password: "", groupIds: [] as string[] });
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -71,6 +73,34 @@ export function AccessAdminPage() {
       return accumulator;
     }, {});
   }, [permissions]);
+
+  const filteredGroups = useMemo(() => {
+    const normalizedSearch = groupSearch.trim().toLowerCase();
+
+    if (!normalizedSearch) {
+      return groups;
+    }
+
+    return groups.filter((group) => (
+      group.name.toLowerCase().includes(normalizedSearch) || (group.description ?? "").toLowerCase().includes(normalizedSearch)
+    ));
+  }, [groupSearch, groups]);
+
+  const selectedGroup = groups.find((group) => group.id === selectedGroupId) ?? filteredGroups[0] ?? groups[0] ?? null;
+
+  const filteredUsers = useMemo(() => {
+    const normalizedSearch = userSearch.trim().toLowerCase();
+
+    if (!normalizedSearch) {
+      return users;
+    }
+
+    return users.filter((user) => (
+      user.name.toLowerCase().includes(normalizedSearch)
+      || user.login.toLowerCase().includes(normalizedSearch)
+      || (user.email ?? "").toLowerCase().includes(normalizedSearch)
+    ));
+  }, [userSearch, users]);
 
   const loadAccessData = async () => {
     if (!token) return;
@@ -87,6 +117,7 @@ export function AccessAdminPage() {
     setGroupDrafts(Object.fromEntries(
       nextGroups.map((group) => [group.id, group.permissions.map((item) => item.permission.key)])
     ));
+    setSelectedGroupId((currentGroupId) => currentGroupId && nextGroups.some((group) => group.id === currentGroupId) ? currentGroupId : nextGroups[0]?.id ?? null);
     setIsLoading(false);
   };
 
@@ -105,17 +136,16 @@ export function AccessAdminPage() {
     event.preventDefault();
     if (!token || !newGroupName.trim()) return;
 
-    await apiRequest<AccessGroup>(token, "/api/access/groups", {
+    const createdGroup = await apiRequest<AccessGroup>(token, "/api/access/groups", {
       method: "POST",
       body: JSON.stringify({
         name: newGroupName.trim(),
-        description: newGroupDescription.trim() || undefined,
-        permissionKeys: newGroupPermissions
+        description: newGroupDescription.trim() || undefined
       })
     });
     setNewGroupName("");
     setNewGroupDescription("");
-    setNewGroupPermissions([]);
+    setSelectedGroupId(createdGroup.id);
     setStatusMessage("Grupo criado com sucesso.");
     await loadAccessData();
   };
@@ -127,25 +157,6 @@ export function AccessAdminPage() {
       body: JSON.stringify({ permissionKeys: groupDrafts[groupId] ?? [] })
     });
     setStatusMessage("Permissoes do grupo atualizadas.");
-    await loadAccessData();
-  };
-
-  const handleCreateUser = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!token) return;
-
-    await apiRequest<AccessUser>(token, "/api/access/users", {
-      method: "POST",
-      body: JSON.stringify({
-        login: newUser.login.trim(),
-        name: newUser.name.trim(),
-        email: newUser.email.trim() || undefined,
-        password: newUser.password,
-        groupIds: newUser.groupIds
-      })
-    });
-    setNewUser({ login: "", name: "", email: "", password: "", groupIds: [] });
-    setStatusMessage("Usuario criado com sucesso.");
     await loadAccessData();
   };
 
@@ -170,7 +181,7 @@ export function AccessAdminPage() {
         <div>
           <span className="eyebrow">Administracao</span>
           <h2>Grupos e acessos</h2>
-          <p>Configure permissoes por grupo e vincule usuarios aos perfis internos.</p>
+          <p>Configure permissoes por grupo. A aprovacao e os acessos de cada usuario ficam na tela de detalhes do usuario.</p>
         </div>
         <span className="status-badge"><ShieldCheck aria-hidden="true" size={17} />{permissions.length} permissoes</span>
       </div>
@@ -178,73 +189,72 @@ export function AccessAdminPage() {
       {statusMessage ? <div className="access-message">{statusMessage}</div> : null}
       {isLoading ? <div className="loading-panel">Carregando acessos...</div> : null}
 
-      <div className="access-grid">
-        <section className="plain-panel">
-          <h3>Novo grupo</h3>
-          <form className="access-form" onSubmit={handleCreateGroup}>
-            <label><span>Nome</span><input onChange={(event) => setNewGroupName(event.target.value)} required value={newGroupName} /></label>
-            <label><span>Descricao</span><textarea onChange={(event) => setNewGroupDescription(event.target.value)} value={newGroupDescription} /></label>
-            <PermissionPicker
-              permissionsByModule={permissionsByModule}
-              selected={newGroupPermissions}
-              onToggle={(permissionKey) => setNewGroupPermissions((current) => toggleValue(current, permissionKey))}
-            />
+      <div className="access-management-layout">
+        <section className="plain-panel access-groups-panel">
+          <h3>Grupos</h3>
+          <form className="access-form compact-form" onSubmit={handleCreateGroup}>
+            <label><span>Novo grupo</span><input onChange={(event) => setNewGroupName(event.target.value)} placeholder="Nome do grupo" required value={newGroupName} /></label>
+            <label><span>Descricao</span><input onChange={(event) => setNewGroupDescription(event.target.value)} placeholder="Opcional" value={newGroupDescription} /></label>
             <button className="primary-button" type="submit"><ShieldCheck aria-hidden="true" size={17} />Criar grupo</button>
           </form>
-        </section>
 
-        <section className="plain-panel">
-          <h3>Novo usuario</h3>
-          <form className="access-form" onSubmit={handleCreateUser}>
-            <label><span>Login</span><input onChange={(event) => setNewUser((current) => ({ ...current, login: event.target.value }))} required value={newUser.login} /></label>
-            <label><span>Nome</span><input onChange={(event) => setNewUser((current) => ({ ...current, name: event.target.value }))} required value={newUser.name} /></label>
-            <label><span>Email</span><input onChange={(event) => setNewUser((current) => ({ ...current, email: event.target.value }))} type="email" value={newUser.email} /></label>
-            <label><span>Senha inicial</span><input minLength={6} onChange={(event) => setNewUser((current) => ({ ...current, password: event.target.value }))} required type="password" value={newUser.password} /></label>
-            <div className="access-checklist">
-              {groups.map((group) => (
-                <label className="choice-pill" key={group.id}>
-                  <input checked={newUser.groupIds.includes(group.id)} onChange={() => setNewUser((current) => ({ ...current, groupIds: toggleValue(current.groupIds, group.id) }))} type="checkbox" />
-                  {group.name}
-                </label>
-              ))}
-            </div>
-            <button className="primary-button" type="submit"><UserPlus aria-hidden="true" size={17} />Criar usuario</button>
-          </form>
-        </section>
-      </div>
+          <div className="access-search-box">
+            <input onChange={(event) => setGroupSearch(event.target.value)} placeholder="Buscar grupo" value={groupSearch} />
+            <span>{filteredGroups.length} de {groups.length} grupos</span>
+          </div>
 
-      <div className="access-grid access-grid-wide">
-        <section className="plain-panel">
-          <h3>Grupos cadastrados</h3>
-          <div className="access-list">
-            {groups.map((group) => (
-              <article className="access-card" key={group.id}>
-                <div className="access-card-heading">
-                  <div><strong>{group.name}</strong><span>{group.description || "Sem descricao"}</span></div>
-                  <button className="secondary-button" onClick={() => handleSaveGroupPermissions(group.id)} type="button"><Save aria-hidden="true" size={16} />Salvar</button>
-                </div>
-                <PermissionPicker
-                  permissionsByModule={permissionsByModule}
-                  selected={groupDrafts[group.id] ?? []}
-                  onToggle={(permissionKey) => setGroupDrafts((current) => ({ ...current, [group.id]: toggleValue(current[group.id] ?? [], permissionKey) }))}
-                />
-              </article>
-            ))}
+          <div className="group-directory" aria-label="Grupos cadastrados">
+            {filteredGroups.map((group) => {
+              const permissionCount = groupDrafts[group.id]?.length ?? 0;
+              const isSelected = selectedGroup?.id === group.id;
+
+              return (
+                <button className={`group-directory-item ${isSelected ? "is-selected" : ""}`} key={group.id} onClick={() => setSelectedGroupId(group.id)} type="button">
+                  <strong>{group.name}</strong>
+                  <span>{group.description || "Sem descricao"}</span>
+                  <small>{permissionCount} permissoes</small>
+                </button>
+              );
+            })}
+            {filteredGroups.length === 0 ? <div className="empty-state">Nenhum grupo encontrado.</div> : null}
           </div>
         </section>
 
-        <section className="plain-panel">
-          <h3>Usuarios</h3>
-          <div className="access-list">
-            {users.map((user) => (
-              <article className="access-card compact" key={user.id}>
-                <div className="access-card-heading">
-                  <div><strong>{user.name}</strong><span>{user.login} {user.email ? `- ${user.email}` : ""}</span></div>
+        <section className="plain-panel access-permissions-panel">
+          <div className="access-card-heading">
+            <div>
+              <h3>{selectedGroup ? selectedGroup.name : "Selecione um grupo"}</h3>
+              <p>{selectedGroup?.description || "Escolha um grupo para revisar e editar suas permissoes."}</p>
+            </div>
+            {selectedGroup ? <button className="secondary-button" onClick={() => handleSaveGroupPermissions(selectedGroup.id)} type="button"><Save aria-hidden="true" size={16} />Salvar</button> : null}
+          </div>
+          {selectedGroup ? (
+            <PermissionPicker
+              permissionsByModule={permissionsByModule}
+              selected={groupDrafts[selectedGroup.id] ?? []}
+              onToggle={(permissionKey) => setGroupDrafts((current) => ({ ...current, [selectedGroup.id]: toggleValue(current[selectedGroup.id] ?? [], permissionKey) }))}
+            />
+          ) : null}
+        </section>
+
+        <section className="plain-panel access-users-panel">
+          <div className="access-section-heading">
+            <h3>Usuarios e solicitacoes</h3>
+            <input aria-label="Buscar usuario" onChange={(event) => setUserSearch(event.target.value)} placeholder="Buscar por nome, login ou email" value={userSearch} />
+            <p>{filteredUsers.length} de {users.length} usuarios exibidos</p>
+          </div>
+          <div className="access-user-list">
+            {filteredUsers.map((user) => (
+              <article className="access-card compact user-card" key={user.id}>
+                <div className="access-card-heading user-card-heading">
+                  <div className="user-card-identity"><strong>{user.name}</strong><span>{user.login} {user.email ? `- ${user.email}` : ""}</span></div>
                   <span className="status-badge"><UsersRound aria-hidden="true" size={16} />{user.status}</span>
                 </div>
                 <p>{user.groups.map((group) => group.accessGroup.name).join(", ") || "Sem grupo vinculado"}</p>
+                <Link className="secondary-button" href={`/usuarios/${user.id}`}><Eye aria-hidden="true" size={16} />Abrir detalhes</Link>
               </article>
             ))}
+            {filteredUsers.length === 0 ? <div className="empty-state">Nenhum usuario encontrado.</div> : null}
           </div>
         </section>
       </div>

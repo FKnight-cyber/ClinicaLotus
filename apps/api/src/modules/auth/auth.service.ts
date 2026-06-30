@@ -1,8 +1,10 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { LoginDto } from "./dto/login.dto";
-import { verifyPassword } from "./password";
+import { RegisterDto } from "./dto/register.dto";
+import { UpdateProfileDto } from "./dto/update-profile.dto";
+import { hashPassword, verifyPassword } from "./password";
 
 @Injectable()
 export class AuthService {
@@ -47,6 +49,38 @@ export class AuthService {
     };
   }
 
+  async register(dto: RegisterDto) {
+    const existingUser = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { login: dto.login },
+          ...(dto.email ? [{ email: dto.email }] : [])
+        ]
+      }
+    });
+
+    if (existingUser) {
+      throw new BadRequestException("Já existe um usuário com este login ou email.");
+    }
+
+    const user = await this.prisma.user.create({
+      data: {
+        login: dto.login,
+        name: dto.name,
+        email: dto.email,
+        passwordHash: hashPassword(dto.password),
+        status: "PENDING",
+        mustChangePassword: false
+      },
+      select: { id: true, login: true, name: true, email: true, status: true }
+    });
+
+    return {
+      message: "Cadastro enviado para aprovação do administrador.",
+      user
+    };
+  }
+
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -72,6 +106,15 @@ export class AuthService {
       email: user.email,
       permissions: this.getEffectivePermissions(user.groups)
     };
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { name: dto.name, email: dto.email || null }
+    });
+
+    return this.getProfile(userId);
   }
 
   private getEffectivePermissions(groups: Array<{ accessGroup: { active: boolean; permissions: Array<{ permission: { key: string; active: boolean } }> } }>) {

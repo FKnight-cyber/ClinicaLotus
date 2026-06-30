@@ -23,6 +23,7 @@ type AuthContextValue = {
   user: AuthUser | null;
   login: (login: string, password: string) => Promise<void>;
   logout: () => void;
+  refreshProfile: () => Promise<AuthUser | null>;
   hasPermission: (permission: string) => boolean;
 };
 
@@ -61,6 +62,13 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
     setStatus("anonymous");
   };
 
+  const persistSession = (accessToken: string, nextUser: AuthUser) => {
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ accessToken, user: nextUser }));
+    setToken(accessToken);
+    setUser(nextUser);
+    setStatus("authenticated");
+  };
+
   useEffect(() => {
     const storedSession = localStorage.getItem(AUTH_STORAGE_KEY);
     if (!storedSession) {
@@ -91,15 +99,20 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
         method: "POST",
         body: JSON.stringify({ login, password })
       });
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
-      setToken(session.accessToken);
-      setUser(session.user);
-      setStatus("authenticated");
+      persistSession(session.accessToken, session.user);
       router.replace("/anamnese");
     },
     logout: () => {
       clearSession();
       router.replace("/login");
+    },
+    refreshProfile: async () => {
+      if (!token) return null;
+      const profile = await requestJson<AuthUser>("/api/auth/me", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      persistSession(token, profile);
+      return profile;
     },
     hasPermission: (permission) => user?.permissions.includes(permission) ?? false
   }), [router, status, token, user]);
@@ -111,15 +124,15 @@ export function AuthGate({ children }: Readonly<{ children: React.ReactNode }>) 
   const { status } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
-  const isLoginPage = pathname === "/login";
+  const isPublicPage = pathname === "/login" || pathname === "/cadastro";
 
   useEffect(() => {
-    if (status === "anonymous" && !isLoginPage) {
+    if (status === "anonymous" && !isPublicPage) {
       router.replace("/login");
     }
-  }, [isLoginPage, router, status]);
+  }, [isPublicPage, router, status]);
 
-  if (isLoginPage) {
+  if (isPublicPage) {
     return children;
   }
 
