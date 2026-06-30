@@ -2,6 +2,29 @@
 
 Aplicação em monorepo com Next.js, Nest.js e PostgreSQL.
 
+## Status atual do MVP
+
+O fluxo de anamnese já usa backend e banco reais. Os registros clínicos não são mais salvos em `localStorage`.
+
+Implementado nesta etapa:
+
+- autenticação por JWT;
+- cadastro pendente e aprovação de usuários;
+- grupos e permissões por ação;
+- templates oficiais de anamnese persistidos no banco;
+- fonte compartilhada dos templates em `shared/anamnese-templates.json`;
+- CRUD de anamnese via API;
+- autosave de rascunho durante preenchimento/edição;
+- persistência de perguntas customizadas por registro;
+- bloqueio de edição após finalização;
+- auditoria de criação, atualização, finalização e emissão de PDF;
+- vínculo com paciente;
+- tela inicial de prontuário com timeline clínica;
+- geração de documento/PDF rastreável com código e hash;
+- UI escondendo links e botões sem permissão.
+
+O relatório detalhado fica em [docs/relatorio-implementacao-mvp-anamnese.md](docs/relatorio-implementacao-mvp-anamnese.md).
+
 ## Rodando com Docker em ambiente dev
 
 Pré-requisitos:
@@ -111,7 +134,139 @@ docker compose exec api sh -lc "cd apps/api && npx prisma db push"
 docker compose exec api sh -lc "cd apps/api && npm run prisma:seed"
 ```
 
-O seed cria permissoes iniciais, o grupo `Administrador`, o grupo `Developer` e o usuario `admin`. O grupo `Developer` recebe todos os acessos, incluindo a visibilidade completa do menu lateral. Por enquanto, usuarios sem `Developer` veem apenas `Anamnese` no menu.
+O seed cria permissoes iniciais, o grupo `Administrador`, o grupo `Developer`, o usuario `admin` e os templates oficiais de anamnese. O grupo `Developer` recebe todos os acessos, incluindo a visibilidade completa do menu lateral.
+
+O seed não cria registros clínicos, pacientes de demonstração nem rascunhos de anamnese. Registros clínicos devem nascer apenas pelo uso da aplicação/API.
+
+## Deploy
+
+Esta aplicação tem dois serviços de produção:
+
+- API NestJS + Prisma no Railway;
+- PostgreSQL no Railway;
+- Frontend Next.js no CloudPages/Cloudflare Pages ou serviço equivalente com suporte a Next.js.
+
+### 1. Backend e banco no Railway
+
+Crie um projeto no Railway com dois serviços:
+
+1. `PostgreSQL` usando o template/plugin oficial do Railway.
+2. `API` apontando para este repositório.
+
+No serviço da API, configure o diretório raiz como o repositório inteiro, não `apps/api`, porque o seed lê `shared/anamnese-templates.json`.
+
+Variáveis do serviço `API`:
+
+```txt
+DATABASE_URL=<URL interna do PostgreSQL Railway>
+JWT_SECRET=<segredo forte de produção>
+ADMIN_PASSWORD=<senha inicial forte do admin>
+WEB_ORIGIN=https://seu-front.cloudpages.app
+NODE_ENV=production
+```
+
+Observações:
+
+- Railway injeta `PORT` automaticamente; a API já usa `PORT` como prioridade e `API_PORT` apenas como fallback local.
+- `WEB_ORIGIN` deve ser a URL pública do frontend. Para mais de uma origem, separe por vírgula.
+- Não use `clinica_dev_secret_change_me` em produção.
+- Não use `admin123` em produção.
+
+Build command da API no Railway:
+
+```bash
+npm ci && npm run build --workspace @clinica/api
+```
+
+Start command da API no Railway:
+
+```bash
+cd apps/api && npx prisma generate && npx prisma db push && npm run prisma:seed && node dist/main.js
+```
+
+Esse start command faz, ao subir:
+
+- geração do Prisma Client;
+- sincronização do schema atual no banco;
+- seed de permissões, grupos, usuário admin e templates oficiais;
+- início da API compilada.
+
+Para validar o deploy da API:
+
+```txt
+https://sua-api.up.railway.app/api/health
+```
+
+Deve retornar o healthcheck da API.
+
+#### Nota sobre migrations
+
+O MVP atual usa `prisma db push` para sincronizar schema. Para produção madura, o próximo passo recomendado é versionar migrations Prisma e trocar o start/deploy para `prisma migrate deploy`.
+
+### 2. Frontend no CloudPages/Cloudflare Pages
+
+Crie um projeto no CloudPages apontando para o mesmo repositório.
+
+Configuração recomendada:
+
+```txt
+Framework: Next.js
+Root directory: /
+Build command: npm ci && npm run build --workspace @clinica/web
+Output directory: apps/web/.next
+Node version: 22
+```
+
+Variáveis do frontend:
+
+```txt
+NEXT_PUBLIC_API_URL=https://sua-api.up.railway.app
+```
+
+Depois de publicar o frontend, volte no Railway e atualize `WEB_ORIGIN` com a URL final do CloudPages, por exemplo:
+
+```txt
+WEB_ORIGIN=https://clinica-anamnese.pages.dev
+```
+
+Se houver URL de preview/staging, inclua também:
+
+```txt
+WEB_ORIGIN=https://clinica-anamnese.pages.dev,https://preview-clinica-anamnese.pages.dev
+```
+
+#### Importante sobre hospedagem estática
+
+O frontend atual é uma aplicação Next.js com rotas como `/anamnese/[recordId]` e `/usuarios/[userId]`. Use CloudPages/Cloudflare Pages com suporte a Next.js. Se a plataforma escolhida servir apenas arquivos estáticos, será necessário adaptar o build para export estático ou trocar para uma hospedagem compatível com Next.js.
+
+### 3. Ordem recomendada de deploy
+
+1. Criar PostgreSQL no Railway.
+2. Criar API no Railway.
+3. Configurar variáveis da API.
+4. Fazer deploy da API.
+5. Validar `/api/health`.
+6. Criar frontend no CloudPages.
+7. Configurar `NEXT_PUBLIC_API_URL` com a URL pública da API.
+8. Fazer deploy do frontend.
+9. Atualizar `WEB_ORIGIN` na API com a URL final do frontend.
+10. Redeploy/restart da API.
+11. Acessar o frontend e entrar com o usuário `admin` e a senha definida em `ADMIN_PASSWORD`.
+
+### 4. Checklist pós-deploy
+
+Valide no ambiente publicado:
+
+- login em `/login`;
+- carregamento de templates em `/anamnese`;
+- criação de uma nova anamnese;
+- autosave de rascunho;
+- criação/vínculo de paciente;
+- finalização bloqueando edição;
+- emissão de PDF rastreável;
+- prontuário em `/modulos/prontuario`;
+- tela de usuários e permissões para admin;
+- ausência de botões/links para usuário sem permissão.
 
 ## Autenticacao e autorizacao
 

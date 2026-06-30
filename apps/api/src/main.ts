@@ -17,7 +17,7 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.setGlobalPrefix("api");
 
-  const port = config.get<number>("API_PORT", 3333);
+  const port = Number(config.get<string>("PORT") ?? config.get<string>("API_PORT") ?? 3333);
   await app.listen(port, "0.0.0.0");
 }
 
