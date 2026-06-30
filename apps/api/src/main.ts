@@ -28,8 +28,10 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.setGlobalPrefix("api");
 
-  const port = Number(config.get<string>("PORT") ?? config.get<string>("API_PORT") ?? 3333);
+  const fallbackPort = config.get<string>("NODE_ENV") === "production" ? 8081 : 3333;
+  const port = Number(config.get<string>("PORT") ?? config.get<string>("API_PORT") ?? fallbackPort);
   await app.listen(port, "0.0.0.0");
+  console.log(`API listening on port ${port}`);
 }
 
 void bootstrap();
