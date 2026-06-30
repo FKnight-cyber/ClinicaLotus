@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
+import { AppCacheService } from "../../shared/cache/app-cache.service";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { LoginDto } from "./dto/login.dto";
 import { RegisterDto } from "./dto/register.dto";
@@ -10,7 +11,8 @@ import { hashPassword, verifyPassword } from "./password";
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly jwtService: JwtService
+    private readonly jwtService: JwtService,
+    private readonly cache: AppCacheService
   ) {}
 
   async login(dto: LoginDto) {
@@ -75,6 +77,7 @@ export class AuthService {
       select: { id: true, login: true, name: true, email: true, status: true }
     });
 
+    this.cache.delete("access:users");
     return {
       message: "Cadastro enviado para aprovação do administrador.",
       user
@@ -82,6 +85,10 @@ export class AuthService {
   }
 
   async getProfile(userId: string) {
+    return this.cache.getOrSet(`auth:profile:${userId}`, 30 * 1000, () => this.loadProfile(userId));
+  }
+
+  private async loadProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -114,6 +121,9 @@ export class AuthService {
       data: { name: dto.name, email: dto.email || null }
     });
 
+    this.cache.delete(`auth:profile:${userId}`);
+    this.cache.delete("access:users");
+    this.cache.delete(`access:user:${userId}`);
     return this.getProfile(userId);
   }
 

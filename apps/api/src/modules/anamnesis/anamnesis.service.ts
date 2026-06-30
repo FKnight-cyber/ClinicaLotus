@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import type { AnamnesisRecord, AnamnesisStatus, QuestionType } from "@prisma/client";
+import { AppCacheService } from "../../shared/cache/app-cache.service";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { CreateAnamnesisDto } from "./dto/create-anamnesis.dto";
 import { UpdateAnamnesisDto } from "./dto/update-anamnesis.dto";
@@ -40,9 +41,16 @@ const fieldTypeByQuestionType: Record<QuestionType, string> = {
 
 @Injectable()
 export class AnamnesisService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: AppCacheService
+  ) {}
 
   async getTemplates() {
+    return this.cache.getOrSet("anamnesis:templates", 10 * 60 * 1000, () => this.loadTemplates());
+  }
+
+  private async loadTemplates() {
     const templates = await this.prisma.anamnesisTemplate.findMany({
       where: { active: true },
       orderBy: { title: "asc" },
@@ -90,6 +98,10 @@ export class AnamnesisService {
   }
 
   async list() {
+    return this.cache.getOrSet("anamnesis:records:list", 5 * 1000, () => this.loadRecords());
+  }
+
+  private async loadRecords() {
     const records = await this.prisma.anamnesisRecord.findMany({
       orderBy: { updatedAt: "desc" },
       include: {
@@ -113,8 +125,10 @@ export class AnamnesisService {
   }
 
   async getById(id: string) {
-    const record = await this.findRecord(id);
-    return this.toRecordResponse(record);
+    return this.cache.getOrSet(`anamnesis:record:${id}`, 5 * 1000, async () => {
+      const record = await this.findRecord(id);
+      return this.toRecordResponse(record);
+    });
   }
 
   async create(userId: string, dto: CreateAnamnesisDto) {
@@ -135,6 +149,7 @@ export class AnamnesisService {
     }
 
     const createdRecord = await this.getById(record.id);
+    this.invalidateRecordCaches(record.id);
     await this.writeAuditLog(userId, "CREATE", record.id, null, createdRecord);
     return createdRecord;
   }
@@ -162,6 +177,7 @@ export class AnamnesisService {
       await this.replaceAnswers(id, dto.answers);
     }
 
+    this.invalidateRecordCaches(id);
     const updatedRecord = await this.getById(id);
     await this.writeAuditLog(userId, "UPDATE", id, beforeData, updatedRecord);
     return updatedRecord;
@@ -195,10 +211,19 @@ export class AnamnesisService {
       }
     });
 
+    this.invalidateRecordCaches(id);
     const finalizedRecord = await this.getById(id);
     await this.createMedicalRecordEntry(userId, finalizedRecord);
+    if (finalizedRecord.patientId) {
+      this.cache.delete(`patients:medical-record:${finalizedRecord.patientId}`);
+    }
     await this.writeAuditLog(userId, "FINALIZE", id, beforeData, finalizedRecord);
     return finalizedRecord;
+  }
+
+  private invalidateRecordCaches(recordId: string) {
+    this.cache.delete("anamnesis:records:list");
+    this.cache.delete(`anamnesis:record:${recordId}`);
   }
 
   async emitPdfDocument(userId: string, id: string) {
@@ -265,7 +290,7 @@ export class AnamnesisService {
   }
 
   private async replaceAnswers(recordId: string, answers: AnamnesisAnswers) {
-    const questions = await this.prisma.anamnesisQuestion.findMany({
+    const questions = await this.cache.getOrSet("anamnesis:questions:active", 10 * 60 * 1000, () => this.prisma.anamnesisQuestion.findMany({
       where: { active: true },
       include: {
         section: {
@@ -274,7 +299,7 @@ export class AnamnesisService {
           }
         }
       }
-    });
+    }));
     const questionsByTemplateAndKey = new Map(questions.map((question) => [`${question.section.template.key}:${question.key}`, question]));
     const answerWrites = [];
 
@@ -303,7 +328,7 @@ export class AnamnesisService {
   }
 
   private async getMissingRequiredFields(answers: AnamnesisAnswers) {
-    const requiredQuestions = await this.prisma.anamnesisQuestion.findMany({
+    const requiredQuestions = await this.cache.getOrSet("anamnesis:questions:required", 10 * 60 * 1000, () => this.prisma.anamnesisQuestion.findMany({
       where: { active: true, required: true },
       orderBy: { sortOrder: "asc" },
       include: {
@@ -313,7 +338,7 @@ export class AnamnesisService {
           }
         }
       }
-    });
+    }));
 
     return requiredQuestions
       .filter((question) => !this.isFilled(answers[question.section.template.key]?.[question.key]))
