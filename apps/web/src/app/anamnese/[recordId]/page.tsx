@@ -1,6 +1,8 @@
 import { AppShell } from "@/components/shell/AppShell";
 import { AnamneseWorkspace } from "@/features/anamnese/AnamneseWorkspace";
 
+export const runtime = "edge";
+
 type AnamneseDetailPageProps = {
   params: Promise<{ recordId: string }>;
 };

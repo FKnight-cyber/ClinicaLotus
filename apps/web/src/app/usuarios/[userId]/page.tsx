@@ -1,6 +1,8 @@
 import { AppShell } from "@/components/shell/AppShell";
 import { UserDetailPage } from "@/features/users/UserDetailPage";
 
+export const runtime = "edge";
+
 type UserPageProps = {
   params: Promise<{ userId: string }>;
 };
