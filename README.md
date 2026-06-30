@@ -210,18 +210,22 @@ Crie um projeto no CloudPages apontando para o mesmo repositório.
 Configuração recomendada:
 
 ```txt
-Framework: Next.js
-Root directory: /
-Build command: npm ci && npm run build --workspace @clinica/web
-Output directory: apps/web/.next
+Framework: None
+Root directory: /apps/web
+Build command: npm run build:cloudflare
+Output directory: .vercel/output/static
 Node version: 22
 ```
+
+O build do Cloudflare Pages usa `@cloudflare/next-on-pages` para transformar o build do Next.js em uma saída compatível com Pages. Não use `apps/web/.next` como diretório de saída, porque `.next` é interno do Next.js e não é servido como site estático pelo Cloudflare Pages.
 
 Variáveis do frontend:
 
 ```txt
 NEXT_PUBLIC_API_URL=https://sua-api.up.railway.app
 ```
+
+Inclua sempre `https://` na URL da API.
 
 Depois de publicar o frontend, volte no Railway e atualize `WEB_ORIGIN` com a URL final do CloudPages, por exemplo:
 
