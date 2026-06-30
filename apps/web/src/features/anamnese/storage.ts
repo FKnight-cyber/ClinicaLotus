@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { anamneseTemplates } from "./templates";
-import type { AnamneseRecord, FieldValue, TemplateAnswers, TemplateId, ValidationIssue } from "./types";
+import type { AnamneseRecord, ClinicalDocumentSummary, FieldValue, FormTemplate, MedicalRecordEntry, PatientSummary, TemplateAnswers, TemplateId, ValidationIssue } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
 
@@ -49,6 +49,10 @@ export async function fetchAnamneseRecords(token: string) {
   return records.map(normalizeAnamneseRecord);
 }
 
+export function fetchAnamneseTemplates(token: string) {
+  return apiRequest<FormTemplate[]>(token, "/api/anamneses/templates");
+}
+
 export async function fetchAnamneseRecord(token: string, recordId: string) {
   const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}`);
   return normalizeAnamneseRecord(record);
@@ -75,6 +79,28 @@ export async function finalizeAnamneseRecord(token: string, recordId: string) {
     method: "POST"
   });
   return normalizeAnamneseRecord(record);
+}
+
+export function fetchPatients(token: string, search = "") {
+  const query = search.trim() ? `?search=${encodeURIComponent(search.trim())}` : "";
+  return apiRequest<PatientSummary[]>(token, `/api/patients${query}`);
+}
+
+export function createPatient(token: string, payload: { name: string; birthDate?: string; document?: string }) {
+  return apiRequest<PatientSummary>(token, "/api/patients", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function fetchPatientMedicalRecord(token: string, patientId: string) {
+  return apiRequest<MedicalRecordEntry[]>(token, `/api/patients/${patientId}/prontuario`);
+}
+
+export function emitAnamnesePdfDocument(token: string, recordId: string) {
+  return apiRequest<ClinicalDocumentSummary>(token, `/api/anamneses/${recordId}/documents/pdf`, {
+    method: "POST"
+  });
 }
 
 export function createEmptyRecord(): AnamneseRecord {
@@ -149,10 +175,10 @@ export function getPatientName(record: AnamneseRecord) {
   return record.patientName || "Paciente sem nome";
 }
 
-export function validateRecord(record: AnamneseRecord): ValidationIssue[] {
+export function validateRecord(record: AnamneseRecord, templates: FormTemplate[] = anamneseTemplates): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  for (const template of anamneseTemplates) {
+  for (const template of templates) {
     for (const section of template.sections) {
       for (const field of section.fields) {
         if (field.required && !isFilled(record.answers[template.id][field.id])) {
@@ -165,11 +191,11 @@ export function validateRecord(record: AnamneseRecord): ValidationIssue[] {
   return issues;
 }
 
-export function requiredProgress(record: AnamneseRecord) {
+export function requiredProgress(record: AnamneseRecord, templates: FormTemplate[] = anamneseTemplates) {
   let total = 0;
   let complete = 0;
 
-  for (const template of anamneseTemplates) {
+  for (const template of templates) {
     for (const section of template.sections) {
       for (const field of section.fields) {
         if (field.required) {

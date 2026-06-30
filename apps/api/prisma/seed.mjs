@@ -2,7 +2,6 @@ import { createHash, randomBytes, scryptSync } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { PrismaPg } from "@prisma/adapter-pg";
 import prismaClientPackage from "@prisma/client";
-import ts from "typescript";
 
 const { PrismaClient } = prismaClientPackage;
 
@@ -36,6 +35,9 @@ const basePermissions = [
   ["anamnese.update", "anamnese", "update", "Editar anamneses e customizar perguntas/opções"],
   ["anamnese.finalize", "anamnese", "finalize", "Finalizar anamneses"],
   ["anamnese.print", "anamnese", "print", "Imprimir/exportar anamneses"],
+  ["patients.read", "patients", "read", "Visualizar pacientes"],
+  ["patients.create", "patients", "create", "Cadastrar pacientes"],
+  ["prontuario.read", "prontuario", "read", "Visualizar prontuário"],
   ["access.users.read", "access", "read_users", "Visualizar usuários"],
   ["access.users.manage", "access", "manage_users", "Gerenciar usuários"],
   ["access.groups.read", "access", "read_groups", "Visualizar grupos de acesso"],
@@ -73,17 +75,8 @@ async function syncGroupPermissions(groupId, permissionKeys) {
 }
 
 async function loadOfficialAnamnesisTemplates() {
-  const templatesPath = new URL("../../web/src/features/anamnese/templates.ts", import.meta.url);
-  const source = await readFile(templatesPath, "utf8");
-  const { outputText } = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022
-    }
-  });
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`;
-  const module = await import(moduleUrl);
-  return module.anamneseTemplates;
+  const templatesPath = new URL("../../../shared/anamnese-templates.json", import.meta.url);
+  return JSON.parse(await readFile(templatesPath, "utf8"));
 }
 
 async function syncQuestionOptions(questionId, options = []) {

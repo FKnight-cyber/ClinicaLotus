@@ -49,6 +49,8 @@ model User {
   groups             UserAccessGroup[]
   createdAnamneses   AnamnesisRecord[] @relation("AnamnesisCreatedBy")
   updatedAnamneses   AnamnesisRecord[] @relation("AnamnesisUpdatedBy")
+  medicalRecordEntries MedicalRecordEntry[]
+  emittedDocuments   ClinicalDocument[]
   auditLogs          AuditLog[]
 }
 
@@ -101,6 +103,8 @@ model Patient {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   anamnesisRecord AnamnesisRecord[]
+  medicalRecordEntries MedicalRecordEntry[]
+  clinicalDocuments ClinicalDocument[]
 }
 
 model AnamnesisTemplate {
@@ -185,6 +189,38 @@ model AnamnesisRecord {
   updatedBy   User?              @relation("AnamnesisUpdatedBy", fields: [updatedById], references: [id])
   answers     AnamnesisAnswer[]
   tableRows   AnamnesisTableRow[]
+  medicalRecordEntries MedicalRecordEntry[]
+  clinicalDocuments ClinicalDocument[]
+}
+
+model MedicalRecordEntry {
+  id                String           @id @default(uuid())
+  patientId         String
+  anamnesisRecordId String?
+  type              String
+  title             String
+  summary           String?
+  createdById       String?
+  createdAt         DateTime         @default(now())
+  patient           Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  anamnesisRecord   AnamnesisRecord? @relation(fields: [anamnesisRecordId], references: [id], onDelete: SetNull)
+  createdBy         User?            @relation(fields: [createdById], references: [id])
+}
+
+model ClinicalDocument {
+  id                String           @id @default(uuid())
+  code              String           @unique
+  type              String
+  fileName          String
+  contentHash       String
+  metadataJson      String?
+  patientId         String?
+  anamnesisRecordId String
+  emittedById       String?
+  emittedAt         DateTime         @default(now())
+  patient           Patient?         @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  anamnesisRecord   AnamnesisRecord  @relation(fields: [anamnesisRecordId], references: [id], onDelete: Cascade)
+  emittedBy         User?            @relation(fields: [emittedById], references: [id])
 }
 
 model AnamnesisAnswer {

@@ -1,8 +1,7 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { clinicLogoSvg } from "@/components/brand/clinicLogoSvg";
-import { anamneseTemplates } from "./templates";
-import type { AnamneseRecord, FieldValue, FormField, TableValue, TemplateId } from "./types";
+import type { AnamneseRecord, FieldValue, FormField, FormTemplate, TableValue, TemplateId } from "./types";
 
 type JsPdfWithAutoTable = jsPDF & {
   lastAutoTable?: {
@@ -315,12 +314,12 @@ function addFooters(doc: jsPDF) {
   }
 }
 
-export async function downloadAnamnesePdf(record: AnamneseRecord) {
+export async function downloadAnamnesePdf(record: AnamneseRecord, templates: FormTemplate[]) {
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
   await drawHeader(doc, record);
   let y = drawSummary(doc, record, margin + 42) + 8;
 
-  for (const template of anamneseTemplates) {
+  for (const template of templates) {
     y = drawSectionTitle(doc, template.title, y, "template");
 
     for (const section of template.sections) {

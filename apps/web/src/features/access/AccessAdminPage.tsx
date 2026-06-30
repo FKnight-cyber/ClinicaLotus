@@ -55,6 +55,7 @@ async function apiRequest<T>(token: string, path: string, options: RequestInit =
 
 export function AccessAdminPage() {
   const { hasPermission, token } = useAuth();
+  const canManageGroups = hasPermission("access.groups.manage");
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [groups, setGroups] = useState<AccessGroup[]>([]);
   const [users, setUsers] = useState<AccessUser[]>([]);
@@ -134,7 +135,7 @@ export function AccessAdminPage() {
 
   const handleCreateGroup = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!token || !newGroupName.trim()) return;
+    if (!token || !canManageGroups || !newGroupName.trim()) return;
 
     const createdGroup = await apiRequest<AccessGroup>(token, "/api/access/groups", {
       method: "POST",
@@ -151,7 +152,7 @@ export function AccessAdminPage() {
   };
 
   const handleSaveGroupPermissions = async (groupId: string) => {
-    if (!token) return;
+    if (!token || !canManageGroups) return;
     await apiRequest<AccessGroup>(token, `/api/access/groups/${groupId}/permissions`, {
       method: "PATCH",
       body: JSON.stringify({ permissionKeys: groupDrafts[groupId] ?? [] })
@@ -192,11 +193,13 @@ export function AccessAdminPage() {
       <div className="access-management-layout">
         <section className="plain-panel access-groups-panel">
           <h3>Grupos</h3>
-          <form className="access-form compact-form" onSubmit={handleCreateGroup}>
-            <label><span>Novo grupo</span><input onChange={(event) => setNewGroupName(event.target.value)} placeholder="Nome do grupo" required value={newGroupName} /></label>
-            <label><span>Descricao</span><input onChange={(event) => setNewGroupDescription(event.target.value)} placeholder="Opcional" value={newGroupDescription} /></label>
-            <button className="primary-button" type="submit"><ShieldCheck aria-hidden="true" size={17} />Criar grupo</button>
-          </form>
+          {canManageGroups ? (
+            <form className="access-form compact-form" onSubmit={handleCreateGroup}>
+              <label><span>Novo grupo</span><input onChange={(event) => setNewGroupName(event.target.value)} placeholder="Nome do grupo" required value={newGroupName} /></label>
+              <label><span>Descricao</span><input onChange={(event) => setNewGroupDescription(event.target.value)} placeholder="Opcional" value={newGroupDescription} /></label>
+              <button className="primary-button" type="submit"><ShieldCheck aria-hidden="true" size={17} />Criar grupo</button>
+            </form>
+          ) : null}
 
           <div className="access-search-box">
             <input onChange={(event) => setGroupSearch(event.target.value)} placeholder="Buscar grupo" value={groupSearch} />
@@ -226,10 +229,11 @@ export function AccessAdminPage() {
               <h3>{selectedGroup ? selectedGroup.name : "Selecione um grupo"}</h3>
               <p>{selectedGroup?.description || "Escolha um grupo para revisar e editar suas permissoes."}</p>
             </div>
-            {selectedGroup ? <button className="secondary-button" onClick={() => handleSaveGroupPermissions(selectedGroup.id)} type="button"><Save aria-hidden="true" size={16} />Salvar</button> : null}
+            {selectedGroup && canManageGroups ? <button className="secondary-button" onClick={() => handleSaveGroupPermissions(selectedGroup.id)} type="button"><Save aria-hidden="true" size={16} />Salvar</button> : null}
           </div>
           {selectedGroup ? (
             <PermissionPicker
+              canManageGroups={canManageGroups}
               permissionsByModule={permissionsByModule}
               selected={groupDrafts[selectedGroup.id] ?? []}
               onToggle={(permissionKey) => setGroupDrafts((current) => ({ ...current, [selectedGroup.id]: toggleValue(current[selectedGroup.id] ?? [], permissionKey) }))}
@@ -263,10 +267,12 @@ export function AccessAdminPage() {
 }
 
 function PermissionPicker({
+  canManageGroups,
   onToggle,
   permissionsByModule,
   selected
 }: {
+  canManageGroups: boolean;
   onToggle: (permissionKey: string) => void;
   permissionsByModule: Record<string, Permission[]>;
   selected: string[];
@@ -279,7 +285,7 @@ function PermissionPicker({
           <div className="access-checklist">
             {modulePermissions.map((permission) => (
               <label className="choice-pill" key={permission.key} title={permission.key}>
-                <input checked={selected.includes(permission.key)} onChange={() => onToggle(permission.key)} type="checkbox" />
+                <input checked={selected.includes(permission.key)} disabled={!canManageGroups} onChange={() => onToggle(permission.key)} type="checkbox" />
                 {permission.description}
               </label>
             ))}

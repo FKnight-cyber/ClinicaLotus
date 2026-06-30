@@ -165,10 +165,12 @@ export function UserDetailPage({ userId }: { userId: string }) {
           <p>{targetUser.login} {targetUser.email ? `- ${targetUser.email}` : ""}</p>
         </div>
         <div className="detail-heading-actions">
-          <Link className="back-link" href="/modulos/controle-acesso"><ArrowLeft size={16} />Controle de acesso</Link>
-          <span className={`status-badge ${targetUser.status === "ACTIVE" ? "is-finalized" : ""}`}>
-            <UserCheck aria-hidden="true" size={16} />{targetUser.status}
-          </span>
+          {canReadUsers ? <Link className="back-link" href="/modulos/controle-acesso"><ArrowLeft size={16} />Controle de acesso</Link> : null}
+          {canManageUsers ? (
+            <span className={`status-badge ${targetUser.status === "ACTIVE" ? "is-finalized" : ""}`}>
+              <UserCheck aria-hidden="true" size={16} />{targetUser.status}
+            </span>
+          ) : null}
         </div>
       </div>
 
@@ -181,13 +183,13 @@ export function UserDetailPage({ userId }: { userId: string }) {
             <label><span>Login</span><input disabled value={targetUser.login} /></label>
             <label><span>Nome</span><input onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} required value={draft.name} /></label>
             <label><span>Email</span><input onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} type="email" value={draft.email} /></label>
-            <button className="primary-button" disabled={!isSelf && !canManageUsers} type="submit"><Save aria-hidden="true" size={17} />Salvar dados</button>
+            {isSelf || canManageUsers ? <button className="primary-button" type="submit"><Save aria-hidden="true" size={17} />Salvar dados</button> : null}
           </form>
         </section>
 
-        <section className="plain-panel">
-          <h3>Aprovacao e status</h3>
-          {canManageUsers ? (
+        {canManageUsers ? (
+          <section className="plain-panel">
+            <h3>Aprovacao e status</h3>
             <div className="access-form">
               <label><span>Status</span><select onChange={(event) => setStatusDraft(event.target.value as AccessUser["status"])} value={statusDraft}>
                 <option value="PENDING">Pendente</option>
@@ -197,8 +199,8 @@ export function UserDetailPage({ userId }: { userId: string }) {
               <button className="secondary-button" onClick={() => handleSaveStatus()} type="button"><Save aria-hidden="true" size={17} />Salvar status</button>
               {targetUser.status === "PENDING" ? <button className="primary-button" onClick={() => handleSaveStatus("ACTIVE")} type="button"><CheckCircle2 aria-hidden="true" size={17} />Aprovar cadastro</button> : null}
             </div>
-          ) : <p>Somente administradores podem aprovar cadastro ou alterar status.</p>}
-        </section>
+          </section>
+        ) : null}
       </div>
 
       {canManageUsers ? (

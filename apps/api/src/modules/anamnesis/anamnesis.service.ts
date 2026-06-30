@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import type { AnamnesisRecord, AnamnesisStatus, QuestionType } from "@prisma/client";
 import { PrismaService } from "../../shared/prisma/prisma.service";
@@ -193,8 +194,45 @@ export class AnamnesisService {
     });
 
     const finalizedRecord = await this.getById(id);
+    await this.createMedicalRecordEntry(userId, finalizedRecord);
     await this.writeAuditLog(userId, "FINALIZE", id, beforeData, finalizedRecord);
     return finalizedRecord;
+  }
+
+  async emitPdfDocument(userId: string, id: string) {
+    const record = await this.findRecord(id);
+
+    if (record.status !== "FINALIZED") {
+      throw new BadRequestException("Apenas anamneses finalizadas podem gerar documento rastreável.");
+    }
+
+    const snapshot = this.toRecordResponse(record);
+    const contentHash = createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
+    const document = await this.prisma.clinicalDocument.create({
+      data: {
+        code: await this.nextDocumentCode(),
+        type: "ANAMNESIS_PDF",
+        fileName: `${record.code}.pdf`,
+        contentHash,
+        metadataJson: JSON.stringify({ recordCode: record.code, emittedFrom: "web-pdf-export" }),
+        patientId: record.patientId,
+        anamnesisRecordId: record.id,
+        emittedById: userId
+      }
+    });
+
+    await this.writeAuditLog(userId, "EMIT_PDF", id, null, document);
+
+    return {
+      id: document.id,
+      code: document.code,
+      type: document.type,
+      fileName: document.fileName,
+      contentHash: document.contentHash,
+      emittedAt: document.emittedAt.toISOString(),
+      patientId: document.patientId,
+      anamnesisRecordId: document.anamnesisRecordId
+    };
   }
 
   private async findRecord(id: string) {
@@ -341,6 +379,34 @@ export class AnamnesisService {
     const startOfYear = new Date(year, 0, 1);
     const recordsThisYear = await this.prisma.anamnesisRecord.count({ where: { createdAt: { gte: startOfYear } } });
     return `ANA-${year}-${String(recordsThisYear + 1).padStart(4, "0")}`;
+  }
+
+  private async nextDocumentCode() {
+    const year = new Date().getFullYear();
+    const startOfYear = new Date(year, 0, 1);
+    const documentsThisYear = await this.prisma.clinicalDocument.count({ where: { emittedAt: { gte: startOfYear } } });
+    return `DOC-${year}-${String(documentsThisYear + 1).padStart(4, "0")}`;
+  }
+
+  private async createMedicalRecordEntry(userId: string, record: ReturnType<AnamnesisService["toRecordResponse"]>) {
+    if (!record.patientId) return;
+
+    const existingEntry = await this.prisma.medicalRecordEntry.findFirst({
+      where: { anamnesisRecordId: record.id, type: "ANAMNESIS_FINALIZED" }
+    });
+
+    if (existingEntry) return;
+
+    await this.prisma.medicalRecordEntry.create({
+      data: {
+        patientId: record.patientId,
+        anamnesisRecordId: record.id,
+        type: "ANAMNESIS_FINALIZED",
+        title: `Anamnese finalizada ${record.code}`,
+        summary: `Anamnese finalizada para ${record.patientName}.`,
+        createdById: userId
+      }
+    });
   }
 
   private async writeAuditLog(userId: string, action: string, entityId: string, beforeData: unknown, afterData: unknown) {

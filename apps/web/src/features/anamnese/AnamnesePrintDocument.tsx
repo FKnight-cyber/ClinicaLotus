@@ -1,9 +1,9 @@
 import { ClinicLogo } from "@/components/brand/ClinicLogo";
-import { anamneseTemplates } from "./templates";
-import type { AnamneseRecord, FieldValue, FormField, TableValue, TemplateId } from "./types";
+import type { AnamneseRecord, FieldValue, FormField, FormTemplate, TableValue, TemplateId } from "./types";
 
 type AnamnesePrintDocumentProps = {
   record: AnamneseRecord;
+  templates: FormTemplate[];
 };
 
 function getPrintablePatientName(record: AnamneseRecord) {
@@ -106,7 +106,7 @@ function PrintField({ field, value }: { field: FormField; value: FieldValue | un
   );
 }
 
-export function AnamnesePrintDocument({ record }: AnamnesePrintDocumentProps) {
+export function AnamnesePrintDocument({ record, templates }: AnamnesePrintDocumentProps) {
   return (
     <article className="print-document" aria-label="Documento para impressão da anamnese">
       <header className="print-cover-header">
@@ -143,7 +143,7 @@ export function AnamnesePrintDocument({ record }: AnamnesePrintDocumentProps) {
         </div>
       </section>
 
-      {anamneseTemplates.map((template) => (
+      {templates.map((template) => (
         <section className="print-template" key={template.id}>
           <h2>{template.title}</h2>
           {template.sections.map((section) => {

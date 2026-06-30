@@ -3,6 +3,7 @@ import { AppShell } from "@/components/shell/AppShell";
 import { PlaceholderModule } from "@/components/placeholder/PlaceholderModule";
 import { getModuleBySlug } from "@/config/modules";
 import { AccessAdminPage } from "@/features/access/AccessAdminPage";
+import { ProntuarioPage } from "@/features/prontuario/ProntuarioPage";
 
 type PlaceholderPageProps = {
   params: Promise<{ slug: string }>;
@@ -20,6 +21,14 @@ export default async function PlaceholderPage({ params }: PlaceholderPageProps) 
     return (
       <AppShell activeSlug={moduleItem.slug}>
         <AccessAdminPage />
+      </AppShell>
+    );
+  }
+
+  if (moduleItem.slug === "prontuario") {
+    return (
+      <AppShell activeSlug={moduleItem.slug}>
+        <ProntuarioPage />
       </AppShell>
     );
   }

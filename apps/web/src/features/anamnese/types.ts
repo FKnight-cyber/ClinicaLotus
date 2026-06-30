@@ -58,6 +58,36 @@ export type AnamneseRecord = {
   customFields?: Partial<Record<TemplateId, Record<string, FormField[]>>>;
 };
 
+export type PatientSummary = {
+  id: string;
+  name: string;
+  birthDate?: string | null;
+  document?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MedicalRecordEntry = {
+  id: string;
+  type: string;
+  title: string;
+  summary?: string | null;
+  createdAt: string;
+  anamnesisRecord?: { id: string; code: string; status: string } | null;
+  createdBy?: { id: string; name: string; login: string } | null;
+};
+
+export type ClinicalDocumentSummary = {
+  id: string;
+  code: string;
+  type: string;
+  fileName: string;
+  contentHash: string;
+  emittedAt: string;
+  patientId?: string | null;
+  anamnesisRecordId: string;
+};
+
 export type ValidationIssue = {
   templateTitle: string;
   sectionTitle: string;

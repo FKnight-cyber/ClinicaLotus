@@ -4,8 +4,9 @@ import { ChevronLeft, ChevronRight, Eye, Filter, Plus, RotateCcw, X } from "luci
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/features/auth/AuthProvider";
-import { createAnamneseRecord, fetchAnamneseRecords, formatDateTime, getPatientName, requiredProgress } from "./storage";
-import type { AnamneseRecord } from "./types";
+import { createAnamneseRecord, fetchAnamneseRecords, fetchAnamneseTemplates, formatDateTime, getPatientName, requiredProgress } from "./storage";
+import { anamneseTemplates as fallbackTemplates } from "./templates";
+import type { AnamneseRecord, FormTemplate } from "./types";
 
 const pageSize = 6;
 
@@ -35,6 +36,7 @@ export function AnamneseListPage() {
   const { hasPermission, token } = useAuth();
   const canCreateAnamnese = hasPermission("anamnese.create");
   const [records, setRecords] = useState<AnamneseRecord[]>([]);
+  const [templates, setTemplates] = useState<FormTemplate[]>(fallbackTemplates);
   const [filters, setFilters] = useState<ListFilters>(emptyFilters);
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
   const [page, setPage] = useState(1);
@@ -46,10 +48,11 @@ export function AnamneseListPage() {
     let isCurrent = true;
     setIsLoading(true);
 
-    fetchAnamneseRecords(token)
-      .then((nextRecords) => {
+    Promise.all([fetchAnamneseRecords(token), fetchAnamneseTemplates(token)])
+      .then(([nextRecords, nextTemplates]) => {
         if (!isCurrent) return;
         setRecords(nextRecords);
+        setTemplates(nextTemplates);
         setMessage("Registros carregados do banco");
       })
       .catch((error) => {
@@ -67,7 +70,7 @@ export function AnamneseListPage() {
 
   const filteredRecords = useMemo(() => {
     return records.filter((record) => {
-      const progress = requiredProgress(record);
+      const progress = requiredProgress(record, templates);
       const patientMatches = getPatientName(record).toLowerCase().includes(filters.patient.trim().toLowerCase());
       const codeMatches = record.code.toLowerCase().includes(filters.code.trim().toLowerCase());
       const statusMatches = filters.status === "all" || record.status === filters.status;
@@ -78,7 +81,7 @@ export function AnamneseListPage() {
 
       return patientMatches && codeMatches && statusMatches && requiredMatches && updatedFromMatches && updatedToMatches;
     });
-  }, [filters, records]);
+  }, [filters, records, templates]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -116,12 +119,14 @@ export function AnamneseListPage() {
           <h2>Registros de anamnese</h2>
           <p>Consulte rascunhos e anamneses finalizadas antes de abrir o preenchimento detalhado.</p>
         </div>
-        <div className="list-actions">
-          <button className="primary-button" disabled={!canCreateAnamnese} onClick={createRecord} title={canCreateAnamnese ? "Nova anamnese" : "Requer permissao para criar anamnese"} type="button">
-            <Plus size={17} />
-            Nova anamnese
-          </button>
-        </div>
+        {canCreateAnamnese ? (
+          <div className="list-actions">
+            <button className="primary-button" onClick={createRecord} type="button">
+              <Plus size={17} />
+              Nova anamnese
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div className="list-toolbar">
@@ -219,7 +224,7 @@ export function AnamneseListPage() {
               </tr>
             ) : (
               pageRecords.map((record) => {
-                const progress = requiredProgress(record);
+                const progress = requiredProgress(record, templates);
                 return (
                   <tr key={record.id}>
                     <td>

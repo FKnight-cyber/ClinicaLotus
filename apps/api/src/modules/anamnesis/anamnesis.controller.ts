@@ -47,4 +47,10 @@ export class AnamnesisController {
   finalize(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string) {
     return this.anamnesisService.finalize(request.user.id, id);
   }
+
+  @Post(":id/documents/pdf")
+  @RequirePermissions("anamnese.print")
+  emitPdfDocument(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string) {
+    return this.anamnesisService.emitPdfDocument(request.user.id, id);
+  }
 }

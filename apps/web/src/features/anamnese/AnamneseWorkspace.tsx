@@ -7,9 +7,9 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { AnamnesePrintDocument } from "./AnamnesePrintDocument";
 import { downloadAnamnesePdf } from "./pdfExport";
-import { createAnamneseRecord, fetchAnamneseRecord, finalizeAnamneseRecord, saveAnamneseRecord } from "./storage";
-import { anamneseTemplates } from "./templates";
-import type { AnamneseRecord, FieldValue, FormField, TableValue, TemplateAnswers, TemplateId, ValidationIssue } from "./types";
+import { createAnamneseRecord, createPatient, emitAnamnesePdfDocument, fetchAnamneseRecord, fetchAnamneseTemplates, fetchPatientMedicalRecord, fetchPatients, finalizeAnamneseRecord, saveAnamneseRecord } from "./storage";
+import { anamneseTemplates as fallbackTemplates } from "./templates";
+import type { AnamneseRecord, FieldValue, FormField, FormTemplate, MedicalRecordEntry, PatientSummary, TableValue, TemplateAnswers, TemplateId, ValidationIssue } from "./types";
 
 const yesNoOptions = ["Sim", "Não"];
 
@@ -68,10 +68,10 @@ function getPatientName(record: AnamneseRecord) {
   return record.patientName || "Paciente sem nome";
 }
 
-function validateRecord(record: AnamneseRecord): ValidationIssue[] {
+function validateRecord(record: AnamneseRecord, templates: FormTemplate[]): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  for (const template of anamneseTemplates) {
+  for (const template of templates) {
     for (const section of template.sections) {
       for (const field of section.fields) {
         if (field.required && !isFilled(record.answers[template.id][field.id])) {
@@ -84,11 +84,11 @@ function validateRecord(record: AnamneseRecord): ValidationIssue[] {
   return issues;
 }
 
-function requiredProgress(record: AnamneseRecord) {
+function requiredProgress(record: AnamneseRecord, templates: FormTemplate[]) {
   let total = 0;
   let complete = 0;
 
-  for (const template of anamneseTemplates) {
+  for (const template of templates) {
     for (const section of template.sections) {
       for (const field of section.fields) {
         if (field.required) {
@@ -123,11 +123,12 @@ function calculateAge(birthDate: string) {
 type FieldRendererProps = {
   field: FormField;
   value: FieldValue | undefined;
+  canEditRecord: boolean;
   canUpdateAnamneseOptions: boolean;
   onChange: (value: FieldValue) => void;
 };
 
-function FieldRenderer({ canUpdateAnamneseOptions, field, value, onChange }: FieldRendererProps) {
+function FieldRenderer({ canEditRecord, canUpdateAnamneseOptions, field, value, onChange }: FieldRendererProps) {
   const [newTableRowName, setNewTableRowName] = useState("");
   const [editingRowName, setEditingRowName] = useState<string | null>(null);
   const [editingRowDraft, setEditingRowDraft] = useState("");
@@ -136,6 +137,7 @@ function FieldRenderer({ canUpdateAnamneseOptions, field, value, onChange }: Fie
     return (
       <textarea
         aria-label={field.label}
+        disabled={!canEditRecord}
         onChange={(event) => onChange(event.target.value)}
         placeholder={field.placeholder}
         value={typeof value === "string" ? value : ""}
@@ -155,6 +157,7 @@ function FieldRenderer({ canUpdateAnamneseOptions, field, value, onChange }: Fie
             <label className="choice-pill" key={option}>
               <input
                 checked={answer === option}
+                disabled={!canEditRecord}
                 name={field.id}
                 onChange={() => onChange({ answer: option, details })}
                 type="radio"
@@ -166,6 +169,7 @@ function FieldRenderer({ canUpdateAnamneseOptions, field, value, onChange }: Fie
         {answer === "Sim" ? (
           <textarea
             aria-label={`${field.label} - complemento`}
+            disabled={!canEditRecord}
             onChange={(event) => onChange({ answer, details: event.target.value })}
             placeholder="Descreva a resposta"
             value={details}
@@ -179,6 +183,7 @@ function FieldRenderer({ canUpdateAnamneseOptions, field, value, onChange }: Fie
     return (
       <input
         aria-label={field.label}
+        disabled={!canEditRecord}
         onChange={(event) => onChange(event.target.value)}
         placeholder={field.placeholder}
         type={field.type}
@@ -194,6 +199,7 @@ function FieldRenderer({ canUpdateAnamneseOptions, field, value, onChange }: Fie
           <label className="choice-pill" key={option}>
             <input
               checked={value === option}
+              disabled={!canEditRecord}
               name={field.id}
               onChange={() => onChange(option)}
               type="radio"
@@ -216,6 +222,7 @@ function FieldRenderer({ canUpdateAnamneseOptions, field, value, onChange }: Fie
             <label className="choice-pill" key={option}>
               <input
                 checked={checked}
+                disabled={!canEditRecord}
                 onChange={() => onChange(checked ? selected.filter((item) => item !== option) : [...selected, option])}
                 type="checkbox"
               />
@@ -306,6 +313,7 @@ function FieldRenderer({ canUpdateAnamneseOptions, field, value, onChange }: Fie
                     <div className="inline-edit-row">
                       <input
                         aria-label={`Editar opção ${row}`}
+                        disabled={!canUpdateAnamneseOptions}
                         onChange={(event) => setEditingRowDraft(event.target.value)}
                         onKeyDown={(event) => {
                           if (event.key === "Enter") {
@@ -329,14 +337,16 @@ function FieldRenderer({ canUpdateAnamneseOptions, field, value, onChange }: Fie
                         {customRows.includes(row) ? <span className="custom-row-badge">Nova opção</span> : null}
                         {baseRows.includes(row) && renamedRows[row] ? <span className="custom-row-badge">Editada</span> : null}
                       </span>
-                      <span className="custom-row-actions">
-                        <button aria-label={`Editar opção ${renamedRows[row] ?? row}`} onClick={() => { setEditingRowName(row); setEditingRowDraft(renamedRows[row] ?? row); }} type="button">
-                          <Pencil size={14} />
-                        </button>
-                        <button aria-label={`Remover opção ${renamedRows[row] ?? row}`} onClick={() => removeTableRow(row)} type="button">
-                          <Trash2 size={14} />
-                        </button>
-                      </span>
+                      {canUpdateAnamneseOptions ? (
+                        <span className="custom-row-actions">
+                          <button aria-label={`Editar opção ${renamedRows[row] ?? row}`} onClick={() => { setEditingRowName(row); setEditingRowDraft(renamedRows[row] ?? row); }} type="button">
+                            <Pencil size={14} />
+                          </button>
+                          <button aria-label={`Remover opção ${renamedRows[row] ?? row}`} onClick={() => removeTableRow(row)} type="button">
+                            <Trash2 size={14} />
+                          </button>
+                        </span>
+                      ) : null}
                     </div>
                   )}
                 </th>
@@ -344,6 +354,7 @@ function FieldRenderer({ canUpdateAnamneseOptions, field, value, onChange }: Fie
                   <td key={column.id}>
                     <input
                       aria-label={`${field.label} - ${row} - ${column.label}`}
+                      disabled={!canEditRecord}
                       onChange={(event) => {
                         onChange({
                           ...tableValue,
@@ -401,9 +412,13 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const canUpdateAnamnese = hasPermission("anamnese.update");
   const canFinalizeAnamnese = hasPermission("anamnese.finalize");
   const canPrintAnamnese = hasPermission("anamnese.print");
+  const canReadPatients = hasPermission("patients.read");
+  const canCreatePatient = hasPermission("patients.create");
+  const canReadProntuario = hasPermission("prontuario.read");
   const canUpdateAnamneseOptions = canUpdateAnamnese;
   const canUpdateAnamneseQuestions = canUpdateAnamnese;
   const [currentRecord, setCurrentRecord] = useState<AnamneseRecord | null>(null);
+  const [templates, setTemplates] = useState<FormTemplate[]>(fallbackTemplates);
   const [activeTemplateId, setActiveTemplateId] = useState<TemplateId>("nursing-admission");
   const [activeSectionIndex, setActiveSectionIndex] = useState(0);
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
@@ -412,15 +427,22 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const [newQuestionType, setNewQuestionType] = useState<"textarea" | "yesNoDetails">("textarea");
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const [editingQuestionLabel, setEditingQuestionLabel] = useState("");
+  const [patients, setPatients] = useState<PatientSummary[]>([]);
+  const [patientSearch, setPatientSearch] = useState("");
+  const [newPatientName, setNewPatientName] = useState("");
+  const [newPatientBirthDate, setNewPatientBirthDate] = useState("");
+  const [newPatientDocument, setNewPatientDocument] = useState("");
+  const [medicalRecordEntries, setMedicalRecordEntries] = useState<MedicalRecordEntry[]>([]);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !canReadPatients) return;
     let isCurrent = true;
 
-    fetchAnamneseRecord(token, recordId)
-      .then((record) => {
+    Promise.all([fetchAnamneseRecord(token, recordId), fetchAnamneseTemplates(token)])
+      .then(([record, nextTemplates]) => {
         if (!isCurrent) return;
         setCurrentRecord(record);
+        setTemplates(nextTemplates);
         setMessage("Anamnese carregada do banco");
       })
       .catch((error) => {
@@ -433,12 +455,45 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     };
   }, [recordId, token]);
 
+  useEffect(() => {
+    if (!token) return;
+    let isCurrent = true;
+
+    fetchPatients(token, patientSearch)
+      .then((nextPatients) => {
+        if (isCurrent) setPatients(nextPatients);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [canReadPatients, patientSearch, token]);
+
+  useEffect(() => {
+    if (!token || !canReadProntuario || !currentRecord?.patientId) {
+      setMedicalRecordEntries([]);
+      return;
+    }
+    let isCurrent = true;
+
+    fetchPatientMedicalRecord(token, currentRecord.patientId)
+      .then((entries) => {
+        if (isCurrent) setMedicalRecordEntries(entries);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [canReadProntuario, currentRecord?.patientId, token]);
+
   if (!currentRecord) {
     return <div className="loading-panel">Carregando anamnese...</div>;
   }
 
   const loadedRecord = currentRecord;
-  const activeTemplate = anamneseTemplates.find((template) => template.id === activeTemplateId) ?? anamneseTemplates[0];
+  const activeTemplate = templates.find((template) => template.id === activeTemplateId) ?? templates[0] ?? fallbackTemplates[0];
   const activeSection = activeTemplate.sections[activeSectionIndex] ?? activeTemplate.sections[0];
   const customFields = loadedRecord.customFields?.[activeTemplate.id]?.[activeSection.id] ?? [];
   const sectionOverrides = loadedRecord.customFields?.[activeTemplate.id]?.[`__overrides__${activeSection.id}`] ?? [];
@@ -448,7 +503,13 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     .filter((field) => !removedFieldIds.has(field.id))
     .map((field) => renamedFields.has(field.id) ? { ...field, label: renamedFields.get(field.id) ?? field.label, helper: field.helper ? `${field.helper} Título editado neste registro.` : "Título editado neste registro." } : field);
   const sectionFields = [...baseSectionFields, ...customFields];
-  const progress = requiredProgress(loadedRecord);
+  const progress = requiredProgress(loadedRecord, templates);
+  const selectedPatient = patients.find((patient) => patient.id === loadedRecord.patientId) ?? null;
+  const canEditCurrentRecord = canUpdateAnamnese && loadedRecord.status !== "finalized";
+  const canLinkPatient = canEditCurrentRecord && canReadPatients;
+  const canCreateAndLinkPatient = canLinkPatient && canCreatePatient;
+  const canManageCurrentQuestions = canUpdateAnamneseQuestions && canEditCurrentRecord;
+  const canManageCurrentOptions = canUpdateAnamneseOptions && canEditCurrentRecord;
 
   function updateField(templateId: TemplateId, fieldId: string, value: FieldValue) {
     setCurrentRecord((record) => {
@@ -481,7 +542,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
 
   async function saveRecord(status: "draft" | "finalized") {
     if (!token) return;
-    const validationIssues = status === "finalized" ? validateRecord(loadedRecord) : [];
+    const validationIssues = status === "finalized" ? validateRecord(loadedRecord, templates) : [];
     setIssues(validationIssues);
 
     if (validationIssues.length > 0) {
@@ -509,6 +570,45 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     setActiveSectionIndex(0);
     setMessage("Novo rascunho criado no banco");
     router.replace(`/anamnese/${record.id}`);
+  }
+
+  function linkPatient(patientId: string) {
+    const patient = patients.find((item) => item.id === patientId);
+    setCurrentRecord((record) => record ? {
+      ...record,
+      patientId: patientId || null,
+      patientName: patient?.name ?? record.patientName,
+      updatedAt: new Date().toISOString()
+    } : record);
+    setMessage(patient ? `Paciente vinculado: ${patient.name}` : "Vinculo com paciente removido");
+  }
+
+  async function handleCreatePatient() {
+    if (!token || !newPatientName.trim()) return;
+    const patient = await createPatient(token, {
+      name: newPatientName.trim(),
+      birthDate: newPatientBirthDate || undefined,
+      document: newPatientDocument.trim() || undefined
+    });
+    setPatients((currentPatients) => [patient, ...currentPatients.filter((item) => item.id !== patient.id)]);
+    setCurrentRecord((record) => record ? {
+      ...record,
+      patientId: patient.id,
+      patientName: patient.name,
+      updatedAt: new Date().toISOString()
+    } : record);
+    setNewPatientName("");
+    setNewPatientBirthDate("");
+    setNewPatientDocument("");
+    setMessage(`Paciente criado e vinculado: ${patient.name}`);
+  }
+
+  async function handleDownloadPdf() {
+    if (!token) return;
+    setMessage("Registrando documento PDF...");
+    const document = await emitAnamnesePdfDocument(token, loadedRecord.id);
+    await downloadAnamnesePdf(loadedRecord, templates);
+    setMessage(`PDF ${document.code} registrado. Hash ${document.contentHash.slice(0, 12)}...`);
   }
 
   function addCustomQuestion() {
@@ -657,8 +757,51 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
           </div>
         </div>
 
+        {canReadPatients ? <div className="patient-link-panel">
+          <div>
+            <span className="eyebrow">Paciente e prontuário</span>
+            <h3>{selectedPatient ? selectedPatient.name : "Sem paciente vinculado"}</h3>
+            <p>{selectedPatient ? `${medicalRecordEntries.length} evento(s) no prontuario` : "Vincule um paciente para registrar a anamnese no prontuario ao finalizar."}</p>
+          </div>
+          <div className="patient-link-fields">
+            <label>
+              <span>Buscar paciente</span>
+              <input disabled={!canLinkPatient} onChange={(event) => setPatientSearch(event.target.value)} placeholder="Nome ou documento" value={patientSearch} />
+            </label>
+            <label>
+              <span>Paciente vinculado</span>
+              <select disabled={!canLinkPatient} onChange={(event) => linkPatient(event.target.value)} value={loadedRecord.patientId ?? ""}>
+                <option value="">Sem vinculo</option>
+                {patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.name}{patient.document ? ` - ${patient.document}` : ""}</option>)}
+              </select>
+            </label>
+            {canCreateAndLinkPatient ? (
+              <>
+                <label>
+                  <span>Novo paciente</span>
+                  <input onChange={(event) => setNewPatientName(event.target.value)} placeholder="Nome completo" value={newPatientName} />
+                </label>
+                <label>
+                  <span>Nascimento</span>
+                  <input onChange={(event) => setNewPatientBirthDate(event.target.value)} type="date" value={newPatientBirthDate} />
+                </label>
+                <label>
+                  <span>Documento</span>
+                  <input onChange={(event) => setNewPatientDocument(event.target.value)} placeholder="CPF/RG" value={newPatientDocument} />
+                </label>
+                <button disabled={!newPatientName.trim()} onClick={handleCreatePatient} type="button">Criar e vincular</button>
+              </>
+            ) : null}
+          </div>
+          {medicalRecordEntries.length > 0 ? (
+            <ul className="medical-record-list">
+              {medicalRecordEntries.slice(0, 3).map((entry) => <li key={entry.id}><strong>{entry.title}</strong><span>{entry.summary}</span></li>)}
+            </ul>
+          ) : null}
+        </div> : null}
+
         <div className="template-tabs" role="tablist" aria-label="Fichas de anamnese">
-          {anamneseTemplates.map((template) => (
+          {templates.map((template) => (
             <button
               aria-selected={activeTemplateId === template.id}
               className={activeTemplateId === template.id ? "is-active" : ""}
@@ -702,7 +845,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
             {activeSection.description ? <p>{activeSection.description}</p> : null}
           </div>
 
-          {canUpdateAnamneseQuestions ? (
+          {canManageCurrentQuestions ? (
             <div className="question-editor">
               <label>
                 <span>Nova pergunta nesta seção</span>
@@ -761,19 +904,22 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                     {field.required ? <small>Obrigatório</small> : null}
                     {field.id.startsWith("custom-") ? <small>Personalizada</small> : null}
                     {!field.id.startsWith("custom-") && renamedFields.has(field.id) ? <small>Editada</small> : null}
-                    <span className="custom-question-actions">
-                      <button aria-label="Editar pergunta" onClick={() => { setEditingQuestionId(field.id); setEditingQuestionLabel(field.label); }} type="button">
-                        <Pencil size={14} />
-                      </button>
-                      <button aria-label="Remover pergunta" onClick={() => removeCustomQuestion(field.id)} type="button">
-                        <Trash2 size={14} />
-                      </button>
-                    </span>
+                    {canManageCurrentQuestions ? (
+                      <span className="custom-question-actions">
+                        <button aria-label="Editar pergunta" onClick={() => { setEditingQuestionId(field.id); setEditingQuestionLabel(field.label); }} type="button">
+                          <Pencil size={14} />
+                        </button>
+                        <button aria-label="Remover pergunta" onClick={() => removeCustomQuestion(field.id)} type="button">
+                          <Trash2 size={14} />
+                        </button>
+                      </span>
+                    ) : null}
                   </span>
                 )}
                 {field.helper ? <em>{field.helper}</em> : null}
                 <FieldRenderer
-                  canUpdateAnamneseOptions={canUpdateAnamneseOptions}
+                  canEditRecord={canEditCurrentRecord}
+                  canUpdateAnamneseOptions={canManageCurrentOptions}
                   field={field}
                   onChange={(value) => updateField(activeTemplate.id, field.id, value)}
                   value={loadedRecord.answers[activeTemplate.id][field.id]}
@@ -802,30 +948,40 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
         <div className="action-bar">
           <span>{message}</span>
           <div>
-            <button className="secondary-button" disabled={!canCreateAnamnese} onClick={startNewRecord} title={canCreateAnamnese ? "Nova anamnese" : "Requer permissao para criar anamnese"} type="button">
-              <Plus size={17} />
-              Nova
-            </button>
-            <button className="secondary-button" disabled={!canUpdateAnamnese || loadedRecord.status === "finalized"} onClick={() => saveRecord("draft")} title={canUpdateAnamnese ? "Salvar rascunho" : "Requer permissao para editar anamnese"} type="button">
-              <Save size={17} />
-              Salvar rascunho
-            </button>
-            <button className="secondary-button" disabled={!canPrintAnamnese} onClick={() => window.print()} title={canPrintAnamnese ? "Imprimir" : "Requer permissao para imprimir anamnese"} type="button">
-              <Printer size={17} />
-              Imprimir
-            </button>
-            <button className="secondary-button" disabled={!canPrintAnamnese} onClick={() => { void downloadAnamnesePdf(loadedRecord); }} title={canPrintAnamnese ? "Baixar PDF" : "Requer permissao para exportar anamnese"} type="button">
-              <Printer size={17} />
-              Baixar PDF
-            </button>
-            <button className="primary-button" disabled={!canFinalizeAnamnese || loadedRecord.status === "finalized"} onClick={() => saveRecord("finalized")} title={canFinalizeAnamnese ? "Finalizar anamnese" : "Requer permissao para finalizar anamnese"} type="button">
-              <FileCheck2 size={17} />
-              Finalizar anamnese
-            </button>
+            {canCreateAnamnese ? (
+              <button className="secondary-button" onClick={startNewRecord} type="button">
+                <Plus size={17} />
+                Nova
+              </button>
+            ) : null}
+            {canUpdateAnamnese ? (
+              <button className="secondary-button" disabled={loadedRecord.status === "finalized"} onClick={() => saveRecord("draft")} type="button">
+                <Save size={17} />
+                Salvar rascunho
+              </button>
+            ) : null}
+            {canPrintAnamnese ? (
+              <button className="secondary-button" onClick={() => window.print()} type="button">
+                <Printer size={17} />
+                Imprimir
+              </button>
+            ) : null}
+            {canPrintAnamnese ? (
+              <button className="secondary-button" disabled={loadedRecord.status !== "finalized"} onClick={() => { void handleDownloadPdf(); }} type="button">
+                <Printer size={17} />
+                Baixar PDF
+              </button>
+            ) : null}
+            {canFinalizeAnamnese ? (
+              <button className="primary-button" disabled={loadedRecord.status === "finalized"} onClick={() => saveRecord("finalized")} type="button">
+                <FileCheck2 size={17} />
+                Finalizar anamnese
+              </button>
+            ) : null}
           </div>
         </div>
       </section>
-      <AnamnesePrintDocument record={loadedRecord} />
+      <AnamnesePrintDocument record={loadedRecord} templates={templates} />
     </div>
   );
 }

@@ -621,6 +621,154 @@ a.operator-chip {
   padding: 22px;
 }
 
+.patient-link-panel {
+  display: grid;
+  gap: 14px;
+  margin: 18px 22px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.patient-link-panel h3 {
+  margin: 4px 0 2px;
+  font-size: 1rem;
+}
+
+.patient-link-panel p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.patient-link-fields {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.patient-link-fields label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.patient-link-fields span {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.patient-link-fields input,
+.patient-link-fields select {
+  width: 100%;
+}
+
+.patient-link-fields button {
+  min-height: 42px;
+}
+
+.medical-record-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.medical-record-list li {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.medical-record-list span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.prontuario-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.prontuario-search {
+  display: grid;
+  gap: 8px;
+}
+
+.prontuario-search > span {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.prontuario-search div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.prontuario-search input {
+  border: 0;
+  padding-inline: 0;
+}
+
+.prontuario-patient-list,
+.prontuario-timeline {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.prontuario-patient-list button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.prontuario-patient-list button.is-selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(15, 107, 90, 0.12);
+}
+
+.prontuario-patient-list span,
+.prontuario-entry span,
+.prontuario-entry small {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.prontuario-entry {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.prontuario-entry p {
+  margin: 0;
+  color: var(--muted);
+}
+
 .section-title {
   margin-bottom: 18px;
 }
@@ -1576,6 +1724,18 @@ td input {
   .module-nav,
   .table-option-editor,
   .question-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .patient-link-panel {
+    margin: 0 0 18px;
+  }
+
+  .patient-link-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .prontuario-layout {
     grid-template-columns: 1fr;
   }
 
