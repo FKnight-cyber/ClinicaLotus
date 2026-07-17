@@ -1,8 +1,7 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/shell/AppShell";
 import { PlaceholderModule } from "@/components/placeholder/PlaceholderModule";
 import { getModuleBySlug } from "@/config/modules";
-import { AccessAdminPage } from "@/features/access/AccessAdminPage";
 import { ProntuarioPage } from "@/features/prontuario/ProntuarioPage";
 
 type PlaceholderPageProps = {
@@ -18,11 +17,7 @@ export default async function PlaceholderPage({ params }: PlaceholderPageProps) 
   }
 
   if (moduleItem.slug === "controle-acesso") {
-    return (
-      <AppShell activeSlug={moduleItem.slug}>
-        <AccessAdminPage />
-      </AppShell>
-    );
+    redirect("/modulos/controle-acesso/grupos-e-acessos");
   }
 
   if (moduleItem.slug === "prontuario") {

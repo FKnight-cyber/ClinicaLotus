@@ -4,6 +4,8 @@ import { PrismaService } from "../../shared/prisma/prisma.service";
 import { hashPassword } from "../auth/password";
 import { CreateAccessGroupDto } from "./dto/create-access-group.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
+import { ListAccessGroupsQueryDto } from "./dto/list-access-groups-query.dto";
+import { ListAccessUsersQueryDto } from "./dto/list-access-users-query.dto";
 import { UpdateGroupPermissionsDto } from "./dto/update-group-permissions.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { UpdateUserGroupsDto } from "./dto/update-user-groups.dto";
@@ -20,11 +22,29 @@ export class AccessService {
     return this.cache.getOrSet("access:permissions", 5 * 60 * 1000, () => this.prisma.permission.findMany({ orderBy: [{ module: "asc" }, { action: "asc" }] }));
   }
 
-  listGroups() {
-    return this.cache.getOrSet("access:groups", 60 * 1000, () => this.prisma.accessGroup.findMany({
-      orderBy: { name: "asc" },
-      include: { permissions: { include: { permission: true } }, users: true }
-    }));
+  listGroups(query: ListAccessGroupsQueryDto = {}) {
+    const limit = this.normalizeGroupLimit(query.limit);
+    const search = query.search?.trim();
+    const where = search ? {
+      OR: [
+        { name: { contains: search, mode: "insensitive" as const } },
+        { description: { contains: search, mode: "insensitive" as const } }
+      ]
+    } : undefined;
+
+    return this.cache.getOrSet(`access:groups:${limit}:${search ?? ""}`, 60 * 1000, async () => {
+      const [items, total] = await this.prisma.$transaction([
+        this.prisma.accessGroup.findMany({
+          where,
+          orderBy: { name: "asc" },
+          take: limit,
+          include: { permissions: { include: { permission: true } }, users: true }
+        }),
+        this.prisma.accessGroup.count({ where })
+      ]);
+
+      return { items, limit, total };
+    });
   }
 
   async createGroup(dto: CreateAccessGroupDto) {
@@ -47,19 +67,42 @@ export class AccessService {
     return this.getGroup(groupId);
   }
 
-  listUsers() {
-    return this.cache.getOrSet("access:users", 30 * 1000, () => this.prisma.user.findMany({
-      orderBy: { name: "asc" },
-      select: {
-        id: true,
-        login: true,
-        name: true,
-        email: true,
-        status: true,
-        mustChangePassword: true,
-        groups: { include: { accessGroup: true } }
-      }
-    }));
+  listUsers(query: ListAccessUsersQueryDto = {}) {
+    const limit = this.normalizeListLimit(query.limit);
+    const search = query.search?.trim();
+    const groupId = query.groupId?.trim();
+    const status = query.status;
+    const where = {
+      ...(search ? { OR: [
+        { name: { contains: search, mode: "insensitive" as const } },
+        { login: { contains: search, mode: "insensitive" as const } },
+        { email: { contains: search, mode: "insensitive" as const } }
+      ] } : {}),
+      ...(groupId ? { groups: { some: { accessGroupId: groupId } } } : {}),
+      ...(status ? { status } : {})
+    };
+
+    return this.cache.getOrSet(`access:users:${limit}:${search ?? ""}:${groupId ?? ""}:${status ?? ""}`, 30 * 1000, async () => {
+      const [items, total] = await this.prisma.$transaction([
+        this.prisma.user.findMany({
+          where,
+          orderBy: { name: "asc" },
+          take: limit,
+          select: {
+            id: true,
+            login: true,
+            name: true,
+            email: true,
+            status: true,
+            mustChangePassword: true,
+            groups: { include: { accessGroup: true } }
+          }
+        }),
+        this.prisma.user.count({ where })
+      ]);
+
+      return { items, limit, total };
+    });
   }
 
   async createUser(dto: CreateUserDto) {
@@ -135,10 +178,19 @@ export class AccessService {
   }
 
   private invalidateAccessCaches(userId?: string) {
-    this.cache.delete("access:groups");
-    this.cache.delete("access:users");
+    this.cache.deleteByPrefix("access:groups:");
+    this.cache.deleteByPrefix("access:users:");
     this.cache.deleteByPrefix("auth:profile:");
     if (userId) this.cache.delete(`access:user:${userId}`);
+  }
+
+  private normalizeGroupLimit(limit?: number) {
+    return this.normalizeListLimit(limit);
+  }
+
+  private normalizeListLimit(limit?: number) {
+    if (typeof limit !== "number" || !Number.isFinite(limit)) return 5;
+    return Math.min(Math.max(Math.trunc(limit), 1), 100);
   }
 
   private async setGroupPermissions(groupId: string, permissionKeys: string[]) {

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { LogOut } from "lucide-react";
+import { usePathname } from "next/navigation";
 import { ClinicLogo } from "@/components/brand/ClinicLogo";
 import { moduleItems } from "@/config/modules";
 import { useAuth } from "@/features/auth/AuthProvider";
@@ -13,6 +14,7 @@ type AppShellProps = {
 
 export function AppShell({ activeSlug, children }: AppShellProps) {
   const { hasPermission, logout, user } = useAuth();
+  const pathname = usePathname();
   const visibleModules = moduleItems.filter((module) => module.slug === "anamnese" || hasPermission(module.visibilityPermission));
 
   return (
@@ -32,16 +34,27 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
           {visibleModules.map((module) => {
             const Icon = module.icon;
             const isActive = module.slug === activeSlug;
+            const visibleSubItems = module.subItems?.filter((subItem) => hasPermission(subItem.visibilityPermission)) ?? [];
             return (
-              <Link
-                className={`module-link ${isActive ? "is-active" : ""} ${module.status === "locked" ? "is-locked" : ""}`}
-                href={module.href}
-                key={module.slug}
-                title={module.status === "locked" ? "Em desenvolvimento" : module.description}
-              >
-                <Icon aria-hidden="true" size={19} />
-                <span>{module.label}</span>
-              </Link>
+              <div className="module-nav-group" key={module.slug}>
+                <Link
+                  className={`module-link ${isActive ? "is-active" : ""} ${module.status === "locked" ? "is-locked" : ""}`}
+                  href={module.href}
+                  title={module.status === "locked" ? "Em desenvolvimento" : module.description}
+                >
+                  <Icon aria-hidden="true" size={19} />
+                  <span>{module.label}</span>
+                </Link>
+                {visibleSubItems.length > 0 ? (
+                  <div className="module-subnav" aria-label={`${module.label} submenu`}>
+                    {visibleSubItems.map((subItem) => (
+                      <Link className={`module-sublink ${pathname === subItem.href ? "is-active" : ""}`} href={subItem.href} key={subItem.slug}>
+                        {subItem.label}
+                      </Link>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             );
           })}
         </nav>

@@ -22,6 +22,14 @@ export type ModuleItem = {
   visibilityPermission: string;
   status: "active" | "locked";
   actions: string[];
+  subItems?: ModuleSubItem[];
+};
+
+export type ModuleSubItem = {
+  slug: string;
+  label: string;
+  href: string;
+  visibilityPermission: string;
 };
 
 export const moduleItems: ModuleItem[] = [
@@ -89,11 +97,25 @@ export const moduleItems: ModuleItem[] = [
     slug: "controle-acesso",
     label: "Controle de acesso",
     description: "Usuários internos, grupos e permissões customizáveis por módulo.",
-    href: "/modulos/controle-acesso",
+    href: "/modulos/controle-acesso/grupos-e-acessos",
     icon: ShieldCheck,
     visibilityPermission: "menu.controle-acesso.view",
     status: "active",
-    actions: ["Criar usuário", "Criar grupo", "Gerenciar permissões"]
+    actions: ["Criar usuário", "Criar grupo", "Gerenciar permissões"],
+    subItems: [
+      {
+        slug: "grupos-e-acessos",
+        label: "Grupos e acessos",
+        href: "/modulos/controle-acesso/grupos-e-acessos",
+        visibilityPermission: "access.groups.read"
+      },
+      {
+        slug: "gerenciar-usuarios",
+        label: "Gerenciar usuários",
+        href: "/modulos/controle-acesso/gerenciar-usuarios",
+        visibilityPermission: "access.users.read"
+      }
+    ]
   },
   {
     slug: "relatorios",

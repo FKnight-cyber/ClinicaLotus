@@ -370,6 +370,12 @@ button:disabled {
   gap: 6px;
 }
 
+.module-nav-group {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
 .module-link {
   align-items: center;
   border-radius: 8px;
@@ -388,6 +394,29 @@ button:disabled {
 
 .module-link.is-locked:not(.is-active) {
   opacity: 0.7;
+}
+
+.module-subnav {
+  border-left: 1px solid rgba(255, 255, 255, 0.18);
+  display: grid;
+  gap: 3px;
+  margin-left: 21px;
+  padding-left: 12px;
+}
+
+.module-sublink {
+  border-radius: 8px;
+  color: #bcd9d0;
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 8px 10px;
+  text-decoration: none;
+}
+
+.module-sublink:hover,
+.module-sublink.is-active {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
 }
 
 .main-area {
@@ -435,6 +464,12 @@ button:disabled {
   border-radius: 999px;
   color: var(--muted);
   padding: 9px 12px;
+}
+
+.status-badge {
+  align-items: center;
+  display: inline-flex;
+  gap: 7px;
 }
 
 a.operator-chip {
@@ -1201,6 +1236,39 @@ td input {
   padding: 18px 22px;
 }
 
+.access-groups-layout {
+  align-items: start;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(340px, 0.82fr) minmax(0, 1.38fr);
+  padding: 18px 22px;
+}
+
+.access-groups-layout > .access-groups-panel,
+.access-groups-layout > .access-permissions-panel {
+  grid-area: auto;
+  min-width: 0;
+}
+
+.access-groups-layout .compact-form .primary-button {
+  justify-content: center;
+  width: 100%;
+}
+
+.access-single-panel-layout {
+  border-top: 1px solid var(--line);
+  padding: 18px 22px;
+}
+
+.access-summary-badges {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .access-groups-panel {
   grid-area: groups;
 }
@@ -1283,9 +1351,44 @@ td input {
   margin-bottom: 12px;
 }
 
+.access-limit-field {
+  align-items: center;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 1fr 80px;
+}
+
+.access-limit-field span,
+.access-filter-field span {
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.access-limit-field input,
+.access-filter-field select {
+  min-width: 0;
+}
+
+.access-filter-field {
+  display: grid;
+  gap: 6px;
+}
+
 .access-search-box span {
   color: var(--muted);
   font-size: 0.84rem;
+}
+
+.inline-loading {
+  background: var(--primary-soft);
+  border: 1px solid #a8d7ca;
+  border-radius: 8px;
+  color: var(--primary-strong);
+  font-size: 0.86rem;
+  font-weight: 700;
+  margin-bottom: 10px;
+  padding: 9px 11px;
 }
 
 .group-directory {
@@ -1294,6 +1397,11 @@ td input {
   max-height: 480px;
   overflow: auto;
   padding-right: 4px;
+}
+
+.group-directory.is-loading {
+  opacity: 0.65;
+  pointer-events: none;
 }
 
 .group-directory-item {
@@ -1317,20 +1425,133 @@ td input {
   color: var(--muted);
 }
 
-.access-user-list {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-}
-
 .access-section-heading {
   display: grid;
   gap: 8px;
   margin-bottom: 14px;
 }
 
-.access-section-heading input {
-  max-width: max(280px, 30%);
+.access-section-title-row {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.filter-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.filter-action-button {
+  align-items: center;
+  display: inline-flex;
+  gap: 7px;
+  justify-content: center;
+  min-height: 38px;
+}
+
+.filter-action-button span {
+  align-items: center;
+  background: var(--primary);
+  border-radius: 999px;
+  color: #ffffff;
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 800;
+  height: 20px;
+  justify-content: center;
+  min-width: 20px;
+  padding: 0 6px;
+}
+
+.filter-action-button.has-active-filters {
+  border-color: var(--primary);
+  color: var(--primary-strong);
+}
+
+.filter-drawer-layer {
+  inset: 0;
+  position: fixed;
+  z-index: 40;
+}
+
+.filter-drawer-backdrop {
+  background: rgba(16, 35, 32, 0.28);
+  border: 0;
+  inset: 0;
+  padding: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.filter-drawer-panel {
+  background: #ffffff;
+  border-left: 1px solid var(--line);
+  box-shadow: -18px 0 36px rgba(31, 49, 45, 0.16);
+  display: grid;
+  gap: 18px;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+  max-width: min(420px, 92vw);
+  overflow: auto;
+  padding: 22px;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 420px;
+}
+
+.filter-drawer-heading {
+  align-items: flex-start;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding-bottom: 16px;
+}
+
+.filter-drawer-heading h3 {
+  margin: 0;
+}
+
+.filter-drawer-fields {
+  align-content: start;
+  display: grid;
+  gap: 14px;
+}
+
+.filter-drawer-fields label {
+  display: grid;
+  gap: 7px;
+}
+
+.filter-drawer-fields span {
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.filter-drawer-actions {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+  padding-top: 16px;
+}
+
+.access-list-controls {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(250px, 1fr) minmax(190px, 0.7fr) minmax(170px, 220px) auto;
+  max-width: 1040px;
+}
+
+.access-list-controls input {
+  min-width: 0;
 }
 
 .access-section-heading h3,
@@ -1341,6 +1562,17 @@ td input {
 .access-section-heading p {
   color: var(--muted);
   margin-top: 4px;
+}
+
+.access-user-list {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+}
+
+.access-user-list.is-loading {
+  opacity: 0.65;
+  pointer-events: none;
 }
 
 .access-card {
@@ -1367,7 +1599,7 @@ td input {
   align-items: start;
   display: grid;
   gap: 8px;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .user-card-identity {
@@ -1383,10 +1615,25 @@ td input {
 }
 
 .user-card .status-badge {
-  justify-self: start;
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  justify-self: end;
+  margin-top: 0;
+  max-width: none;
+  white-space: nowrap;
+}
+
+.user-status-badge.is-active {
+  border-color: #86c7a4;
+  color: #147a49;
+}
+
+.user-status-badge.is-inactive {
+  border-color: #efaaa3;
+  color: #a9352b;
+}
+
+.user-status-badge.is-pending {
+  border-color: #e4c779;
+  color: #8a6400;
 }
 
 .user-card .secondary-button {
@@ -1713,6 +1960,10 @@ td input {
       "users";
   }
 
+  .access-groups-layout {
+    grid-template-columns: 1fr;
+  }
+
   .sidebar {
     position: static;
   }
@@ -1721,12 +1972,20 @@ td input {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .module-nav-group {
+    min-width: 0;
+  }
+
   .records-panel {
     position: static;
   }
 
   .patient-link-fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .access-list-controls {
+    grid-template-columns: 1fr;
   }
 
   .patient-link-field,
@@ -1748,9 +2007,19 @@ td input {
   .topbar,
   .workflow-heading,
   .template-context,
-  .action-bar {
+  .action-bar,
+  .access-section-title-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .filter-actions-row,
+  .filter-action-button {
+    width: 100%;
+  }
+
+  .filter-drawer-actions {
+    grid-template-columns: 1fr;
   }
 
   .operator-actions {

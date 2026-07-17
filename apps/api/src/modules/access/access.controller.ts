@@ -1,10 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { AuthGuard } from "../auth/guards/auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { RequirePermissions } from "../auth/guards/permissions.decorator";
 import { AccessService } from "./access.service";
 import { CreateAccessGroupDto } from "./dto/create-access-group.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
+import { ListAccessGroupsQueryDto } from "./dto/list-access-groups-query.dto";
+import { ListAccessUsersQueryDto } from "./dto/list-access-users-query.dto";
 import { UpdateGroupPermissionsDto } from "./dto/update-group-permissions.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { UpdateUserGroupsDto } from "./dto/update-user-groups.dto";
@@ -23,8 +25,8 @@ export class AccessController {
 
   @Get("groups")
   @RequirePermissions("access.groups.read")
-  listGroups() {
-    return this.accessService.listGroups();
+  listGroups(@Query() query: ListAccessGroupsQueryDto) {
+    return this.accessService.listGroups(query);
   }
 
   @Post("groups")
@@ -41,8 +43,8 @@ export class AccessController {
 
   @Get("users")
   @RequirePermissions("access.users.read")
-  listUsers() {
-    return this.accessService.listUsers();
+  listUsers(@Query() query: ListAccessUsersQueryDto) {
+    return this.accessService.listUsers(query);
   }
 
   @Get("users/:userId")

@@ -23,7 +23,21 @@ type AccessUser = {
   groups: { accessGroup: AccessGroup }[];
 };
 
+type PaginatedAccessGroups = {
+  items: AccessGroup[];
+  limit: number;
+  total: number;
+};
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
+
+function normalizeGroupsPage(payload: PaginatedAccessGroups | AccessGroup[]): PaginatedAccessGroups {
+  if (Array.isArray(payload)) {
+    return { items: payload.slice(0, 100), limit: 100, total: payload.length };
+  }
+
+  return payload;
+}
 
 async function apiRequest<T>(token: string, path: string, options: RequestInit = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -57,50 +71,61 @@ export function UserDetailPage({ userId }: { userId: string }) {
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const loadUser = async () => {
-    if (!token || !user) return;
-    setIsLoading(true);
-
-    if (canReadUsers) {
-      const [nextUser, nextGroups] = await Promise.all([
-        apiRequest<AccessUser>(token, `/api/access/users/${userId}`),
-        canManageUsers ? apiRequest<AccessGroup[]>(token, "/api/access/groups") : Promise.resolve([])
-      ]);
-      setTargetUser(nextUser);
-      setGroups(nextGroups);
-      setDraft({ name: nextUser.name, email: nextUser.email ?? "" });
-      setGroupDraft(nextUser.groups.map((group) => group.accessGroup.id));
-      setStatusDraft(nextUser.status);
-      setIsLoading(false);
-      return;
-    }
-
-    if (isSelf) {
-      const nextUser: AccessUser = {
-        id: user.id,
-        login: user.login,
-        name: user.name,
-        email: user.email,
-        status: "ACTIVE",
-        mustChangePassword: Boolean(user.mustChangePassword),
-        groups: []
-      };
-      setTargetUser(nextUser);
-      setDraft({ name: nextUser.name, email: nextUser.email ?? "" });
-      setIsLoading(false);
-      return;
-    }
-
-    setMessage("Voce nao possui permissao para visualizar este usuario.");
-    setIsLoading(false);
-  };
-
   useEffect(() => {
-    loadUser().catch((error) => {
+    if (!token || !user) return;
+
+    let isCurrent = true;
+    Promise.resolve().then(async () => {
+      setIsLoading(true);
+
+      if (canReadUsers) {
+        const [nextUser, nextGroups] = await Promise.all([
+          apiRequest<AccessUser>(token, `/api/access/users/${userId}`),
+          canManageUsers ? apiRequest<PaginatedAccessGroups | AccessGroup[]>(token, "/api/access/groups?limit=100") : Promise.resolve({ items: [], limit: 100, total: 0 })
+        ]);
+
+        if (!isCurrent) return;
+        const nextGroupsPage = normalizeGroupsPage(nextGroups);
+        setTargetUser(nextUser);
+        setGroups(nextGroupsPage.items);
+        setDraft({ name: nextUser.name, email: nextUser.email ?? "" });
+        setGroupDraft(nextUser.groups.map((group) => group.accessGroup.id));
+        setStatusDraft(nextUser.status);
+        setIsLoading(false);
+        return;
+      }
+
+      if (isSelf) {
+        const nextUser: AccessUser = {
+          id: user.id,
+          login: user.login,
+          name: user.name,
+          email: user.email,
+          status: "ACTIVE",
+          mustChangePassword: Boolean(user.mustChangePassword),
+          groups: []
+        };
+
+        if (!isCurrent) return;
+        setTargetUser(nextUser);
+        setDraft({ name: nextUser.name, email: nextUser.email ?? "" });
+        setIsLoading(false);
+        return;
+      }
+
+      if (!isCurrent) return;
+      setMessage("Voce nao possui permissao para visualizar este usuario.");
+      setIsLoading(false);
+    }).catch((error) => {
+      if (!isCurrent) return;
       setMessage(error instanceof Error ? error.message : "Nao foi possivel carregar o usuario.");
       setIsLoading(false);
     });
-  }, [token, userId, user?.id, canReadUsers, canManageUsers]);
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [token, user, userId, canReadUsers, canManageUsers, isSelf]);
 
   const toggleGroup = (groupId: string) => {
     setGroupDraft((current) => current.includes(groupId) ? current.filter((id) => id !== groupId) : [...current, groupId]);
@@ -165,7 +190,7 @@ export function UserDetailPage({ userId }: { userId: string }) {
           <p>{targetUser.login} {targetUser.email ? `- ${targetUser.email}` : ""}</p>
         </div>
         <div className="detail-heading-actions">
-          {canReadUsers ? <Link className="back-link" href="/modulos/controle-acesso"><ArrowLeft size={16} />Controle de acesso</Link> : null}
+          {canReadUsers ? <Link className="back-link" href="/modulos/controle-acesso/gerenciar-usuarios"><ArrowLeft size={16} />Gerenciar usuarios</Link> : null}
           {canManageUsers ? (
             <span className={`status-badge ${targetUser.status === "ACTIVE" ? "is-finalized" : ""}`}>
               <UserCheck aria-hidden="true" size={16} />{targetUser.status}
