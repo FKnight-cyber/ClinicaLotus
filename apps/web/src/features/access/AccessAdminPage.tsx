@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Clock3, Eye, ShieldCheck, UserX, UsersRound, X } from "lucide-react";
+import { CheckCircle2, Clock3, Eye, ShieldCheck, ToggleLeft, ToggleRight, UserX, UsersRound, X } from "lucide-react";
 import Link from "next/link";
 import { ClearFiltersButton, FilterButton } from "@/components/filters/FilterActionButtons";
 import { useAuth } from "@/features/auth/AuthProvider";
@@ -29,7 +29,7 @@ type AccessUser = {
   login: string;
   name: string;
   email?: string | null;
-  status: string;
+  status: "PENDING" | "ACTIVE" | "INACTIVE";
   mustChangePassword: boolean;
   groups: { accessGroup: AccessGroup }[];
 };
@@ -98,6 +98,24 @@ function getUserStatusBadge(status: string) {
   if (status === "ACTIVE") return { className: "is-active", icon: CheckCircle2, label: "Ativo" };
   if (status === "INACTIVE") return { className: "is-inactive", icon: UserX, label: "Inativo" };
   return { className: "is-pending", icon: Clock3, label: "Pendente" };
+}
+
+function getUserStatusConfirmation(user: AccessUser, nextStatus: AccessUser["status"]) {
+  if (nextStatus === "INACTIVE") {
+    return {
+      title: `Inativar ${user.name}?`,
+      actionLabel: "Inativar usuario",
+      tone: "danger",
+      message: "Ao inativar este usuario, ele deixara de aparecer nos demais pontos do sistema, incluindo anamnese e qualquer outra funcionalidade que dependa de usuarios ativos. O acesso dele tambem ficara bloqueado ate que seja ativado novamente."
+    };
+  }
+
+  return {
+    title: `Ativar ${user.name}?`,
+    actionLabel: "Ativar usuario",
+    tone: "primary",
+    message: "Ao ativar este usuario, ele voltara a aparecer nas telas e fluxos que exibem usuarios ativos, incluindo anamnese e demais funcionalidades do sistema, e podera acessar os recursos permitidos pelos grupos vinculados."
+  };
 }
 
 async function apiRequest<T>(token: string, path: string, options: RequestInit = {}) {
@@ -387,6 +405,7 @@ export function AccessGroupsPage() {
 
 export function AccessUsersAdminPage() {
   const { hasPermission, token } = useAuth();
+  const canManageUsers = hasPermission("access.users.manage");
   const usersCacheRef = useRef(new Map<string, PaginatedAccessUsers>());
   const userGroupsCacheRef = useRef<AccessGroup[] | null>(null);
   const [users, setUsers] = useState<AccessUser[]>([]);
@@ -405,6 +424,8 @@ export function AccessUsersAdminPage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isUsersLoading, setIsUsersLoading] = useState(true);
+  const [savingUserStatusId, setSavingUserStatusId] = useState<string | null>(null);
+  const [statusConfirmation, setStatusConfirmation] = useState<{ user: AccessUser; nextStatus: AccessUser["status"] } | null>(null);
 
   const pendingUsersCount = users.filter((user) => user.status === "PENDING").length;
   const activeUserFilterCount = [userSearch.trim(), selectedUserGroupId, selectedUserStatus, userLimit !== DEFAULT_USER_LIMIT ? String(userLimit) : ""].filter(Boolean).length;
@@ -506,6 +527,36 @@ export function AccessUsersAdminPage() {
     setIsUserFiltersOpen(false);
   };
 
+  const handleRequestUserStatusChange = (user: AccessUser) => {
+    const nextStatus = user.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+    setStatusConfirmation({ user, nextStatus });
+  };
+
+  const handleConfirmUserStatusChange = async () => {
+    if (!token || !statusConfirmation || !canManageUsers) return;
+
+    const { nextStatus, user } = statusConfirmation;
+    setSavingUserStatusId(user.id);
+    setIsUsersLoading(true);
+
+    try {
+      await apiRequest<AccessUser>(token, `/api/access/users/${user.id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: nextStatus })
+      });
+      usersCacheRef.current.clear();
+      const nextUsersPage = await fetchUsersPage(userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserStatus, true);
+      applyUsersPage(nextUsersPage);
+      setStatusConfirmation(null);
+      setStatusMessage(nextStatus === "ACTIVE" ? "Usuario ativado e disponivel nos fluxos do sistema." : "Usuario inativado e removido dos fluxos operacionais do sistema.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Nao foi possivel atualizar o status do usuario.");
+    } finally {
+      setSavingUserStatusId(null);
+      setIsUsersLoading(false);
+    }
+  };
+
   if (!hasPermission("access.users.read")) {
     return (
       <section className="placeholder-page">
@@ -604,19 +655,46 @@ export function AccessUsersAdminPage() {
           {isUsersLoading ? <div className="inline-loading">Atualizando usuarios...</div> : null}
           <div className={`access-user-list ${isUsersLoading ? "is-loading" : ""}`}>
             {users.map((user) => (
-              <UserCard key={user.id} user={user} />
+              <UserCard
+                canManageUsers={canManageUsers}
+                isSavingStatus={savingUserStatusId === user.id}
+                key={user.id}
+                onRequestStatusChange={handleRequestUserStatusChange}
+                user={user}
+              />
             ))}
             {users.length === 0 ? <div className="empty-state">Nenhum usuario encontrado.</div> : null}
           </div>
         </section>
       </div>
+      {statusConfirmation ? (
+        <UserStatusConfirmationModal
+          isSaving={savingUserStatusId === statusConfirmation.user.id}
+          nextStatus={statusConfirmation.nextStatus}
+          onCancel={() => setStatusConfirmation(null)}
+          onConfirm={handleConfirmUserStatusChange}
+          user={statusConfirmation.user}
+        />
+      ) : null}
     </section>
   );
 }
 
-function UserCard({ user }: { user: AccessUser }) {
+function UserCard({
+  canManageUsers,
+  isSavingStatus,
+  onRequestStatusChange,
+  user
+}: {
+  canManageUsers: boolean;
+  isSavingStatus: boolean;
+  onRequestStatusChange: (user: AccessUser) => void;
+  user: AccessUser;
+}) {
   const statusBadge = getUserStatusBadge(user.status);
   const StatusIcon = statusBadge.icon;
+  const nextStatus = user.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+  const ToggleIcon = nextStatus === "ACTIVE" ? ToggleRight : ToggleLeft;
 
   return (
     <article className="access-card compact user-card">
@@ -625,8 +703,55 @@ function UserCard({ user }: { user: AccessUser }) {
         <span className={`status-badge user-status-badge ${statusBadge.className}`}><StatusIcon aria-hidden="true" size={16} />{statusBadge.label}</span>
       </div>
       <p>{user.groups.map((group) => group.accessGroup.name).join(", ") || "Sem grupo vinculado"}</p>
-      <Link className="secondary-button" href={`/usuarios/${user.id}`}><Eye aria-hidden="true" size={16} />Abrir detalhes</Link>
+      <div className="user-card-actions">
+        {canManageUsers ? (
+          <button className="secondary-button user-status-toggle" disabled={isSavingStatus} onClick={() => onRequestStatusChange(user)} type="button">
+            <ToggleIcon aria-hidden="true" size={16} />
+            {isSavingStatus ? "Atualizando..." : nextStatus === "ACTIVE" ? "Ativar" : "Inativar"}
+          </button>
+        ) : null}
+        <Link className="secondary-button" href={`/usuarios/${user.id}`}><Eye aria-hidden="true" size={16} />Abrir detalhes</Link>
+      </div>
     </article>
+  );
+}
+
+function UserStatusConfirmationModal({
+  isSaving,
+  nextStatus,
+  onCancel,
+  onConfirm,
+  user
+}: {
+  isSaving: boolean;
+  nextStatus: AccessUser["status"];
+  onCancel: () => void;
+  onConfirm: () => void;
+  user: AccessUser;
+}) {
+  const confirmation = getUserStatusConfirmation(user, nextStatus);
+  const ConfirmationIcon = nextStatus === "ACTIVE" ? ToggleRight : UserX;
+
+  return (
+    <div className="confirmation-modal-layer" role="presentation">
+      <button aria-label="Cancelar alteracao de status" className="confirmation-modal-backdrop" disabled={isSaving} onClick={onCancel} type="button" />
+      <section aria-labelledby="user-status-confirmation-title" aria-modal="true" className="confirmation-modal-panel" role="dialog">
+        <div className="confirmation-modal-heading">
+          <span className={`confirmation-modal-icon is-${confirmation.tone}`}><ConfirmationIcon aria-hidden="true" size={20} /></span>
+          <div>
+            <span className="eyebrow">Confirmacao obrigatoria</span>
+            <h3 id="user-status-confirmation-title">{confirmation.title}</h3>
+          </div>
+        </div>
+        <p>{confirmation.message}</p>
+        <div className="confirmation-modal-actions">
+          <button className="secondary-button" disabled={isSaving} onClick={onCancel} type="button">Cancelar</button>
+          <button className={confirmation.tone === "danger" ? "danger-button" : "primary-button"} disabled={isSaving} onClick={onConfirm} type="button">
+            {isSaving ? "Atualizando..." : confirmation.actionLabel}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 

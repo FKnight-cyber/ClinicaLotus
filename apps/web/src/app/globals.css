@@ -611,6 +611,7 @@ a.operator-chip {
 .section-rail button,
 .secondary-button,
 .primary-button,
+.danger-button,
 .disabled-actions button,
 .placeholder-page button {
   align-items: center;
@@ -1111,6 +1112,16 @@ td input {
 
 .primary-button:hover {
   background: var(--primary-strong);
+}
+
+.danger-button {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #ffffff;
+}
+
+.danger-button:hover {
+  background: #8f2929;
 }
 
 .records-panel {
@@ -1636,12 +1647,100 @@ td input {
   color: #8a6400;
 }
 
-.user-card .secondary-button {
+.user-card-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.user-card-actions .secondary-button {
   align-self: stretch;
   box-sizing: border-box;
   max-width: 100%;
   min-width: 0;
   width: auto;
+}
+
+.user-status-toggle {
+  color: var(--primary-strong);
+}
+
+.confirmation-modal-layer {
+  align-items: center;
+  display: grid;
+  inset: 0;
+  justify-items: center;
+  padding: 22px;
+  position: fixed;
+  z-index: 60;
+}
+
+.confirmation-modal-backdrop {
+  background: rgba(14, 33, 29, 0.52);
+  border: 0;
+  border-radius: 0;
+  inset: 0;
+  min-height: 0;
+  padding: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.confirmation-modal-panel {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgba(12, 32, 27, 0.28);
+  display: grid;
+  gap: 16px;
+  max-width: 540px;
+  padding: 22px;
+  position: relative;
+  width: min(540px, 100%);
+  z-index: 1;
+}
+
+.confirmation-modal-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+}
+
+.confirmation-modal-heading h3 {
+  margin: 0;
+}
+
+.confirmation-modal-icon {
+  align-items: center;
+  border-radius: 8px;
+  display: grid;
+  flex: 0 0 auto;
+  height: 42px;
+  place-items: center;
+  width: 42px;
+}
+
+.confirmation-modal-icon.is-danger {
+  background: #fff1f1;
+  color: var(--danger);
+}
+
+.confirmation-modal-icon.is-primary {
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+}
+
+.confirmation-modal-panel p {
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.confirmation-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 .access-card p {
