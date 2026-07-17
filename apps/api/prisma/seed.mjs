@@ -16,6 +16,7 @@ const moduleMenuItems = [
   ["atendimento", "Atendimento"],
   ["cadastros", "Cadastros"],
   ["controle-acesso", "Controle de acesso"],
+  ["auditoria", "Auditoria"],
   ["relatorios", "Relatorios"],
   ["pacientes", "Pacientes"],
   ["configuracoes", "Configuracoes"],
@@ -42,6 +43,7 @@ const basePermissions = [
   ["access.users.manage", "access", "manage_users", "Gerenciar usuários"],
   ["access.groups.read", "access", "read_groups", "Visualizar grupos de acesso"],
   ["access.groups.manage", "access", "manage_groups", "Gerenciar grupos e permissões"],
+  ["audit.access.read", "audit", "read_access_logs", "Visualizar logs do controle de acessos"],
   ["admin.full_access", "admin", "full_access", "Acesso administrativo total"]
 ];
 

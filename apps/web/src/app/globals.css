@@ -1967,6 +1967,11 @@ td input {
   padding: 0 22px 18px;
 }
 
+.records-table-shell.is-loading {
+  opacity: 0.65;
+  pointer-events: none;
+}
+
 .records-table {
   min-width: 860px;
 }
@@ -2005,6 +2010,40 @@ td input {
   gap: 7px;
   min-height: 36px;
   padding: 7px 10px;
+}
+
+.audit-logs-heading {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.audit-limit-field {
+  max-width: 220px;
+}
+
+.audit-retention-note {
+  align-items: center;
+  background: var(--primary-soft);
+  border: 1px solid #a8d7ca;
+  border-radius: 8px;
+  color: var(--primary-strong);
+  display: flex;
+  gap: 8px;
+  margin: 0 22px 18px;
+  padding: 10px 12px;
+}
+
+.audit-logs-table {
+  min-width: 1180px;
+}
+
+.audit-details-cell {
+  color: var(--muted);
+  line-height: 1.4;
+  min-width: 300px;
+  white-space: normal;
 }
 
 .pagination-bar {

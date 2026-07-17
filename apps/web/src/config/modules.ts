@@ -6,6 +6,7 @@ import {
   HeartPulse,
   Hospital,
   NotebookTabs,
+  ScrollText,
   Settings,
   ShieldCheck,
   Stethoscope,
@@ -114,6 +115,24 @@ export const moduleItems: ModuleItem[] = [
         label: "Gerenciar usuários",
         href: "/modulos/controle-acesso/gerenciar-usuarios",
         visibilityPermission: "access.users.read"
+      }
+    ]
+  },
+  {
+    slug: "auditoria",
+    label: "Auditoria",
+    description: "Logs permanentes das mudanças administrativas do sistema.",
+    href: "/modulos/auditoria/logs-controle-acessos",
+    icon: ScrollText,
+    visibilityPermission: "menu.auditoria.view",
+    status: "active",
+    actions: ["Ver logs", "Auditar acessos", "Acompanhar alterações"],
+    subItems: [
+      {
+        slug: "logs-controle-acessos",
+        label: "Logs do Controle de acessos",
+        href: "/modulos/auditoria/logs-controle-acessos",
+        visibilityPermission: "audit.access.read"
       }
     ]
   },

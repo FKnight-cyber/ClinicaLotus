@@ -4,6 +4,7 @@ import { PrismaService } from "../../shared/prisma/prisma.service";
 import { hashPassword } from "../auth/password";
 import { CreateAccessGroupDto } from "./dto/create-access-group.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
+import { ListAccessAuditLogsQueryDto } from "./dto/list-access-audit-logs-query.dto";
 import { ListAccessGroupsQueryDto } from "./dto/list-access-groups-query.dto";
 import { ListAccessUsersQueryDto } from "./dto/list-access-users-query.dto";
 import { UpdateGroupPermissionsDto } from "./dto/update-group-permissions.dto";
@@ -20,6 +21,40 @@ export class AccessService {
 
   listPermissions() {
     return this.cache.getOrSet("access:permissions", 5 * 60 * 1000, () => this.prisma.permission.findMany({ orderBy: [{ module: "asc" }, { action: "asc" }] }));
+  }
+
+  listAuditLogs(query: ListAccessAuditLogsQueryDto = {}) {
+    const limit = this.normalizeListLimit(query.limit);
+    const page = this.normalizePage(query.page);
+    const skip = (page - 1) * limit;
+    const search = query.search?.trim();
+    const entity = query.entity;
+    const action = query.action?.trim();
+    const where = {
+      entity: entity ?? { in: ["access_group", "access_user"] },
+      ...(action ? { action } : {}),
+      ...(search ? { OR: [
+        { action: { contains: search, mode: "insensitive" as const } },
+        { reason: { contains: search, mode: "insensitive" as const } },
+        { afterData: { contains: search, mode: "insensitive" as const } },
+        { beforeData: { contains: search, mode: "insensitive" as const } }
+      ] } : {})
+    };
+
+    return this.cache.getOrSet(`access:audit-logs:${limit}:${page}:${search ?? ""}:${entity ?? ""}:${action ?? ""}`, 30 * 1000, async () => {
+      const [items, total] = await this.prisma.$transaction([
+        this.prisma.auditLog.findMany({
+          where,
+          orderBy: { createdAt: "desc" },
+          skip,
+          take: limit,
+          include: { user: { select: { id: true, name: true, login: true, email: true } } }
+        }),
+        this.prisma.auditLog.count({ where })
+      ]);
+
+      return { items, limit, page, total, totalPages: Math.max(1, Math.ceil(total / limit)) };
+    });
   }
 
   listGroups(query: ListAccessGroupsQueryDto = {}) {
@@ -47,7 +82,7 @@ export class AccessService {
     });
   }
 
-  async createGroup(dto: CreateAccessGroupDto) {
+  async createGroup(dto: CreateAccessGroupDto, actorUserId?: string) {
     const group = await this.prisma.accessGroup.create({
       data: { name: dto.name, description: dto.description, active: true }
     });
@@ -57,14 +92,18 @@ export class AccessService {
     }
 
     this.invalidateAccessCaches();
-    return this.getGroup(group.id);
+    const nextGroup = await this.getGroup(group.id);
+    await this.createAccessAuditLog("access_group", group.id, "create_group", actorUserId, null, nextGroup, `Grupo criado: ${nextGroup.name}`);
+    return nextGroup;
   }
 
-  async updateGroupPermissions(groupId: string, dto: UpdateGroupPermissionsDto) {
-    await this.getGroup(groupId);
+  async updateGroupPermissions(groupId: string, dto: UpdateGroupPermissionsDto, actorUserId?: string) {
+    const previousGroup = await this.getGroup(groupId);
     await this.setGroupPermissions(groupId, dto.permissionKeys);
     this.invalidateAccessCaches();
-    return this.getGroup(groupId);
+    const nextGroup = await this.getGroup(groupId);
+    await this.createAccessAuditLog("access_group", groupId, "update_group_permissions", actorUserId, previousGroup, nextGroup, `Permissões atualizadas: ${nextGroup.name}`);
+    return nextGroup;
   }
 
   listUsers(query: ListAccessUsersQueryDto = {}) {
@@ -105,7 +144,7 @@ export class AccessService {
     });
   }
 
-  async createUser(dto: CreateUserDto) {
+  async createUser(dto: CreateUserDto, actorUserId?: string) {
     const user = await this.prisma.user.create({
       data: {
         login: dto.login,
@@ -122,31 +161,39 @@ export class AccessService {
     }
 
     this.invalidateAccessCaches(user.id);
-    return this.getUser(user.id);
+    const nextUser = await this.getUser(user.id);
+    await this.createAccessAuditLog("access_user", user.id, "create_user", actorUserId, null, nextUser, `Usuário criado: ${nextUser.name}`);
+    return nextUser;
   }
 
-  async updateUserGroups(userId: string, dto: UpdateUserGroupsDto) {
-    await this.getUser(userId);
+  async updateUserGroups(userId: string, dto: UpdateUserGroupsDto, actorUserId?: string) {
+    const previousUser = await this.getUser(userId);
     await this.setUserGroups(userId, dto.groupIds);
     this.invalidateAccessCaches(userId);
-    return this.getUser(userId);
+    const nextUser = await this.getUser(userId);
+    await this.createAccessAuditLog("access_user", userId, "update_user_groups", actorUserId, previousUser, nextUser, `Grupos atualizados: ${nextUser.name}`);
+    return nextUser;
   }
 
-  async updateUser(userId: string, dto: UpdateUserDto) {
-    await this.getUser(userId);
+  async updateUser(userId: string, dto: UpdateUserDto, actorUserId?: string) {
+    const previousUser = await this.getUser(userId);
     await this.prisma.user.update({
       where: { id: userId },
       data: { name: dto.name, email: dto.email || null }
     });
     this.invalidateAccessCaches(userId);
-    return this.getUser(userId);
+    const nextUser = await this.getUser(userId);
+    await this.createAccessAuditLog("access_user", userId, "update_user", actorUserId, previousUser, nextUser, `Dados atualizados: ${nextUser.name}`);
+    return nextUser;
   }
 
-  async updateUserStatus(userId: string, dto: UpdateUserStatusDto) {
-    await this.getUser(userId);
+  async updateUserStatus(userId: string, dto: UpdateUserStatusDto, actorUserId?: string) {
+    const previousUser = await this.getUser(userId);
     await this.prisma.user.update({ where: { id: userId }, data: { status: dto.status } });
     this.invalidateAccessCaches(userId);
-    return this.getUser(userId);
+    const nextUser = await this.getUser(userId);
+    await this.createAccessAuditLog("access_user", userId, "update_user_status", actorUserId, previousUser, nextUser, `Status atualizado: ${nextUser.name}`);
+    return nextUser;
   }
 
   private async getGroup(groupId: string) {
@@ -180,6 +227,7 @@ export class AccessService {
   private invalidateAccessCaches(userId?: string) {
     this.cache.deleteByPrefix("access:groups:");
     this.cache.deleteByPrefix("access:users:");
+    this.cache.deleteByPrefix("access:audit-logs:");
     this.cache.deleteByPrefix("auth:profile:");
     if (userId) this.cache.delete(`access:user:${userId}`);
   }
@@ -191,6 +239,26 @@ export class AccessService {
   private normalizeListLimit(limit?: number) {
     if (typeof limit !== "number" || !Number.isFinite(limit)) return 5;
     return Math.min(Math.max(Math.trunc(limit), 1), 100);
+  }
+
+  private normalizePage(page?: number) {
+    if (typeof page !== "number" || !Number.isFinite(page)) return 1;
+    return Math.max(Math.trunc(page), 1);
+  }
+
+  private async createAccessAuditLog(entity: "access_group" | "access_user", entityId: string, action: string, actorUserId: string | undefined, beforeData: unknown, afterData: unknown, reason: string) {
+    await this.prisma.auditLog.create({
+      data: {
+        entity,
+        entityId,
+        action,
+        beforeData: beforeData ? JSON.stringify(beforeData) : null,
+        afterData: afterData ? JSON.stringify(afterData) : null,
+        reason,
+        userId: actorUserId
+      }
+    });
+    this.cache.deleteByPrefix("access:audit-logs:");
   }
 
   private async setGroupPermissions(groupId: string, permissionKeys: string[]) {

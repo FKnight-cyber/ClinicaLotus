@@ -271,4 +271,7 @@ model AuditLog {
   userId     String?
   createdAt  DateTime @default(now())
   user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([entity, createdAt])
+  @@index([userId])
 }

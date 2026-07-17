@@ -20,6 +20,10 @@ export default async function PlaceholderPage({ params }: PlaceholderPageProps) 
     redirect("/modulos/controle-acesso/grupos-e-acessos");
   }
 
+  if (moduleItem.slug === "auditoria") {
+    redirect("/modulos/auditoria/logs-controle-acessos");
+  }
+
   if (moduleItem.slug === "prontuario") {
     return (
       <AppShell activeSlug={moduleItem.slug}>
