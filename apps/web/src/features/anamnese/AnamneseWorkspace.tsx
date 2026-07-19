@@ -514,6 +514,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const [editingQuestionLabel, setEditingQuestionLabel] = useState("");
   const [patients, setPatients] = useState<PatientSummary[]>([]);
   const [patientSearch, setPatientSearch] = useState("");
+  const [debouncedPatientSearch, setDebouncedPatientSearch] = useState("");
   const [isPatientModalOpen, setIsPatientModalOpen] = useState(false);
   const [newPatientName, setNewPatientName] = useState("");
   const [newPatientBirthDate, setNewPatientBirthDate] = useState("");
@@ -547,10 +548,15 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   }, [recordId, token]);
 
   useEffect(() => {
-    if (!token) return;
+    const timeout = setTimeout(() => setDebouncedPatientSearch(patientSearch), 350);
+    return () => clearTimeout(timeout);
+  }, [patientSearch]);
+
+  useEffect(() => {
+    if (!token || !canReadPatients) return;
     let isCurrent = true;
 
-    fetchPatients(token, patientSearch)
+    fetchPatients(token, debouncedPatientSearch)
       .then((nextPatients) => {
         if (isCurrent) setPatients(nextPatients);
       })
@@ -559,7 +565,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     return () => {
       isCurrent = false;
     };
-  }, [canReadPatients, patientSearch, token]);
+  }, [canReadPatients, debouncedPatientSearch, token]);
 
   useEffect(() => {
     if (!token || !canReadProntuario || !currentRecord?.patientId) {
@@ -648,6 +654,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const isActiveTemplateCompleted = activeTemplateStatus === "completed";
   const allTemplatesCompleted = effectiveTemplates.every((template) => loadedRecord.templateStatuses?.[template.id]?.status === "completed");
   const selectedPatient = patients.find((patient) => patient.id === loadedRecord.patientId) ?? null;
+  const hasLinkedPatient = Boolean(loadedRecord.patientId);
   const canEditCurrentRecord = canUpdateAnamnese && loadedRecord.status !== "finalized";
   const canLinkPatient = canEditCurrentRecord && canReadPatients;
   const canCreateAndLinkPatient = canLinkPatient && canCreatePatient;
@@ -1182,6 +1189,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
           </div>
         ) : null}
 
+        {hasLinkedPatient ? <>
         <div className="template-tabs" role="tablist" aria-label="Fichas de anamnese">
           {effectiveTemplates.map((template) => (
             <button
@@ -1574,8 +1582,17 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
             ) : null}
           </div>
         </div>
+        </> : (
+          <div className="patient-required-state">
+            <span className="confirmation-modal-icon is-primary"><FileText aria-hidden="true" size={20} /></span>
+            <div>
+              <h3>Selecione um paciente para preencher a anamnese</h3>
+              <p>Use a busca acima para vincular um paciente existente ou cadastre um novo paciente antes de abrir as fichas.</p>
+            </div>
+          </div>
+        )}
       </section>
-      <AnamnesePrintDocument record={loadedRecord} templates={effectiveTemplates} />
+      {hasLinkedPatient ? <AnamnesePrintDocument record={loadedRecord} templates={effectiveTemplates} /> : null}
     </div>
   );
 }

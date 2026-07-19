@@ -5,6 +5,16 @@ import { anamneseTemplates } from "./templates";
 import type { AnamneseRecord, ClinicalDocumentSummary, FieldValue, FormTemplate, MedicalRecordEntry, PatientSummary, TemplateAnswers, TemplateId, ValidationIssue } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
+const templatesCacheTtlMs = 10 * 60 * 1000;
+const recordCacheTtlMs = 5 * 1000;
+const patientsCacheTtlMs = 15 * 1000;
+const medicalRecordCacheTtlMs = 15 * 1000;
+
+type CacheEntry<T> = {
+  expiresAt: number;
+  promise?: Promise<T>;
+  value?: T;
+};
 
 type AnamnesePayload = {
   patientName: string;
@@ -13,6 +23,64 @@ type AnamnesePayload = {
   customFields?: AnamneseRecord["customFields"];
   templateConfig?: AnamneseRecord["templateConfig"];
 };
+
+const anamneseRecordsCache = new Map<string, CacheEntry<AnamneseRecord[]>>();
+const anamneseRecordCache = new Map<string, CacheEntry<AnamneseRecord>>();
+const anamneseTemplatesCache = new Map<string, CacheEntry<FormTemplate[]>>();
+const patientsCache = new Map<string, CacheEntry<PatientSummary[]>>();
+const medicalRecordCache = new Map<string, CacheEntry<MedicalRecordEntry[]>>();
+
+function buildCacheKey(token: string, ...parts: string[]) {
+  return [token, ...parts].join(":");
+}
+
+function getCached<T>(cache: Map<string, CacheEntry<T>>, key: string, ttlMs: number, loader: () => Promise<T>) {
+  const now = Date.now();
+  const cached = cache.get(key);
+
+  if (cached?.value && cached.expiresAt > now) {
+    return Promise.resolve(cached.value);
+  }
+
+  if (cached?.promise && cached.expiresAt > now) {
+    return cached.promise;
+  }
+
+  const promise = loader().then((value) => {
+    cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+    return value;
+  }).catch((error) => {
+    cache.delete(key);
+    throw error;
+  });
+
+  cache.set(key, { promise, expiresAt: now + ttlMs });
+  return promise;
+}
+
+function setCached<T>(cache: Map<string, CacheEntry<T>>, key: string, value: T, ttlMs: number) {
+  cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+}
+
+function invalidateAnamneseRecordCaches(token: string, record?: AnamneseRecord) {
+  anamneseRecordsCache.delete(buildCacheKey(token, "records"));
+
+  if (record) {
+    setCached(anamneseRecordCache, buildCacheKey(token, "record", record.id), record, recordCacheTtlMs);
+  }
+}
+
+function invalidatePatientCaches(token: string, patientId?: string | null) {
+  for (const key of patientsCache.keys()) {
+    if (key.startsWith(`${token}:patients:`)) {
+      patientsCache.delete(key);
+    }
+  }
+
+  if (patientId) {
+    medicalRecordCache.delete(buildCacheKey(token, "medical-record", patientId));
+  }
+}
 
 async function apiRequest<T>(token: string, path: string, options: RequestInit = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -47,17 +115,21 @@ export function normalizeAnamneseRecord(record: AnamneseRecord): AnamneseRecord 
 }
 
 export async function fetchAnamneseRecords(token: string) {
-  const records = await apiRequest<AnamneseRecord[]>(token, "/api/anamneses");
-  return records.map(normalizeAnamneseRecord);
+  return getCached(anamneseRecordsCache, buildCacheKey(token, "records"), recordCacheTtlMs, async () => {
+    const records = await apiRequest<AnamneseRecord[]>(token, "/api/anamneses");
+    return records.map(normalizeAnamneseRecord);
+  });
 }
 
 export function fetchAnamneseTemplates(token: string) {
-  return apiRequest<FormTemplate[]>(token, "/api/anamneses/templates");
+  return getCached(anamneseTemplatesCache, buildCacheKey(token, "templates"), templatesCacheTtlMs, () => apiRequest<FormTemplate[]>(token, "/api/anamneses/templates"));
 }
 
 export async function fetchAnamneseRecord(token: string, recordId: string) {
-  const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}`);
-  return normalizeAnamneseRecord(record);
+  return getCached(anamneseRecordCache, buildCacheKey(token, "record", recordId), recordCacheTtlMs, async () => {
+    const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}`);
+    return normalizeAnamneseRecord(record);
+  });
 }
 
 export async function createAnamneseRecord(token: string, payload: AnamnesePayload) {
@@ -65,7 +137,9 @@ export async function createAnamneseRecord(token: string, payload: AnamnesePaylo
     method: "POST",
     body: JSON.stringify(payload)
   });
-  return normalizeAnamneseRecord(record);
+  const normalizedRecord = normalizeAnamneseRecord(record);
+  invalidateAnamneseRecordCaches(token, normalizedRecord);
+  return normalizedRecord;
 }
 
 export async function saveAnamneseRecord(token: string, recordId: string, payload: AnamnesePayload) {
@@ -73,37 +147,49 @@ export async function saveAnamneseRecord(token: string, recordId: string, payloa
     method: "PATCH",
     body: JSON.stringify(payload)
   });
-  return normalizeAnamneseRecord(record);
+  const normalizedRecord = normalizeAnamneseRecord(record);
+  invalidateAnamneseRecordCaches(token, normalizedRecord);
+  return normalizedRecord;
 }
 
 export async function finalizeAnamneseRecord(token: string, recordId: string) {
   const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}/finalize`, {
     method: "POST"
   });
-  return normalizeAnamneseRecord(record);
+  const normalizedRecord = normalizeAnamneseRecord(record);
+  invalidateAnamneseRecordCaches(token, normalizedRecord);
+  if (normalizedRecord.patientId) {
+    medicalRecordCache.delete(buildCacheKey(token, "medical-record", normalizedRecord.patientId));
+  }
+  return normalizedRecord;
 }
 
 export async function completeAnamneseTemplate(token: string, recordId: string, templateId: TemplateId) {
   const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}/templates/${templateId}/complete`, {
     method: "POST"
   });
-  return normalizeAnamneseRecord(record);
+  const normalizedRecord = normalizeAnamneseRecord(record);
+  invalidateAnamneseRecordCaches(token, normalizedRecord);
+  return normalizedRecord;
 }
 
 export function fetchPatients(token: string, search = "") {
-  const query = search.trim() ? `?search=${encodeURIComponent(search.trim())}` : "";
-  return apiRequest<PatientSummary[]>(token, `/api/patients${query}`);
+  const normalizedSearch = search.trim();
+  const query = normalizedSearch ? `?search=${encodeURIComponent(normalizedSearch)}` : "";
+  return getCached(patientsCache, buildCacheKey(token, "patients", normalizedSearch.toLowerCase()), patientsCacheTtlMs, () => apiRequest<PatientSummary[]>(token, `/api/patients${query}`));
 }
 
-export function createPatient(token: string, payload: { name: string; birthDate?: string; cpf?: string; rg?: string }) {
-  return apiRequest<PatientSummary>(token, "/api/patients", {
+export async function createPatient(token: string, payload: { name: string; birthDate?: string; cpf?: string; rg?: string }) {
+  const patient = await apiRequest<PatientSummary>(token, "/api/patients", {
     method: "POST",
     body: JSON.stringify(payload)
   });
+  invalidatePatientCaches(token, patient.id);
+  return patient;
 }
 
 export function fetchPatientMedicalRecord(token: string, patientId: string) {
-  return apiRequest<MedicalRecordEntry[]>(token, `/api/patients/${patientId}/prontuario`);
+  return getCached(medicalRecordCache, buildCacheKey(token, "medical-record", patientId), medicalRecordCacheTtlMs, () => apiRequest<MedicalRecordEntry[]>(token, `/api/patients/${patientId}/prontuario`));
 }
 
 export function emitAnamnesePdfDocument(token: string, recordId: string) {
