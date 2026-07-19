@@ -24,15 +24,34 @@ export class AccessService {
   }
 
   listAuditLogs(query: ListAccessAuditLogsQueryDto = {}) {
+    return this.listAuditLogsByScope(query, ["access_group", "access_user"], "access:audit-logs");
+  }
+
+  listAnamnesisAuditLogs(query: ListAccessAuditLogsQueryDto = {}) {
+    return this.listAuditLogsByScope(query, ["anamnesis_record", "AnamnesisRecord"], "access:audit-logs:anamnesis", [
+      "create_anamnesis_template",
+      "complete_anamnesis_template",
+      "finalize_anamnesis",
+      "emit_anamnesis_pdf",
+      "emit_anamnesis_template_pdf",
+      "COMPLETE_TEMPLATE",
+      "FINALIZE",
+      "EMIT_PDF",
+      "EMIT_TEMPLATE_PDF"
+    ]);
+  }
+
+  private listAuditLogsByScope(query: ListAccessAuditLogsQueryDto = {}, allowedEntities: string[], cachePrefix: string, allowedActions?: string[]) {
     const limit = this.normalizeListLimit(query.limit);
     const page = this.normalizePage(query.page);
     const skip = (page - 1) * limit;
     const search = query.search?.trim();
-    const entity = query.entity;
-    const action = query.action?.trim();
+    const entity = query.entity && allowedEntities.includes(query.entity) ? query.entity : undefined;
+    const requestedAction = query.action?.trim();
+    const action = requestedAction && (!allowedActions || allowedActions.includes(requestedAction)) ? requestedAction : undefined;
     const where = {
-      entity: entity ?? { in: ["access_group", "access_user"] },
-      ...(action ? { action } : {}),
+      entity: entity ?? { in: allowedEntities },
+      ...(action ? { action } : allowedActions ? { action: { in: allowedActions } } : {}),
       ...(search ? { OR: [
         { action: { contains: search, mode: "insensitive" as const } },
         { reason: { contains: search, mode: "insensitive" as const } },
@@ -41,7 +60,7 @@ export class AccessService {
       ] } : {})
     };
 
-    return this.cache.getOrSet(`access:audit-logs:${limit}:${page}:${search ?? ""}:${entity ?? ""}:${action ?? ""}`, 30 * 1000, async () => {
+    return this.cache.getOrSet(`${cachePrefix}:${limit}:${page}:${search ?? ""}:${entity ?? ""}:${action ?? ""}`, 30 * 1000, async () => {
       const [items, total] = await this.prisma.$transaction([
         this.prisma.auditLog.findMany({
           where,

@@ -17,8 +17,8 @@ export class ListAccessAuditLogsQueryDto {
   search?: string;
 
   @IsOptional()
-  @IsIn(["access_group", "access_user"])
-  entity?: "access_group" | "access_user";
+  @IsIn(["access_group", "access_user", "anamnesis_record", "AnamnesisRecord"])
+  entity?: "access_group" | "access_user" | "anamnesis_record" | "AnamnesisRecord";
 
   @IsOptional()
   @IsString()

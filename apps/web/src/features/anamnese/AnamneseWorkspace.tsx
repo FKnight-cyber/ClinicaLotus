@@ -9,7 +9,7 @@ import { AnamnesePrintDocument } from "./AnamnesePrintDocument";
 import { downloadAnamnesePdf } from "./pdfExport";
 import { completeAnamneseTemplate, createAnamneseRecord, createPatient, emitAnamnesePdfDocument, emitAnamneseTemplatePdfDocument, fetchAnamneseRecord, fetchAnamneseTemplates, fetchPatientMedicalRecord, fetchPatients, finalizeAnamneseRecord, saveAnamneseRecord } from "./storage";
 import { anamneseTemplates as fallbackTemplates } from "./templates";
-import type { AnamneseRecord, FieldValue, FormField, FormTemplate, MedicalRecordEntry, PatientSummary, TableValue, TemplateAnswers, TemplateConfigItem, TemplateId, ValidationIssue } from "./types";
+import type { AnamneseRecord, FieldValue, FormField, FormSection, FormTemplate, MedicalRecordEntry, PatientSummary, SectionConfigItem, TableValue, TemplateAnswers, TemplateConfigItem, TemplateId, ValidationIssue } from "./types";
 
 const yesNoOptions = ["Sim", "Não"];
 const customTemplateSectionId = "custom-section";
@@ -80,6 +80,33 @@ function getRecordSavePayload(record: AnamneseRecord) {
   };
 }
 
+function applySectionConfig(baseSections: FormSection[], sectionConfig: SectionConfigItem[] | undefined) {
+  const configById = new Map((sectionConfig ?? []).map((config) => [config.id, config]));
+  const baseSectionIds = new Set(baseSections.map((section) => section.id));
+  const configuredBaseSections = baseSections.map((section, index) => {
+    const config = configById.get(section.id);
+    return {
+      ...section,
+      title: config?.title ?? section.title,
+      description: config?.description ?? section.description,
+      sortOrder: config?.sortOrder ?? index
+    };
+  });
+  const customSections = (sectionConfig ?? [])
+    .filter((config) => !baseSectionIds.has(config.id))
+    .map((config, index) => ({
+      id: config.id,
+      title: config.title,
+      description: config.description,
+      sortOrder: config.sortOrder ?? baseSections.length + index,
+      fields: []
+    }));
+
+  return [...configuredBaseSections, ...customSections]
+    .sort((firstSection, secondSection) => firstSection.sortOrder - secondSection.sortOrder)
+    .map(({ sortOrder: _sortOrder, ...section }) => section);
+}
+
 function getEffectiveTemplates(baseTemplates: FormTemplate[], templateConfig: TemplateConfigItem[] | undefined) {
   const configById = new Map((templateConfig ?? []).map((config) => [config.id, config]));
   const baseTemplateIds = new Set(baseTemplates.map((template) => template.id));
@@ -90,7 +117,8 @@ function getEffectiveTemplates(baseTemplates: FormTemplate[], templateConfig: Te
       title: config?.title ?? template.title,
       shortTitle: config?.shortTitle ?? template.shortTitle,
       description: config?.description ?? template.description,
-      sortOrder: config?.sortOrder ?? index
+      sortOrder: config?.sortOrder ?? index,
+      sections: applySectionConfig(template.sections, config?.sections)
     };
   });
   const customTemplates = (templateConfig ?? [])
@@ -102,7 +130,7 @@ function getEffectiveTemplates(baseTemplates: FormTemplate[], templateConfig: Te
       source: "Personalizada",
       description: config.description ?? "Ficha personalizada deste registro.",
       sortOrder: config.sortOrder ?? baseTemplates.length + index,
-      sections: [{ id: customTemplateSectionId, title: "Campos personalizados", description: undefined, fields: [] }]
+      sections: applySectionConfig([{ id: customTemplateSectionId, title: "Campos personalizados", description: undefined, fields: [] }], config.sections)
     }));
 
   return [...configuredBaseTemplates, ...customTemplates]
@@ -510,6 +538,9 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const [tableColumnDrafts, setTableColumnDrafts] = useState([""]);
   const [isTemplateManagerOpen, setIsTemplateManagerOpen] = useState(false);
   const [newTemplateTitle, setNewTemplateTitle] = useState("");
+  const [isSectionManagerOpen, setIsSectionManagerOpen] = useState(false);
+  const [newSectionTitle, setNewSectionTitle] = useState("");
+  const [draggingSectionId, setDraggingSectionId] = useState<string | null>(null);
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const [editingQuestionLabel, setEditingQuestionLabel] = useState("");
   const [patients, setPatients] = useState<PatientSummary[]>([]);
@@ -823,6 +854,8 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   }
 
   function addCustomQuestion() {
+    if (!canManageCurrentQuestions) return;
+
     const normalizedLabel = newQuestionLabel.trim();
 
     if (!normalizedLabel) {
@@ -935,6 +968,8 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   }
 
   function updateCustomQuestion(fieldId: string) {
+    if (!canManageCurrentQuestions) return;
+
     const normalizedLabel = editingQuestionLabel.trim();
 
     if (!normalizedLabel) {
@@ -974,6 +1009,8 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   }
 
   function removeCustomQuestion(fieldId: string) {
+    if (!canManageCurrentQuestions) return;
+
     const isOriginalField = activeSection.fields.some((field) => field.id === fieldId);
     const nextCustomFields = customFields.filter((field) => field.id !== fieldId);
     const nextSectionOverrides = [
@@ -1014,12 +1051,15 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
         shortTitle: existingConfig?.shortTitle ?? template.shortTitle,
         description: existingConfig?.description ?? template.description,
         sortOrder: index,
-        isCustom: existingConfig?.isCustom ?? !baseTemplateIds.has(template.id)
+        isCustom: existingConfig?.isCustom ?? !baseTemplateIds.has(template.id),
+        sections: existingConfig?.sections
       };
     });
   }
 
   function applyTemplateConfig(nextConfig: TemplateConfigItem[]) {
+    if (!canManageCurrentQuestions) return;
+
     const normalizedConfig = nextConfig.map((config, index) => ({ ...config, sortOrder: index }));
 
     setCurrentRecord((record) => {
@@ -1078,6 +1118,107 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
 
     applyTemplateConfig([...getTemplateConfigItems(), nextTemplate]);
     setNewTemplateTitle("");
+  }
+
+  function getSectionConfigItems() {
+    const baseTemplate = templates.find((template) => template.id === activeTemplate.id);
+    const baseSectionIds = new Set((baseTemplate?.sections ?? (activeTemplate.id.startsWith("custom-template-") ? [{ id: customTemplateSectionId }] : [])).map((section) => section.id));
+    const existingTemplateConfig = loadedRecord.templateConfig?.find((config) => config.id === activeTemplate.id);
+    const existingSectionConfigById = new Map((existingTemplateConfig?.sections ?? []).map((sectionConfig) => [sectionConfig.id, sectionConfig]));
+
+    return activeTemplate.sections.map((section, index) => {
+      const existingSectionConfig = existingSectionConfigById.get(section.id);
+      return {
+        id: section.id,
+        title: existingSectionConfig?.title ?? section.title,
+        description: existingSectionConfig?.description ?? section.description,
+        sortOrder: index,
+        isCustom: existingSectionConfig?.isCustom ?? !baseSectionIds.has(section.id)
+      };
+    });
+  }
+
+  function applySectionConfigItems(templateId: TemplateId, nextSectionConfig: SectionConfigItem[]) {
+    if (!canManageCurrentQuestions) return;
+
+    const normalizedSectionConfig = nextSectionConfig.map((sectionConfig, index) => ({ ...sectionConfig, sortOrder: index }));
+    const nextTemplateConfigItems = getTemplateConfigItems().map((templateConfig) => templateConfig.id === templateId ? {
+      ...templateConfig,
+      sections: normalizedSectionConfig
+    } : templateConfig);
+
+    setCurrentRecord((record) => {
+      if (!record) return record;
+
+      const nextCustomFields = { ...record.customFields };
+      nextCustomFields[templateId] = { ...nextCustomFields[templateId] };
+
+      for (const sectionConfig of normalizedSectionConfig) {
+        if (sectionConfig.isCustom) {
+          nextCustomFields[templateId][sectionConfig.id] = nextCustomFields[templateId][sectionConfig.id] ?? [];
+        }
+      }
+
+      return {
+        ...record,
+        customFields: nextCustomFields,
+        templateConfig: nextTemplateConfigItems,
+        updatedAt: new Date().toISOString()
+      };
+    });
+    setMessage("Configuração das abas atualizada");
+  }
+
+  function updateSectionConfigItem(sectionId: string, patch: Partial<SectionConfigItem>) {
+    applySectionConfigItems(activeTemplate.id, getSectionConfigItems().map((sectionConfig) => sectionConfig.id === sectionId ? { ...sectionConfig, ...patch } : sectionConfig));
+  }
+
+  function moveSectionConfigItem(sectionId: string, direction: -1 | 1) {
+    const sectionConfigItems = getSectionConfigItems();
+    const currentIndex = sectionConfigItems.findIndex((sectionConfig) => sectionConfig.id === sectionId);
+    const nextIndex = currentIndex + direction;
+
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= sectionConfigItems.length) return;
+
+    const nextSectionConfigItems = [...sectionConfigItems];
+    [nextSectionConfigItems[currentIndex], nextSectionConfigItems[nextIndex]] = [nextSectionConfigItems[nextIndex], nextSectionConfigItems[currentIndex]];
+    applySectionConfigItems(activeTemplate.id, nextSectionConfigItems);
+    setActiveSectionIndex(nextIndex);
+  }
+
+  function moveSectionConfigItemTo(sectionId: string, targetSectionId: string) {
+    if (sectionId === targetSectionId) return;
+
+    const sectionConfigItems = getSectionConfigItems();
+    const currentIndex = sectionConfigItems.findIndex((sectionConfig) => sectionConfig.id === sectionId);
+    const targetIndex = sectionConfigItems.findIndex((sectionConfig) => sectionConfig.id === targetSectionId);
+
+    if (currentIndex < 0 || targetIndex < 0) return;
+
+    const nextSectionConfigItems = [...sectionConfigItems];
+    const [movedSectionConfig] = nextSectionConfigItems.splice(currentIndex, 1);
+    nextSectionConfigItems.splice(targetIndex, 0, movedSectionConfig);
+    applySectionConfigItems(activeTemplate.id, nextSectionConfigItems);
+    setActiveSectionIndex(targetIndex);
+  }
+
+  function addCustomSection() {
+    const normalizedTitle = newSectionTitle.trim();
+
+    if (!normalizedTitle) return;
+
+    const nextSection: SectionConfigItem = {
+      id: `custom-section-${crypto.randomUUID()}`,
+      title: normalizedTitle,
+      description: undefined,
+      sortOrder: getSectionConfigItems().length,
+      isCustom: true
+    };
+
+    const currentSectionConfigItems = getSectionConfigItems();
+    applySectionConfigItems(activeTemplate.id, [...currentSectionConfigItems, nextSection]);
+    setActiveSectionIndex(currentSectionConfigItems.length);
+    setNewSectionTitle("");
   }
 
   return (
@@ -1220,7 +1361,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
             </div>
           </div>
           {canManageCurrentQuestions ? (
-            <button className="secondary-button" onClick={() => setIsTemplateManagerOpen(true)} type="button">
+            <button className="secondary-button editor-action-button" onClick={() => setIsTemplateManagerOpen(true)} type="button">
               <Pencil size={16} />
               Editar fichas
             </button>
@@ -1271,7 +1412,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                     value={newTemplateTitle}
                   />
                 </label>
-                <button className="secondary-button" disabled={!newTemplateTitle.trim()} onClick={addCustomTemplate} type="button">
+                <button className="secondary-button editor-action-button" disabled={!newTemplateTitle.trim()} onClick={addCustomTemplate} type="button">
                   <Plus size={16} />
                   Adicionar ficha
                 </button>
@@ -1283,18 +1424,95 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
           </div>
         ) : null}
 
-        <div className="section-rail" aria-label="Seções da ficha">
-          {activeTemplate.sections.map((section, index) => (
-            <button
-              className={index === activeSectionIndex ? "is-active" : ""}
-              key={section.id}
-              onClick={() => setActiveSectionIndex(index)}
-              type="button"
-            >
-              {index + 1}. {section.title}
+        <div className="section-tabs-toolbar">
+          <div className="section-rail" aria-label="Seções da ficha">
+            {activeTemplate.sections.map((section, index) => (
+              <button
+                className={index === activeSectionIndex ? "is-active" : ""}
+                draggable={canManageCurrentQuestions}
+                key={section.id}
+                onClick={() => setActiveSectionIndex(index)}
+                onDragEnd={() => setDraggingSectionId(null)}
+                onDragOver={(event) => {
+                  if (!canManageCurrentQuestions || !draggingSectionId) return;
+                  event.preventDefault();
+                }}
+                onDragStart={(event) => {
+                  if (!canManageCurrentQuestions) return;
+                  event.dataTransfer.effectAllowed = "move";
+                  setDraggingSectionId(section.id);
+                }}
+                onDrop={(event) => {
+                  if (!canManageCurrentQuestions || !draggingSectionId) return;
+                  event.preventDefault();
+                  moveSectionConfigItemTo(draggingSectionId, section.id);
+                  setDraggingSectionId(null);
+                }}
+                type="button"
+              >
+                {index + 1}. {section.title}
+              </button>
+            ))}
+          </div>
+          {canManageCurrentQuestions ? (
+            <button className="secondary-button editor-action-button" onClick={() => setIsSectionManagerOpen(true)} type="button">
+              <Pencil size={16} />
+              Editar abas
             </button>
-          ))}
+          ) : null}
         </div>
+
+        {isSectionManagerOpen ? (
+          <div className="confirmation-modal-layer" role="presentation">
+            <button aria-label="Fechar edição de abas" className="confirmation-modal-backdrop" onClick={() => setIsSectionManagerOpen(false)} type="button" />
+            <section aria-labelledby="section-manager-modal-title" aria-modal="true" className="confirmation-modal-panel template-manager-modal" role="dialog">
+              <div className="confirmation-modal-heading">
+                <span className="confirmation-modal-icon is-primary"><FileText aria-hidden="true" size={20} /></span>
+                <div>
+                  <span className="eyebrow">{activeTemplate.shortTitle}</span>
+                  <h3 id="section-manager-modal-title">Editar abas</h3>
+                </div>
+              </div>
+              <div className="template-manager-list">
+                {getSectionConfigItems().map((sectionConfig, index, sectionConfigItems) => (
+                  <div className="template-manager-row section-manager-row" key={sectionConfig.id}>
+                    <label>
+                      <span>Nome da aba</span>
+                      <input onChange={(event) => updateSectionConfigItem(sectionConfig.id, { title: event.target.value })} value={sectionConfig.title} />
+                    </label>
+                    <div className="template-manager-actions">
+                      <button aria-label={`Mover ${sectionConfig.title} para cima`} disabled={index === 0} onClick={() => moveSectionConfigItem(sectionConfig.id, -1)} type="button">↑</button>
+                      <button aria-label={`Mover ${sectionConfig.title} para baixo`} disabled={index === sectionConfigItems.length - 1} onClick={() => moveSectionConfigItem(sectionConfig.id, 1)} type="button">↓</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="template-manager-new">
+                <label>
+                  <span>Nova aba personalizada</span>
+                  <input
+                    onChange={(event) => setNewSectionTitle(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        addCustomSection();
+                      }
+                    }}
+                    placeholder="Ex.: Evolução nutricional"
+                    value={newSectionTitle}
+                  />
+                </label>
+                <button className="secondary-button editor-action-button" disabled={!newSectionTitle.trim()} onClick={addCustomSection} type="button">
+                  <Plus size={16} />
+                  Adicionar aba
+                </button>
+              </div>
+              <div className="confirmation-modal-actions">
+                <button className="primary-button" onClick={() => setIsSectionManagerOpen(false)} type="button">Concluir edição</button>
+              </div>
+            </section>
+          </div>
+        ) : null}
 
         <form className="clinical-form" onSubmit={(event) => event.preventDefault()}>
           <div className="section-title">
@@ -1328,7 +1546,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                   <option value="table">Tabela</option>
                 </select>
               </label>
-              <button disabled={newQuestionType !== "multiChoice" && newQuestionType !== "table" && !newQuestionLabel.trim()} onClick={handleNewQuestionPrimaryAction} title="Requer permissão de atualização da anamnese" type="button">
+              <button className="editor-action-button" disabled={newQuestionType !== "multiChoice" && newQuestionType !== "table" && !newQuestionLabel.trim()} onClick={handleNewQuestionPrimaryAction} title="Requer permissão de atualização da anamnese" type="button">
                 <Plus size={16} />
                 {newQuestionType === "multiChoice" || newQuestionType === "table" ? "Configurar pergunta" : "Adicionar pergunta"}
               </button>
@@ -1372,7 +1590,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                         </button>
                       </div>
                     ))}
-                    <button className="secondary-button" onClick={addMultiChoiceOption} type="button">
+                    <button className="secondary-button editor-action-button" onClick={addMultiChoiceOption} type="button">
                       <Plus size={16} />
                       Adicionar opção
                     </button>
@@ -1424,7 +1642,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                           </button>
                         </div>
                       ))}
-                      <button className="secondary-button" onClick={addTableRowDraft} type="button">
+                      <button className="secondary-button editor-action-button" onClick={addTableRowDraft} type="button">
                         <Plus size={16} />
                         Adicionar item
                       </button>
@@ -1450,7 +1668,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                           </button>
                         </div>
                       ))}
-                      <button className="secondary-button" onClick={addTableColumnDraft} type="button">
+                      <button className="secondary-button editor-action-button" onClick={addTableColumnDraft} type="button">
                         <Plus size={16} />
                         Adicionar coluna
                       </button>

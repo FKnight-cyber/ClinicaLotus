@@ -14,7 +14,7 @@ type AuditUser = {
 
 type AccessAuditLog = {
   id: string;
-  entity: "access_group" | "access_user";
+  entity: "access_group" | "access_user" | "anamnesis_record" | "AnamnesisRecord";
   entityId?: string | null;
   action: string;
   beforeData?: string | null;
@@ -38,24 +38,68 @@ const MAX_AUDIT_LIMIT = 100;
 
 type AuditEntityFilter = "" | AccessAuditLog["entity"];
 
-const actionLabels: Record<string, string> = {
+type AuditEntityOption = {
+  value: Exclude<AuditEntityFilter, "">;
+  label: string;
+};
+
+type AuditLogsPageConfig = {
+  title: string;
+  description: string;
+  permission: string;
+  permissionMessage: string;
+  endpoint: string;
+  entityOptions: AuditEntityOption[];
+  actionLabels: Record<string, string>;
+};
+
+const accessAuditConfig: AuditLogsPageConfig = {
+  title: "Logs do Controle de acessos",
+  description: "Consulte o histórico permanente de alterações feitas em grupos, permissões e usuários.",
+  permission: "audit.access.read",
+  permissionMessage: "Seu usuário não possui permissão para visualizar logs do controle de acessos.",
+  endpoint: "/api/access/audit-logs",
+  entityOptions: [
+    { value: "access_group", label: "Grupos e acessos" },
+    { value: "access_user", label: "Gerenciar usuários" }
+  ],
+  actionLabels: {
   create_group: "Grupo criado",
   update_group_permissions: "Permissões do grupo atualizadas",
   create_user: "Usuário criado",
   update_user: "Dados do usuário atualizados",
   update_user_groups: "Grupos do usuário atualizados",
   update_user_status: "Status do usuário atualizado"
+  }
 };
 
-const auditActionOptions = Object.entries(actionLabels).map(([value, label]) => ({ value, label }));
+export const anamnesisAuditConfig: AuditLogsPageConfig = {
+  title: "Logs de Anamnese",
+  description: "Consulte eventos relevantes do fluxo clínico sem registrar cada salvamento de rascunho.",
+  permission: "audit.anamnesis.read",
+  permissionMessage: "Seu usuário não possui permissão para visualizar logs de anamnese.",
+  endpoint: "/api/access/audit-logs/anamnesis",
+  entityOptions: [{ value: "anamnesis_record", label: "Anamnese" }],
+  actionLabels: {
+    create_anamnesis_template: "Ficha personalizada criada",
+    complete_anamnesis_template: "Ficha concluída",
+    finalize_anamnesis: "Anamnese finalizada",
+    emit_anamnesis_pdf: "PDF completo emitido",
+    emit_anamnesis_template_pdf: "PDF da ficha emitido",
+    COMPLETE_TEMPLATE: "Ficha concluída",
+    FINALIZE: "Anamnese finalizada",
+    EMIT_PDF: "PDF completo emitido",
+    EMIT_TEMPLATE_PDF: "PDF da ficha emitido"
+  }
+};
 
-function buildAuditLogsPath(limit: number, page: number, search: string, entity: string, action: string) {
+function buildAuditLogsPath(endpoint: string, limit: number, page: number, search: string, entity: string, action: string) {
   const params = new URLSearchParams({ limit: String(limit), page: String(page) });
   const normalizedSearch = search.trim();
   if (normalizedSearch) params.set("search", normalizedSearch);
   if (entity) params.set("entity", entity);
   if (action) params.set("action", action);
-  return `/api/access/audit-logs?${params.toString()}`;
+  return `${endpoint}?${params.toString()}`;
 }
 
 function buildAuditLogsCacheKey(limit: number, page: number, search: string, entity: string, action: string) {
@@ -68,10 +112,11 @@ function formatDateTime(value: string) {
 
 function formatEntity(entity: AccessAuditLog["entity"]) {
   if (entity === "access_group") return "Grupos e acessos";
+  if (entity === "anamnesis_record" || entity === "AnamnesisRecord") return "Anamnese";
   return "Gerenciar usuários";
 }
 
-function getActionLabel(action: string) {
+function getActionLabel(action: string, actionLabels: Record<string, string>) {
   return actionLabels[action] ?? action;
 }
 
@@ -86,6 +131,11 @@ function parseAuditPayload(payload?: string | null) {
       status?: string;
       permissions?: { permission: { key: string; description?: string | null } }[];
       groups?: { accessGroup: { id: string; name: string } }[];
+      code?: string;
+      patientName?: string;
+      fileName?: string;
+      record?: { code?: string; patientName?: string };
+      createdTemplates?: Array<{ title?: string; shortTitle?: string }>;
     };
   } catch {
     return null;
@@ -113,6 +163,16 @@ function formatListDiff(beforeValues: string[], afterValues: string[], emptyMess
 function readAuditDetails(log: AccessAuditLog) {
   const beforePayload = parseAuditPayload(log.beforeData);
   const afterPayload = parseAuditPayload(log.afterData);
+
+  if (log.action === "create_anamnesis_template") {
+    const createdTemplates = afterPayload?.createdTemplates?.map((template) => template.title ?? template.shortTitle).filter(Boolean) ?? [];
+    return createdTemplates.length > 0 ? `Ficha criada: ${createdTemplates.join(", ")}.` : "Ficha personalizada criada.";
+  }
+
+  if (log.action === "complete_anamnesis_template" || log.action === "COMPLETE_TEMPLATE") return "Ficha concluída e bloqueada como marco clínico.";
+  if (log.action === "finalize_anamnesis" || log.action === "FINALIZE") return "Anamnese completa finalizada e enviada ao prontuário.";
+  if (log.action === "emit_anamnesis_pdf" || log.action === "EMIT_PDF") return `PDF completo emitido${afterPayload?.fileName ? `: ${afterPayload.fileName}` : ""}.`;
+  if (log.action === "emit_anamnesis_template_pdf" || log.action === "EMIT_TEMPLATE_PDF") return `PDF parcial emitido${afterPayload?.fileName ? `: ${afterPayload.fileName}` : ""}.`;
 
   if (log.action === "update_user_status") {
     return `Status alterado de ${formatStatus(beforePayload?.status)} para ${formatStatus(afterPayload?.status)}.`;
@@ -149,7 +209,9 @@ function readAuditTarget(log: AccessAuditLog) {
   if (!payload) return log.entityId ?? "Registro não informado";
 
   try {
-    const parsed = JSON.parse(payload) as { name?: string; login?: string };
+    const parsed = JSON.parse(payload) as { name?: string; login?: string; code?: string; patientName?: string; record?: { code?: string; patientName?: string } };
+    if (parsed.record?.code) return `${parsed.record.code}${parsed.record.patientName ? ` - ${parsed.record.patientName}` : ""}`;
+    if (parsed.code) return `${parsed.code}${parsed.patientName ? ` - ${parsed.patientName}` : ""}`;
     if (parsed.name && parsed.login) return `${parsed.name} (${parsed.login})`;
     if (parsed.name) return parsed.name;
   } catch {
@@ -175,9 +237,14 @@ async function apiRequest<T>(token: string, path: string) {
   return response.json() as Promise<T>;
 }
 
-export function AccessAuditLogsPage() {
+type AccessAuditLogsPageProps = {
+  config?: AuditLogsPageConfig;
+};
+
+export function AccessAuditLogsPage({ config = accessAuditConfig }: AccessAuditLogsPageProps) {
   const { hasPermission, token } = useAuth();
   const logsCacheRef = useRef(new Map<string, PaginatedAccessAuditLogs>());
+  const auditActionOptions = Object.entries(config.actionLabels).map(([value, label]) => ({ value, label }));
   const [logs, setLogs] = useState<AccessAuditLog[]>([]);
   const [total, setTotal] = useState(0);
   const [limit, setLimit] = useState(DEFAULT_AUDIT_LIMIT);
@@ -196,7 +263,7 @@ export function AccessAuditLogsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLogsLoading, setIsLogsLoading] = useState(true);
 
-  const canReadAuditLogs = hasPermission("audit.access.read");
+  const canReadAuditLogs = hasPermission(config.permission);
   const activeFilterCount = [search.trim(), selectedEntity, selectedAction, limit !== DEFAULT_AUDIT_LIMIT ? String(limit) : ""].filter(Boolean).length;
   const hasActiveFilters = activeFilterCount > 0;
 
@@ -215,10 +282,10 @@ export function AccessAuditLogsPage() {
     const cachedLogsPage = logsCacheRef.current.get(cacheKey);
     if (cachedLogsPage) return cachedLogsPage;
 
-    const nextLogsPage = await apiRequest<PaginatedAccessAuditLogs>(token, buildAuditLogsPath(nextLimit, nextPage, nextSearch, nextEntity, nextAction));
+    const nextLogsPage = await apiRequest<PaginatedAccessAuditLogs>(token, buildAuditLogsPath(config.endpoint, nextLimit, nextPage, nextSearch, nextEntity, nextAction));
     logsCacheRef.current.set(cacheKey, nextLogsPage);
     return nextLogsPage;
-  }, [token]);
+  }, [token, config.endpoint]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -297,7 +364,7 @@ export function AccessAuditLogsPage() {
           <div>
             <span className="eyebrow">Auditoria</span>
             <h2>Permissão necessária</h2>
-            <p>Seu usuário não possui permissão para visualizar logs do controle de acessos.</p>
+            <p>{config.permissionMessage}</p>
           </div>
         </div>
       </section>
@@ -309,8 +376,8 @@ export function AccessAuditLogsPage() {
       <div className="list-header">
         <div>
           <span className="eyebrow">Auditoria</span>
-          <h2>Logs do Controle de acessos</h2>
-          <p>Consulte o histórico permanente de alterações feitas em grupos, permissões e usuários.</p>
+          <h2>{config.title}</h2>
+          <p>{config.description}</p>
         </div>
         <span className="status-badge"><ClipboardList aria-hidden="true" size={17} />{total} logs</span>
       </div>
@@ -349,8 +416,7 @@ export function AccessAuditLogsPage() {
                   <span>Tela</span>
                   <select aria-label="Filtrar por tela" onChange={(event) => setDraftSelectedEntity(event.target.value as AuditEntityFilter)} value={draftSelectedEntity}>
                     <option value="">Todas as telas</option>
-                    <option value="access_group">Grupos e acessos</option>
-                    <option value="access_user">Gerenciar usuários</option>
+                    {config.entityOptions.map((entityOption) => <option key={entityOption.value} value={entityOption.value}>{entityOption.label}</option>)}
                   </select>
                 </label>
                 <label>
@@ -406,7 +472,7 @@ export function AccessAuditLogsPage() {
                 <tr key={log.id}>
                   <td>{formatDateTime(log.createdAt)}</td>
                   <td>{formatEntity(log.entity)}</td>
-                  <td><span className="table-status is-finalized">{getActionLabel(log.action)}</span></td>
+                  <td><span className="table-status is-finalized">{getActionLabel(log.action, config.actionLabels)}</span></td>
                   <td>{readAuditTarget(log)}</td>
                   <td className="audit-details-cell">{readAuditDetails(log)}</td>
                   <td>{log.user ? `${log.user.name} (${log.user.login})` : "Sistema"}</td>

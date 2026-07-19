@@ -35,6 +35,14 @@ export type FormTemplate = {
   sections: FormSection[];
 };
 
+export type SectionConfigItem = {
+  id: string;
+  title: string;
+  description?: string;
+  sortOrder: number;
+  isCustom?: boolean;
+};
+
 export type TemplateConfigItem = {
   id: TemplateId;
   title: string;
@@ -42,6 +50,7 @@ export type TemplateConfigItem = {
   description?: string;
   sortOrder: number;
   isCustom?: boolean;
+  sections?: SectionConfigItem[];
 };
 
 export type TableValue = Record<string, Record<string, string>>;

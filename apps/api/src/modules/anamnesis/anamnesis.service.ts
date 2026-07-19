@@ -16,7 +16,7 @@ type TemplateStatus = {
 };
 type TemplateStatuses = Record<string, TemplateStatus>;
 type CustomFieldsJson = Record<string, Record<string, Array<{ id?: string }>>>;
-type TemplateConfigItem = { id?: string; title?: string; shortTitle?: string };
+type TemplateConfigItem = { id?: string; title?: string; shortTitle?: string; isCustom?: boolean };
 
 type StoredAnswer = {
   valueText: string | null;
@@ -157,9 +157,8 @@ export class AnamnesisService {
       await this.replaceAnswers(record.id, dto.answers);
     }
 
-    const createdRecord = await this.getById(record.id);
     this.invalidateRecordCaches(record.id);
-    await this.writeAuditLog(userId, "CREATE", record.id, null, createdRecord);
+    const createdRecord = await this.getById(record.id);
     return createdRecord;
   }
 
@@ -171,6 +170,7 @@ export class AnamnesisService {
     }
 
     const beforeData = this.toRecordResponse(existingRecord);
+    const createdTemplates = this.getCreatedCustomTemplates(existingRecord.templateConfigJson, dto.templateConfig);
 
     await this.prisma.anamnesisRecord.update({
       where: { id },
@@ -189,7 +189,9 @@ export class AnamnesisService {
 
     this.invalidateRecordCaches(id);
     const updatedRecord = await this.getById(id);
-    await this.writeAuditLog(userId, "UPDATE", id, beforeData, updatedRecord);
+    if (createdTemplates.length > 0) {
+      await this.writeAuditLog(userId, "create_anamnesis_template", id, beforeData, { record: updatedRecord, createdTemplates });
+    }
     return updatedRecord;
   }
 
@@ -236,7 +238,7 @@ export class AnamnesisService {
     if (finalizedRecord.patientId) {
       this.cache.delete(`patients:medical-record:${finalizedRecord.patientId}`);
     }
-    await this.writeAuditLog(userId, "FINALIZE", id, beforeData, finalizedRecord);
+    await this.writeAuditLog(userId, "finalize_anamnesis", id, beforeData, finalizedRecord);
     return finalizedRecord;
   }
 
@@ -278,7 +280,7 @@ export class AnamnesisService {
 
     this.invalidateRecordCaches(id);
     const completedRecord = await this.getById(id);
-    await this.writeAuditLog(userId, "COMPLETE_TEMPLATE", id, beforeData, completedRecord);
+    await this.writeAuditLog(userId, "complete_anamnesis_template", id, beforeData, completedRecord);
     return completedRecord;
   }
 
@@ -309,7 +311,7 @@ export class AnamnesisService {
       }
     });
 
-    await this.writeAuditLog(userId, "EMIT_PDF", id, null, document);
+    await this.writeAuditLog(userId, "emit_anamnesis_pdf", id, null, document);
 
     return {
       id: document.id,
@@ -347,7 +349,7 @@ export class AnamnesisService {
       }
     });
 
-    await this.writeAuditLog(userId, "EMIT_TEMPLATE_PDF", id, null, document);
+    await this.writeAuditLog(userId, "emit_anamnesis_template_pdf", id, null, document);
 
     return {
       id: document.id,
@@ -452,6 +454,22 @@ export class AnamnesisService {
     }
 
     return allowedKeys;
+  }
+
+  private getCreatedCustomTemplates(beforeTemplateConfigJson: string | null, afterTemplateConfig: TemplateConfigItem[] | undefined) {
+    if (!afterTemplateConfig) return [];
+
+    const beforeTemplateConfig = beforeTemplateConfigJson ? JSON.parse(beforeTemplateConfigJson) as TemplateConfigItem[] : [];
+    const beforeTemplateIds = new Set(beforeTemplateConfig.map((templateConfig) => templateConfig.id).filter(Boolean));
+
+    return afterTemplateConfig.filter((templateConfig) => {
+      const isCustomTemplate = templateConfig.isCustom || templateConfig.id?.startsWith("custom-template-");
+      return isCustomTemplate && templateConfig.id && !beforeTemplateIds.has(templateConfig.id);
+    }).map((templateConfig) => ({
+      id: templateConfig.id,
+      title: templateConfig.title,
+      shortTitle: templateConfig.shortTitle
+    }));
   }
 
   private async getMissingRequiredFields(answers: AnamnesisAnswers, templateId?: string) {
@@ -609,16 +627,32 @@ export class AnamnesisService {
     });
   }
 
+  private getAuditReason(action: string, afterData: unknown) {
+    if (action === "create_anamnesis_template") {
+      const payload = afterData as { createdTemplates?: Array<{ title?: string; shortTitle?: string }> };
+      const templateNames = payload.createdTemplates?.map((template) => template.title ?? template.shortTitle).filter(Boolean).join(", ");
+      return `Ficha personalizada criada${templateNames ? `: ${templateNames}` : ""}`;
+    }
+
+    if (action === "complete_anamnesis_template") return "Ficha de anamnese concluída";
+    if (action === "finalize_anamnesis") return "Anamnese completa finalizada";
+    if (action === "emit_anamnesis_pdf") return "PDF completo de anamnese emitido";
+    if (action === "emit_anamnesis_template_pdf") return "PDF parcial de ficha emitido";
+    return "Evento de anamnese registrado";
+  }
+
   private async writeAuditLog(userId: string, action: string, entityId: string, beforeData: unknown, afterData: unknown) {
     await this.prisma.auditLog.create({
       data: {
-        entity: "AnamnesisRecord",
+        entity: "anamnesis_record",
         entityId,
         action,
         beforeData: beforeData ? JSON.stringify(beforeData) : null,
         afterData: afterData ? JSON.stringify(afterData) : null,
+        reason: this.getAuditReason(action, afterData),
         userId
       }
     });
+    this.cache.deleteByPrefix("access:audit-logs:");
   }
 }

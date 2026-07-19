@@ -44,6 +44,7 @@ const basePermissions = [
   ["access.groups.read", "access", "read_groups", "Visualizar grupos de acesso"],
   ["access.groups.manage", "access", "manage_groups", "Gerenciar grupos e permissões"],
   ["audit.access.read", "audit", "read_access_logs", "Visualizar logs do controle de acessos"],
+  ["audit.anamnesis.read", "audit", "read_anamnesis_logs", "Visualizar logs de anamnese"],
   ["admin.full_access", "admin", "full_access", "Acesso administrativo total"]
 ];
 

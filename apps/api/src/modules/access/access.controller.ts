@@ -25,6 +25,12 @@ export class AccessController {
     return this.accessService.listAuditLogs(query);
   }
 
+  @Get("audit-logs/anamnesis")
+  @RequirePermissions("audit.anamnesis.read")
+  listAnamnesisAuditLogs(@Query() query: ListAccessAuditLogsQueryDto) {
+    return this.accessService.listAnamnesisAuditLogs(query);
+  }
+
   @Get("permissions")
   @RequirePermissions("access.groups.read")
   listPermissions() {
