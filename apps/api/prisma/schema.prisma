@@ -100,6 +100,8 @@ model Patient {
   name            String
   birthDate       DateTime?
   document        String?
+  cpf             String?
+  rg              String?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   anamnesisRecord AnamnesisRecord[]
@@ -180,6 +182,9 @@ model AnamnesisRecord {
   patientName String
   patientId   String?
   customFieldsJson String?
+  customAnswersJson String?
+  templateConfigJson String?
+  templateStatusesJson String?
   createdById String?
   updatedById String?
   finalizedAt DateTime?

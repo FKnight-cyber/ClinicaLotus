@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsObject, IsOptional, IsString } from "class-validator";
+import { IsArray, IsNotEmpty, IsObject, IsOptional, IsString } from "class-validator";
 
 export class CreateAnamnesisDto {
   @IsString()
@@ -16,4 +16,8 @@ export class CreateAnamnesisDto {
   @IsOptional()
   @IsObject()
   customFields?: Record<string, Record<string, unknown[]>>;
+
+  @IsOptional()
+  @IsArray()
+  templateConfig?: Record<string, unknown>[];
 }

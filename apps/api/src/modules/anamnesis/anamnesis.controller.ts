@@ -48,9 +48,21 @@ export class AnamnesisController {
     return this.anamnesisService.finalize(request.user.id, id);
   }
 
+  @Post(":id/templates/:templateId/complete")
+  @RequirePermissions("anamnese.finalize")
+  completeTemplate(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Param("templateId") templateId: string) {
+    return this.anamnesisService.completeTemplate(request.user.id, id, templateId);
+  }
+
   @Post(":id/documents/pdf")
   @RequirePermissions("anamnese.print")
   emitPdfDocument(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string) {
     return this.anamnesisService.emitPdfDocument(request.user.id, id);
+  }
+
+  @Post(":id/templates/:templateId/documents/pdf")
+  @RequirePermissions("anamnese.print")
+  emitTemplatePdfDocument(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Param("templateId") templateId: string) {
+    return this.anamnesisService.emitTemplatePdfDocument(request.user.id, id, templateId);
   }
 }

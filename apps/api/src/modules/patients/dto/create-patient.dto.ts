@@ -12,4 +12,12 @@ export class CreatePatientDto {
   @IsOptional()
   @IsString()
   document?: string;
+
+  @IsOptional()
+  @IsString()
+  cpf?: string;
+
+  @IsOptional()
+  @IsString()
+  rg?: string;
 }

@@ -18,7 +18,9 @@ export class PatientsService {
       where: normalizedSearch ? {
         OR: [
           { name: { contains: normalizedSearch, mode: "insensitive" } },
-          { document: { contains: normalizedSearch, mode: "insensitive" } }
+          { document: { contains: normalizedSearch, mode: "insensitive" } },
+          { cpf: { contains: normalizedSearch, mode: "insensitive" } },
+          { rg: { contains: normalizedSearch, mode: "insensitive" } }
         ]
       } : undefined,
       orderBy: { name: "asc" },
@@ -26,16 +28,22 @@ export class PatientsService {
     }));
   }
 
-  async create(dto: CreatePatientDto) {
+  async create(actorUserId: string | undefined, dto: CreatePatientDto) {
+    const cpf = dto.cpf?.trim() || null;
+    const rg = dto.rg?.trim() || null;
+    const document = dto.document?.trim() || [cpf, rg].filter(Boolean).join(" / ") || null;
     const patient = await this.prisma.patient.create({
       data: {
         name: dto.name.trim(),
         birthDate: dto.birthDate ? new Date(`${dto.birthDate}T00:00:00`) : null,
-        document: dto.document?.trim() || null
+        document,
+        cpf,
+        rg
       }
     });
 
     this.cache.deleteByPrefix("patients:list:");
+    await this.writeAuditLog(actorUserId, patient);
     return patient;
   }
 
@@ -48,5 +56,20 @@ export class PatientsService {
         createdBy: { select: { id: true, name: true, login: true } }
       }
     }));
+  }
+
+  private async writeAuditLog(userId: string | undefined, patient: unknown) {
+    await this.prisma.auditLog.create({
+      data: {
+        entity: "patient",
+        entityId: typeof patient === "object" && patient && "id" in patient ? String(patient.id) : null,
+        action: "create_patient",
+        beforeData: null,
+        afterData: JSON.stringify(patient),
+        reason: typeof patient === "object" && patient && "name" in patient ? `Paciente criado: ${String(patient.name)}` : "Paciente criado",
+        userId: userId ?? null
+      }
+    });
+    this.cache.deleteByPrefix("access:audit-logs:");
   }
 }

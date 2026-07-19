@@ -9,6 +9,14 @@ import { UpdateAnamnesisDto } from "./dto/update-anamnesis.dto";
 type FieldValue = unknown;
 type TemplateAnswers = Record<string, FieldValue>;
 type AnamnesisAnswers = Record<string, TemplateAnswers>;
+type TemplateStatus = {
+  status: "draft" | "completed";
+  completedAt?: string;
+  completedById?: string;
+};
+type TemplateStatuses = Record<string, TemplateStatus>;
+type CustomFieldsJson = Record<string, Record<string, Array<{ id?: string }>>>;
+type TemplateConfigItem = { id?: string; title?: string; shortTitle?: string };
 
 type StoredAnswer = {
   valueText: string | null;
@@ -138,6 +146,7 @@ export class AnamnesisService {
         patientName: dto.patientName,
         patientId: dto.patientId || null,
         customFieldsJson: dto.customFields ? JSON.stringify(dto.customFields) : null,
+        templateConfigJson: dto.templateConfig ? JSON.stringify(dto.templateConfig) : null,
         status: "DRAFT",
         createdById: userId,
         updatedById: userId
@@ -169,6 +178,7 @@ export class AnamnesisService {
         patientName: dto.patientName ?? existingRecord.patientName,
         patientId: dto.patientId === undefined ? existingRecord.patientId : dto.patientId || null,
         customFieldsJson: dto.customFields === undefined ? existingRecord.customFieldsJson : JSON.stringify(dto.customFields),
+        templateConfigJson: dto.templateConfig === undefined ? existingRecord.templateConfigJson : JSON.stringify(dto.templateConfig),
         updatedById: userId
       }
     });
@@ -191,6 +201,15 @@ export class AnamnesisService {
     }
 
     const answers = this.answersFromRecord(record);
+    const incompleteTemplates = await this.getIncompleteTemplates(this.templateStatusesFromRecord(record), record.templateConfigJson);
+
+    if (incompleteTemplates.length > 0) {
+      throw new BadRequestException({
+        message: "Conclua todas as fichas antes de finalizar a anamnese completa.",
+        incompleteTemplates
+      });
+    }
+
     const missingRequiredFields = await this.getMissingRequiredFields(answers);
 
     if (missingRequiredFields.length > 0) {
@@ -219,6 +238,48 @@ export class AnamnesisService {
     }
     await this.writeAuditLog(userId, "FINALIZE", id, beforeData, finalizedRecord);
     return finalizedRecord;
+  }
+
+  async completeTemplate(userId: string, id: string, templateId: string) {
+    const record = await this.findRecord(id);
+
+    if (record.status === "FINALIZED") {
+      throw new BadRequestException("Anamnese finalizada não pode ser editada.");
+    }
+
+    await this.ensureRecordTemplateExists(record, templateId);
+    const answers = this.answersFromRecord(record);
+    const missingRequiredFields = await this.getMissingRequiredFields(answers, templateId);
+
+    if (missingRequiredFields.length > 0) {
+      throw new BadRequestException({
+        message: "Existem campos obrigatórios pendentes nesta ficha.",
+        missingRequiredFields
+      });
+    }
+
+    const beforeData = this.toRecordResponse(record);
+    const templateStatuses: TemplateStatuses = {
+      ...this.templateStatusesFromRecord(record),
+      [templateId]: {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+        completedById: userId
+      }
+    };
+
+    await this.prisma.anamnesisRecord.update({
+      where: { id },
+      data: {
+        templateStatusesJson: JSON.stringify(templateStatuses),
+        updatedById: userId
+      }
+    });
+
+    this.invalidateRecordCaches(id);
+    const completedRecord = await this.getById(id);
+    await this.writeAuditLog(userId, "COMPLETE_TEMPLATE", id, beforeData, completedRecord);
+    return completedRecord;
   }
 
   private invalidateRecordCaches(recordId: string) {
@@ -262,6 +323,44 @@ export class AnamnesisService {
     };
   }
 
+  async emitTemplatePdfDocument(userId: string, id: string, templateId: string) {
+    const record = await this.findRecord(id);
+    const template = await this.ensureRecordTemplateExists(record, templateId);
+    const templateStatus = this.templateStatusesFromRecord(record)[templateId];
+
+    if (templateStatus?.status !== "completed") {
+      throw new BadRequestException("Apenas fichas concluídas podem gerar documento parcial rastreável.");
+    }
+
+    const snapshot = this.toRecordResponse(record);
+    const contentHash = createHash("sha256").update(JSON.stringify({ record: snapshot, templateId })).digest("hex");
+    const document = await this.prisma.clinicalDocument.create({
+      data: {
+        code: await this.nextDocumentCode(),
+        type: "ANAMNESIS_TEMPLATE_PDF",
+        fileName: `${record.code}-${templateId}.pdf`,
+        contentHash,
+        metadataJson: JSON.stringify({ recordCode: record.code, templateId, templateTitle: template.title, scope: "template", emittedFrom: "web-pdf-export" }),
+        patientId: record.patientId,
+        anamnesisRecordId: record.id,
+        emittedById: userId
+      }
+    });
+
+    await this.writeAuditLog(userId, "EMIT_TEMPLATE_PDF", id, null, document);
+
+    return {
+      id: document.id,
+      code: document.code,
+      type: document.type,
+      fileName: document.fileName,
+      contentHash: document.contentHash,
+      emittedAt: document.emittedAt.toISOString(),
+      patientId: document.patientId,
+      anamnesisRecordId: document.anamnesisRecordId
+    };
+  }
+
   private async findRecord(id: string) {
     const record = await this.prisma.anamnesisRecord.findUnique({
       where: { id },
@@ -290,6 +389,8 @@ export class AnamnesisService {
   }
 
   private async replaceAnswers(recordId: string, answers: AnamnesisAnswers) {
+    const record = await this.prisma.anamnesisRecord.findUnique({ where: { id: recordId }, select: { customFieldsJson: true } });
+    const allowedCustomFields = this.getAllowedCustomAnswerKeys(record?.customFieldsJson ?? null);
     const questions = await this.cache.getOrSet("anamnesis:questions:active", 10 * 60 * 1000, () => this.prisma.anamnesisQuestion.findMany({
       where: { active: true },
       include: {
@@ -302,12 +403,19 @@ export class AnamnesisService {
     }));
     const questionsByTemplateAndKey = new Map(questions.map((question) => [`${question.section.template.key}:${question.key}`, question]));
     const answerWrites = [];
+    const customAnswers: AnamnesisAnswers = {};
 
     for (const [templateKey, templateAnswers] of Object.entries(answers)) {
       for (const [fieldKey, value] of Object.entries(templateAnswers)) {
         const question = questionsByTemplateAndKey.get(`${templateKey}:${fieldKey}`);
 
         if (!question) {
+          if (allowedCustomFields.has(`${templateKey}:${fieldKey}`)) {
+            customAnswers[templateKey] = customAnswers[templateKey] ?? {};
+            customAnswers[templateKey][fieldKey] = value;
+            continue;
+          }
+
           throw new BadRequestException(`Campo de anamnese desconhecido: ${templateKey}.${fieldKey}`);
         }
 
@@ -323,11 +431,30 @@ export class AnamnesisService {
 
     await this.prisma.$transaction([
       this.prisma.anamnesisAnswer.deleteMany({ where: { recordId } }),
+      this.prisma.anamnesisRecord.update({ where: { id: recordId }, data: { customAnswersJson: Object.keys(customAnswers).length > 0 ? JSON.stringify(customAnswers) : null } }),
       ...answerWrites
     ]);
   }
 
-  private async getMissingRequiredFields(answers: AnamnesisAnswers) {
+  private getAllowedCustomAnswerKeys(customFieldsJson: string | null) {
+    const allowedKeys = new Set<string>();
+    if (!customFieldsJson) return allowedKeys;
+
+    const customFields = JSON.parse(customFieldsJson) as CustomFieldsJson;
+
+    for (const [templateKey, sections] of Object.entries(customFields)) {
+      for (const [sectionKey, fields] of Object.entries(sections)) {
+        if (sectionKey.startsWith("__overrides__")) continue;
+        for (const field of fields) {
+          if (field.id) allowedKeys.add(`${templateKey}:${field.id}`);
+        }
+      }
+    }
+
+    return allowedKeys;
+  }
+
+  private async getMissingRequiredFields(answers: AnamnesisAnswers, templateId?: string) {
     const requiredQuestions = await this.cache.getOrSet("anamnesis:questions:required", 10 * 60 * 1000, () => this.prisma.anamnesisQuestion.findMany({
       where: { active: true, required: true },
       orderBy: { sortOrder: "asc" },
@@ -341,6 +468,7 @@ export class AnamnesisService {
     }));
 
     return requiredQuestions
+      .filter((question) => !templateId || question.section.template.key === templateId)
       .filter((question) => !this.isFilled(answers[question.section.template.key]?.[question.key]))
       .map((question) => ({
         templateTitle: question.section.template.title,
@@ -358,19 +486,59 @@ export class AnamnesisService {
   }
 
   private answersFromRecord(record: RecordWithAnswers) {
+    const customAnswers = record.customAnswersJson ? JSON.parse(record.customAnswersJson) as AnamnesisAnswers : {};
     return record.answers.reduce<AnamnesisAnswers>((accumulator, answer) => {
       const templateKey = answer.question.section.template.key;
       accumulator[templateKey] = accumulator[templateKey] ?? {};
       accumulator[templateKey][answer.question.key] = answer.valueText ? JSON.parse(answer.valueText) : null;
       return accumulator;
-    }, {});
+    }, customAnswers);
+  }
+
+  private templateStatusesFromRecord(record: { templateStatusesJson?: string | null }) {
+    return record.templateStatusesJson ? JSON.parse(record.templateStatusesJson) as TemplateStatuses : {};
+  }
+
+  private async ensureRecordTemplateExists(record: { templateConfigJson?: string | null }, templateId: string) {
+    const configuredTemplate = this.templateConfigFromRecord(record).find((template) => template.id === templateId);
+
+    if (configuredTemplate?.id) {
+      return {
+        key: configuredTemplate.id,
+        title: configuredTemplate.title || configuredTemplate.shortTitle || configuredTemplate.id
+      };
+    }
+
+    const template = await this.prisma.anamnesisTemplate.findUnique({ where: { key: templateId } });
+
+    if (!template || !template.active) {
+      throw new BadRequestException("Ficha de anamnese desconhecida.");
+    }
+
+    return template;
+  }
+
+  private templateConfigFromRecord(record: { templateConfigJson?: string | null }) {
+    return record.templateConfigJson ? JSON.parse(record.templateConfigJson) as TemplateConfigItem[] : [];
+  }
+
+  private async getIncompleteTemplates(templateStatuses: TemplateStatuses, templateConfigJson?: string | null) {
+    const configuredTemplates = templateConfigJson ? JSON.parse(templateConfigJson) as TemplateConfigItem[] : [];
+    const templates = configuredTemplates.length > 0 ? configuredTemplates : await this.getTemplates();
+    return templates
+      .map((template) => ({ id: template.id ?? "", title: template.title ?? template.shortTitle ?? template.id ?? "Ficha" }))
+      .filter((template) => template.id.length > 0)
+      .filter((template) => templateStatuses[template.id]?.status !== "completed")
+      .map((template) => ({ templateId: template.id, templateTitle: template.title }));
   }
 
   private toRecordResponse(record: RecordWithAnswers) {
     return {
       ...this.toListItem(record),
       answers: this.answersFromRecord(record),
-      customFields: record.customFieldsJson ? JSON.parse(record.customFieldsJson) : undefined
+      customFields: record.customFieldsJson ? JSON.parse(record.customFieldsJson) : undefined,
+      templateConfig: record.templateConfigJson ? JSON.parse(record.templateConfigJson) : undefined,
+      templateStatuses: this.templateStatusesFromRecord(record)
     };
   }
 
@@ -381,6 +549,9 @@ export class AnamnesisService {
     patientName: string;
     patientId: string | null;
     customFieldsJson?: string | null;
+    customAnswersJson?: string | null;
+    templateConfigJson?: string | null;
+    templateStatusesJson?: string | null;
     finalizedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;

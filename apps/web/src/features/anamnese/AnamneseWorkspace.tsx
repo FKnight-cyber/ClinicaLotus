@@ -7,11 +7,13 @@ import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { AnamnesePrintDocument } from "./AnamnesePrintDocument";
 import { downloadAnamnesePdf } from "./pdfExport";
-import { createAnamneseRecord, createPatient, emitAnamnesePdfDocument, fetchAnamneseRecord, fetchAnamneseTemplates, fetchPatientMedicalRecord, fetchPatients, finalizeAnamneseRecord, saveAnamneseRecord } from "./storage";
+import { completeAnamneseTemplate, createAnamneseRecord, createPatient, emitAnamnesePdfDocument, emitAnamneseTemplatePdfDocument, fetchAnamneseRecord, fetchAnamneseTemplates, fetchPatientMedicalRecord, fetchPatients, finalizeAnamneseRecord, saveAnamneseRecord } from "./storage";
 import { anamneseTemplates as fallbackTemplates } from "./templates";
-import type { AnamneseRecord, FieldValue, FormField, FormTemplate, MedicalRecordEntry, PatientSummary, TableValue, TemplateAnswers, TemplateId, ValidationIssue } from "./types";
+import type { AnamneseRecord, FieldValue, FormField, FormTemplate, MedicalRecordEntry, PatientSummary, TableValue, TemplateAnswers, TemplateConfigItem, TemplateId, ValidationIssue } from "./types";
 
 const yesNoOptions = ["Sim", "Não"];
+const customTemplateSectionId = "custom-section";
+type CustomQuestionType = "textarea" | "yesNo" | "yesNoDetails" | "multiChoice" | "table";
 
 function createEmptyRecord(): AnamneseRecord {
   const now = new Date().toISOString();
@@ -73,8 +75,39 @@ function getRecordSavePayload(record: AnamneseRecord) {
     patientName: getPatientName(record),
     patientId: record.patientId,
     answers: record.answers,
-    customFields: record.customFields
+    customFields: record.customFields,
+    templateConfig: record.templateConfig
   };
+}
+
+function getEffectiveTemplates(baseTemplates: FormTemplate[], templateConfig: TemplateConfigItem[] | undefined) {
+  const configById = new Map((templateConfig ?? []).map((config) => [config.id, config]));
+  const baseTemplateIds = new Set(baseTemplates.map((template) => template.id));
+  const configuredBaseTemplates = baseTemplates.map((template, index) => {
+    const config = configById.get(template.id);
+    return {
+      ...template,
+      title: config?.title ?? template.title,
+      shortTitle: config?.shortTitle ?? template.shortTitle,
+      description: config?.description ?? template.description,
+      sortOrder: config?.sortOrder ?? index
+    };
+  });
+  const customTemplates = (templateConfig ?? [])
+    .filter((config) => config.isCustom || !baseTemplateIds.has(config.id))
+    .map((config, index) => ({
+      id: config.id,
+      title: config.title,
+      shortTitle: config.shortTitle,
+      source: "Personalizada",
+      description: config.description ?? "Ficha personalizada deste registro.",
+      sortOrder: config.sortOrder ?? baseTemplates.length + index,
+      sections: [{ id: customTemplateSectionId, title: "Campos personalizados", description: undefined, fields: [] }]
+    }));
+
+  return [...configuredBaseTemplates, ...customTemplates]
+    .sort((firstTemplate, secondTemplate) => firstTemplate.sortOrder - secondTemplate.sortOrder)
+    .map(({ sortOrder: _sortOrder, ...template }) => template);
 }
 
 function getRecordSnapshot(record: AnamneseRecord) {
@@ -113,6 +146,36 @@ function requiredProgress(record: AnamneseRecord, templates: FormTemplate[]) {
   }
 
   return { complete, total };
+}
+
+function requiredProgressForTemplate(record: AnamneseRecord, template: FormTemplate) {
+  let total = 0;
+  let complete = 0;
+
+  for (const section of template.sections) {
+    for (const field of section.fields) {
+      if (field.required) {
+        total += 1;
+        if (isFilled(record.answers[template.id][field.id])) complete += 1;
+      }
+    }
+  }
+
+  return { complete, total };
+}
+
+function validateTemplateRecord(record: AnamneseRecord, template: FormTemplate): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  for (const section of template.sections) {
+    for (const field of section.fields) {
+      if (field.required && !isFilled(record.answers[template.id][field.id])) {
+        issues.push({ templateTitle: template.shortTitle, sectionTitle: section.title, fieldLabel: field.label });
+      }
+    }
+  }
+
+  return issues;
 }
 
 function calculateAge(birthDate: string) {
@@ -172,7 +235,7 @@ function FieldRenderer({ canEditRecord, canUpdateAnamneseOptions, field, value, 
                 checked={answer === option}
                 disabled={!canEditRecord}
                 name={field.id}
-                onChange={() => onChange({ answer: option, details })}
+                onChange={() => onChange({ answer: option, details: option === "Sim" ? details : "" })}
                 type="radio"
               />
               <span>{option}</span>
@@ -206,9 +269,11 @@ function FieldRenderer({ canEditRecord, canUpdateAnamneseOptions, field, value, 
   }
 
   if (field.type === "yesNo" || field.type === "singleChoice") {
+    const options = field.type === "yesNo" ? field.options ?? yesNoOptions : field.options ?? [];
+
     return (
       <div className="choice-group" role="radiogroup" aria-label={field.label}>
-        {field.options?.map((option) => (
+        {options.map((option) => (
           <label className="choice-pill" key={option}>
             <input
               checked={value === option}
@@ -437,14 +502,23 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [message, setMessage] = useState("Carregando anamnese do banco...");
   const [newQuestionLabel, setNewQuestionLabel] = useState("");
-  const [newQuestionType, setNewQuestionType] = useState<"textarea" | "yesNoDetails">("textarea");
+  const [newQuestionType, setNewQuestionType] = useState<CustomQuestionType>("textarea");
+  const [isMultiChoiceModalOpen, setIsMultiChoiceModalOpen] = useState(false);
+  const [multiChoiceOptionDrafts, setMultiChoiceOptionDrafts] = useState([""]);
+  const [isTableQuestionModalOpen, setIsTableQuestionModalOpen] = useState(false);
+  const [tableRowDrafts, setTableRowDrafts] = useState([""]);
+  const [tableColumnDrafts, setTableColumnDrafts] = useState([""]);
+  const [isTemplateManagerOpen, setIsTemplateManagerOpen] = useState(false);
+  const [newTemplateTitle, setNewTemplateTitle] = useState("");
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const [editingQuestionLabel, setEditingQuestionLabel] = useState("");
   const [patients, setPatients] = useState<PatientSummary[]>([]);
   const [patientSearch, setPatientSearch] = useState("");
+  const [isPatientModalOpen, setIsPatientModalOpen] = useState(false);
   const [newPatientName, setNewPatientName] = useState("");
   const [newPatientBirthDate, setNewPatientBirthDate] = useState("");
-  const [newPatientDocument, setNewPatientDocument] = useState("");
+  const [newPatientCpf, setNewPatientCpf] = useState("");
+  const [newPatientRg, setNewPatientRg] = useState("");
   const [medicalRecordEntries, setMedicalRecordEntries] = useState<MedicalRecordEntry[]>([]);
   const lastSavedSnapshotRef = useRef<string | null>(null);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -557,7 +631,8 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   }
 
   const loadedRecord = currentRecord;
-  const activeTemplate = templates.find((template) => template.id === activeTemplateId) ?? templates[0] ?? fallbackTemplates[0];
+  const effectiveTemplates = getEffectiveTemplates(templates, loadedRecord.templateConfig);
+  const activeTemplate = effectiveTemplates.find((template) => template.id === activeTemplateId) ?? effectiveTemplates[0] ?? fallbackTemplates[0];
   const activeSection = activeTemplate.sections[activeSectionIndex] ?? activeTemplate.sections[0];
   const customFields = loadedRecord.customFields?.[activeTemplate.id]?.[activeSection.id] ?? [];
   const sectionOverrides = loadedRecord.customFields?.[activeTemplate.id]?.[`__overrides__${activeSection.id}`] ?? [];
@@ -567,13 +642,26 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     .filter((field) => !removedFieldIds.has(field.id))
     .map((field) => renamedFields.has(field.id) ? { ...field, label: renamedFields.get(field.id) ?? field.label, helper: field.helper ? `${field.helper} Título editado neste registro.` : "Título editado neste registro." } : field);
   const sectionFields = [...baseSectionFields, ...customFields];
-  const progress = requiredProgress(loadedRecord, templates);
+  const progress = requiredProgress(loadedRecord, effectiveTemplates);
+  const activeTemplateProgress = requiredProgressForTemplate(loadedRecord, activeTemplate);
+  const activeTemplateStatus = loadedRecord.templateStatuses?.[activeTemplate.id]?.status ?? "draft";
+  const isActiveTemplateCompleted = activeTemplateStatus === "completed";
+  const allTemplatesCompleted = effectiveTemplates.every((template) => loadedRecord.templateStatuses?.[template.id]?.status === "completed");
   const selectedPatient = patients.find((patient) => patient.id === loadedRecord.patientId) ?? null;
   const canEditCurrentRecord = canUpdateAnamnese && loadedRecord.status !== "finalized";
   const canLinkPatient = canEditCurrentRecord && canReadPatients;
   const canCreateAndLinkPatient = canLinkPatient && canCreatePatient;
   const canManageCurrentQuestions = canUpdateAnamneseQuestions && canEditCurrentRecord;
   const canManageCurrentOptions = canUpdateAnamneseOptions && canEditCurrentRecord;
+  const parsedNewQuestionOptions = multiChoiceOptionDrafts
+    .map((option) => option.trim())
+    .filter((option, index, options) => option.length > 0 && options.findIndex((currentOption) => currentOption.toLowerCase() === option.toLowerCase()) === index);
+  const parsedTableRows = tableRowDrafts
+    .map((row) => row.trim())
+    .filter((row, index, rows) => row.length > 0 && rows.findIndex((currentRow) => currentRow.toLowerCase() === row.toLowerCase()) === index);
+  const parsedTableColumns = tableColumnDrafts
+    .map((column) => column.trim())
+    .filter((column, index, columns) => column.length > 0 && columns.findIndex((currentColumn) => currentColumn.toLowerCase() === column.toLowerCase()) === index);
 
   function updateField(templateId: TemplateId, fieldId: string, value: FieldValue) {
     setCurrentRecord((record) => {
@@ -604,12 +692,20 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     });
   }
 
+  async function persistDraft(record: AnamneseRecord) {
+    if (!token) return record;
+    const savedRecord = await saveAnamneseRecord(token, record.id, getRecordSavePayload(record));
+    lastSavedSnapshotRef.current = getRecordSnapshot(savedRecord);
+    setCurrentRecord(savedRecord);
+    return savedRecord;
+  }
+
   async function saveRecord(status: "draft" | "finalized") {
     if (!token) return;
     if (autosaveTimerRef.current) {
       clearTimeout(autosaveTimerRef.current);
     }
-    const validationIssues = status === "finalized" ? validateRecord(loadedRecord, templates) : [];
+    const validationIssues = status === "finalized" ? validateRecord(loadedRecord, effectiveTemplates) : [];
     setIssues(validationIssues);
 
     if (validationIssues.length > 0) {
@@ -617,17 +713,39 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
       return;
     }
 
+    if (status === "finalized" && !allTemplatesCompleted) {
+      setMessage("Conclua todas as fichas antes de finalizar a anamnese completa");
+      return;
+    }
+
     setMessage(status === "finalized" ? "Salvando e finalizando anamnese..." : "Salvando rascunho no banco...");
-    const savedRecord = await saveAnamneseRecord(token, loadedRecord.id, {
-      patientName: getPatientName(loadedRecord),
-      patientId: loadedRecord.patientId,
-      answers: loadedRecord.answers,
-      customFields: loadedRecord.customFields
-    });
+    const savedRecord = await persistDraft(loadedRecord);
     const nextRecord = status === "finalized" ? await finalizeAnamneseRecord(token, savedRecord.id) : savedRecord;
     lastSavedSnapshotRef.current = getRecordSnapshot(nextRecord);
     setCurrentRecord(nextRecord);
     setMessage(status === "finalized" ? "Anamnese finalizada no banco" : "Rascunho salvo no banco");
+  }
+
+  async function completeActiveTemplate() {
+    if (!token || loadedRecord.status === "finalized") return;
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+    }
+
+    const validationIssues = validateTemplateRecord(loadedRecord, activeTemplate);
+    setIssues(validationIssues);
+
+    if (validationIssues.length > 0) {
+      setMessage("Existem campos obrigatórios pendentes nesta ficha");
+      return;
+    }
+
+    setMessage(`Concluindo ficha ${activeTemplate.shortTitle}...`);
+    const savedRecord = await persistDraft(loadedRecord);
+    const completedRecord = await completeAnamneseTemplate(token, savedRecord.id, activeTemplate.id);
+    lastSavedSnapshotRef.current = getRecordSnapshot(completedRecord);
+    setCurrentRecord(completedRecord);
+    setMessage(`Ficha ${activeTemplate.shortTitle} concluída`);
   }
 
   async function startNewRecord() {
@@ -658,7 +776,8 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     const patient = await createPatient(token, {
       name: newPatientName.trim(),
       birthDate: newPatientBirthDate || undefined,
-      document: newPatientDocument.trim() || undefined
+      cpf: newPatientCpf.trim() || undefined,
+      rg: newPatientRg.trim() || undefined
     });
     setPatients((currentPatients) => [patient, ...currentPatients.filter((item) => item.id !== patient.id)]);
     setCurrentRecord((record) => record ? {
@@ -669,7 +788,9 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     } : record);
     setNewPatientName("");
     setNewPatientBirthDate("");
-    setNewPatientDocument("");
+    setNewPatientCpf("");
+    setNewPatientRg("");
+    setIsPatientModalOpen(false);
     setMessage(`Paciente criado e vinculado: ${patient.name}`);
   }
 
@@ -677,8 +798,21 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     if (!token) return;
     setMessage("Registrando documento PDF...");
     const document = await emitAnamnesePdfDocument(token, loadedRecord.id);
-    await downloadAnamnesePdf(loadedRecord, templates);
+    await downloadAnamnesePdf(loadedRecord, effectiveTemplates);
     setMessage(`PDF ${document.code} registrado. Hash ${document.contentHash.slice(0, 12)}...`);
+  }
+
+  async function handleDownloadTemplatePdf() {
+    if (!token || !isActiveTemplateCompleted) return;
+    setMessage(`Registrando PDF da ficha ${activeTemplate.shortTitle}...`);
+    const document = await emitAnamneseTemplatePdfDocument(token, loadedRecord.id, activeTemplate.id);
+    await downloadAnamnesePdf(loadedRecord, effectiveTemplates, {
+      templateId: activeTemplate.id,
+      title: "FICHA DE ANAMNESE",
+      summaryStatus: `Documento parcial - ${activeTemplate.shortTitle} concluída`,
+      fileNameSuffix: activeTemplate.id
+    });
+    setMessage(`PDF parcial ${document.code} registrado. Hash ${document.contentHash.slice(0, 12)}...`);
   }
 
   function addCustomQuestion() {
@@ -695,11 +829,30 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
       return;
     }
 
+    if (newQuestionType === "multiChoice" && parsedNewQuestionOptions.length === 0) {
+      setMessage("Informe as opções da pergunta de múltipla seleção");
+      return;
+    }
+
+    if (newQuestionType === "table" && (parsedTableRows.length === 0 || parsedTableColumns.length === 0)) {
+      setMessage("Informe ao menos uma linha e uma coluna para a tabela");
+      return;
+    }
+
     const newField: FormField = {
       id: `custom-${activeSection.id}-${crypto.randomUUID()}`,
       label: normalizedLabel,
       type: newQuestionType,
-      helper: newQuestionType === "yesNoDetails" ? "Pergunta personalizada com complemento quando a resposta for Sim." : "Pergunta personalizada adicionada neste registro."
+      options: newQuestionType === "yesNo" ? yesNoOptions : newQuestionType === "multiChoice" ? parsedNewQuestionOptions : undefined,
+      rows: newQuestionType === "table" ? parsedTableRows : undefined,
+      columns: newQuestionType === "table" ? parsedTableColumns.map((column) => ({ id: `custom-column-${crypto.randomUUID()}`, label: column })) : undefined,
+      helper: newQuestionType === "yesNoDetails"
+        ? "Pergunta personalizada com complemento quando a resposta for Sim."
+        : newQuestionType === "multiChoice"
+          ? "Pergunta personalizada de múltipla seleção."
+          : newQuestionType === "table"
+            ? "Tabela personalizada adicionada neste registro."
+            : "Pergunta personalizada adicionada neste registro."
     };
     const nextRecord: AnamneseRecord = {
       ...loadedRecord,
@@ -716,7 +869,62 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     setCurrentRecord(nextRecord);
     setNewQuestionLabel("");
     setNewQuestionType("textarea");
+    setMultiChoiceOptionDrafts([""]);
+    setIsMultiChoiceModalOpen(false);
+    setTableRowDrafts([""]);
+    setTableColumnDrafts([""]);
+    setIsTableQuestionModalOpen(false);
     setMessage("Pergunta personalizada adicionada");
+  }
+
+  function handleNewQuestionPrimaryAction() {
+    if (newQuestionType === "multiChoice") {
+      setIsMultiChoiceModalOpen(true);
+      return;
+    }
+
+    if (newQuestionType === "table") {
+      setIsTableQuestionModalOpen(true);
+      return;
+    }
+
+    addCustomQuestion();
+  }
+
+  function updateMultiChoiceOption(index: number, value: string) {
+    setMultiChoiceOptionDrafts((currentOptions) => currentOptions.map((option, optionIndex) => optionIndex === index ? value : option));
+  }
+
+  function addMultiChoiceOption() {
+    setMultiChoiceOptionDrafts((currentOptions) => [...currentOptions, ""]);
+  }
+
+  function removeMultiChoiceOption(index: number) {
+    setMultiChoiceOptionDrafts((currentOptions) => currentOptions.length === 1 ? [""] : currentOptions.filter((_, optionIndex) => optionIndex !== index));
+  }
+
+  function updateTableRowDraft(index: number, value: string) {
+    setTableRowDrafts((currentRows) => currentRows.map((row, rowIndex) => rowIndex === index ? value : row));
+  }
+
+  function addTableRowDraft() {
+    setTableRowDrafts((currentRows) => [...currentRows, ""]);
+  }
+
+  function removeTableRowDraft(index: number) {
+    setTableRowDrafts((currentRows) => currentRows.length === 1 ? [""] : currentRows.filter((_, rowIndex) => rowIndex !== index));
+  }
+
+  function updateTableColumnDraft(index: number, value: string) {
+    setTableColumnDrafts((currentColumns) => currentColumns.map((column, columnIndex) => columnIndex === index ? value : column));
+  }
+
+  function addTableColumnDraft() {
+    setTableColumnDrafts((currentColumns) => [...currentColumns, ""]);
+  }
+
+  function removeTableColumnDraft(index: number) {
+    setTableColumnDrafts((currentColumns) => currentColumns.length === 1 ? [""] : currentColumns.filter((_, columnIndex) => columnIndex !== index));
   }
 
   function updateCustomQuestion(fieldId: string) {
@@ -787,6 +995,84 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     setMessage("Pergunta personalizada removida");
   }
 
+  function getTemplateConfigItems() {
+    const existingConfigById = new Map((loadedRecord.templateConfig ?? []).map((config) => [config.id, config]));
+    const baseTemplateIds = new Set(templates.map((template) => template.id));
+
+    return effectiveTemplates.map((template, index) => {
+      const existingConfig = existingConfigById.get(template.id);
+      return {
+        id: template.id,
+        title: existingConfig?.title ?? template.title,
+        shortTitle: existingConfig?.shortTitle ?? template.shortTitle,
+        description: existingConfig?.description ?? template.description,
+        sortOrder: index,
+        isCustom: existingConfig?.isCustom ?? !baseTemplateIds.has(template.id)
+      };
+    });
+  }
+
+  function applyTemplateConfig(nextConfig: TemplateConfigItem[]) {
+    const normalizedConfig = nextConfig.map((config, index) => ({ ...config, sortOrder: index }));
+
+    setCurrentRecord((record) => {
+      if (!record) return record;
+
+      const nextAnswers = { ...record.answers };
+      const nextCustomFields = { ...record.customFields };
+
+      for (const config of normalizedConfig) {
+        nextAnswers[config.id] = nextAnswers[config.id] ?? {};
+        if (config.isCustom) {
+          nextCustomFields[config.id] = nextCustomFields[config.id] ?? { [customTemplateSectionId]: [] };
+        }
+      }
+
+      return {
+        ...record,
+        answers: nextAnswers,
+        customFields: nextCustomFields,
+        templateConfig: normalizedConfig,
+        updatedAt: new Date().toISOString()
+      };
+    });
+    setMessage("Configuração das fichas atualizada");
+  }
+
+  function updateTemplateConfigItem(templateId: TemplateId, patch: Partial<TemplateConfigItem>) {
+    applyTemplateConfig(getTemplateConfigItems().map((config) => config.id === templateId ? { ...config, ...patch } : config));
+  }
+
+  function moveTemplateConfigItem(templateId: TemplateId, direction: -1 | 1) {
+    const configItems = getTemplateConfigItems();
+    const currentIndex = configItems.findIndex((config) => config.id === templateId);
+    const nextIndex = currentIndex + direction;
+
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= configItems.length) return;
+
+    const nextConfigItems = [...configItems];
+    [nextConfigItems[currentIndex], nextConfigItems[nextIndex]] = [nextConfigItems[nextIndex], nextConfigItems[currentIndex]];
+    applyTemplateConfig(nextConfigItems);
+  }
+
+  function addCustomTemplate() {
+    const normalizedTitle = newTemplateTitle.trim();
+
+    if (!normalizedTitle) return;
+
+    const nextTemplate: TemplateConfigItem = {
+      id: `custom-template-${crypto.randomUUID()}`,
+      title: normalizedTitle,
+      shortTitle: normalizedTitle,
+      description: "Ficha personalizada deste registro.",
+      sortOrder: getTemplateConfigItems().length,
+      isCustom: true
+    };
+
+    applyTemplateConfig([...getTemplateConfigItems(), nextTemplate]);
+    setNewTemplateTitle("");
+  }
+
   return (
     <div className="anamnese-detail-layout">
       <section className="workflow-panel">
@@ -842,25 +1128,14 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
               <span>Paciente vinculado</span>
               <select disabled={!canLinkPatient} onChange={(event) => linkPatient(event.target.value)} value={loadedRecord.patientId ?? ""}>
                 <option value="">Sem vinculo</option>
-                {patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.name}{patient.document ? ` - ${patient.document}` : ""}</option>)}
+                {patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.name}{patient.cpf || patient.rg || patient.document ? ` - ${patient.cpf ?? patient.rg ?? patient.document}` : ""}</option>)}
               </select>
             </label>
             {canCreateAndLinkPatient ? (
-              <>
-                <label className="patient-link-field is-new-patient">
-                  <span>Novo paciente</span>
-                  <input onChange={(event) => setNewPatientName(event.target.value)} placeholder="Nome completo" value={newPatientName} />
-                </label>
-                <label className="patient-link-field is-birth-date">
-                  <span>Nascimento</span>
-                  <input onChange={(event) => setNewPatientBirthDate(event.target.value)} type="date" value={newPatientBirthDate} />
-                </label>
-                <label className="patient-link-field is-document">
-                  <span>Documento</span>
-                  <input onChange={(event) => setNewPatientDocument(event.target.value)} placeholder="CPF/RG" value={newPatientDocument} />
-                </label>
-                <button disabled={!newPatientName.trim()} onClick={handleCreatePatient} type="button">Criar e vincular</button>
-              </>
+              <button className="secondary-button patient-add-button" disabled={!canLinkPatient} onClick={() => setIsPatientModalOpen(true)} type="button">
+                <Plus size={16} />
+                Adicionar paciente
+              </button>
             ) : null}
           </div>
           {medicalRecordEntries.length > 0 ? (
@@ -870,8 +1145,45 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
           ) : null}
         </div> : null}
 
+        {isPatientModalOpen ? (
+          <div className="confirmation-modal-layer" role="presentation">
+            <button aria-label="Cancelar cadastro de paciente" className="confirmation-modal-backdrop" onClick={() => setIsPatientModalOpen(false)} type="button" />
+            <section aria-labelledby="patient-create-modal-title" aria-modal="true" className="confirmation-modal-panel patient-create-modal" role="dialog">
+              <div className="confirmation-modal-heading">
+                <span className="confirmation-modal-icon is-primary"><Plus aria-hidden="true" size={20} /></span>
+                <div>
+                  <span className="eyebrow">Paciente e prontuário</span>
+                  <h3 id="patient-create-modal-title">Adicionar paciente</h3>
+                </div>
+              </div>
+              <div className="patient-create-fields">
+                <label>
+                  <span>Nome completo</span>
+                  <input autoFocus onChange={(event) => setNewPatientName(event.target.value)} placeholder="Nome completo" value={newPatientName} />
+                </label>
+                <label>
+                  <span>Nascimento</span>
+                  <input onChange={(event) => setNewPatientBirthDate(event.target.value)} type="date" value={newPatientBirthDate} />
+                </label>
+                <label>
+                  <span>CPF</span>
+                  <input onChange={(event) => setNewPatientCpf(event.target.value)} placeholder="CPF" value={newPatientCpf} />
+                </label>
+                <label>
+                  <span>RG</span>
+                  <input onChange={(event) => setNewPatientRg(event.target.value)} placeholder="RG" value={newPatientRg} />
+                </label>
+              </div>
+              <div className="confirmation-modal-actions">
+                <button className="secondary-button" onClick={() => setIsPatientModalOpen(false)} type="button">Cancelar</button>
+                <button className="primary-button" disabled={!newPatientName.trim()} onClick={handleCreatePatient} type="button">Criar e vincular</button>
+              </div>
+            </section>
+          </div>
+        ) : null}
+
         <div className="template-tabs" role="tablist" aria-label="Fichas de anamnese">
-          {templates.map((template) => (
+          {effectiveTemplates.map((template) => (
             <button
               aria-selected={activeTemplateId === template.id}
               className={activeTemplateId === template.id ? "is-active" : ""}
@@ -884,7 +1196,8 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
               type="button"
             >
               <FileText size={17} />
-              {template.shortTitle}
+              <span>{template.shortTitle}</span>
+              {loadedRecord.templateStatuses?.[template.id]?.status === "completed" ? <small>Concluída</small> : null}
             </button>
           ))}
         </div>
@@ -893,8 +1206,74 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
           <div>
             <h3>{activeTemplate.title}</h3>
             <p>{activeTemplate.description}</p>
+            <div className="template-status-row">
+              <span>{activeTemplateProgress.complete}/{activeTemplateProgress.total} obrigatórios</span>
+              <span className={isActiveTemplateCompleted ? "is-completed" : ""}>{isActiveTemplateCompleted ? "Ficha concluída" : "Ficha em rascunho"}</span>
+            </div>
           </div>
+          {canManageCurrentQuestions ? (
+            <button className="secondary-button" onClick={() => setIsTemplateManagerOpen(true)} type="button">
+              <Pencil size={16} />
+              Editar fichas
+            </button>
+          ) : null}
         </div>
+
+        {isTemplateManagerOpen ? (
+          <div className="confirmation-modal-layer" role="presentation">
+            <button aria-label="Fechar edição de fichas" className="confirmation-modal-backdrop" onClick={() => setIsTemplateManagerOpen(false)} type="button" />
+            <section aria-labelledby="template-manager-modal-title" aria-modal="true" className="confirmation-modal-panel template-manager-modal" role="dialog">
+              <div className="confirmation-modal-heading">
+                <span className="confirmation-modal-icon is-primary"><FileText aria-hidden="true" size={20} /></span>
+                <div>
+                  <span className="eyebrow">Fluxo de anamnese</span>
+                  <h3 id="template-manager-modal-title">Editar fichas</h3>
+                </div>
+              </div>
+              <div className="template-manager-list">
+                {getTemplateConfigItems().map((templateConfig, index, configItems) => (
+                  <div className="template-manager-row" key={templateConfig.id}>
+                    <label>
+                      <span>Nome da aba</span>
+                      <input onChange={(event) => updateTemplateConfigItem(templateConfig.id, { shortTitle: event.target.value })} value={templateConfig.shortTitle} />
+                    </label>
+                    <label>
+                      <span>Título da ficha</span>
+                      <input onChange={(event) => updateTemplateConfigItem(templateConfig.id, { title: event.target.value })} value={templateConfig.title} />
+                    </label>
+                    <div className="template-manager-actions">
+                      <button aria-label={`Mover ${templateConfig.shortTitle} para cima`} disabled={index === 0} onClick={() => moveTemplateConfigItem(templateConfig.id, -1)} type="button">↑</button>
+                      <button aria-label={`Mover ${templateConfig.shortTitle} para baixo`} disabled={index === configItems.length - 1} onClick={() => moveTemplateConfigItem(templateConfig.id, 1)} type="button">↓</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="template-manager-new">
+                <label>
+                  <span>Nova ficha personalizada</span>
+                  <input
+                    onChange={(event) => setNewTemplateTitle(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        addCustomTemplate();
+                      }
+                    }}
+                    placeholder="Ex.: Nutrição"
+                    value={newTemplateTitle}
+                  />
+                </label>
+                <button className="secondary-button" disabled={!newTemplateTitle.trim()} onClick={addCustomTemplate} type="button">
+                  <Plus size={16} />
+                  Adicionar ficha
+                </button>
+              </div>
+              <div className="confirmation-modal-actions">
+                <button className="primary-button" onClick={() => setIsTemplateManagerOpen(false)} type="button">Concluir edição</button>
+              </div>
+            </section>
+          </div>
+        ) : null}
 
         <div className="section-rail" aria-label="Seções da ficha">
           {activeTemplate.sections.map((section, index) => (
@@ -924,7 +1303,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
                       event.preventDefault();
-                      addCustomQuestion();
+                      handleNewQuestionPrimaryAction();
                     }
                   }}
                   placeholder="Ex.: Qual foi o principal gatilho da recaída?"
@@ -933,15 +1312,148 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
               </label>
               <label>
                 <span>Tipo de pergunta</span>
-                <select onChange={(event) => setNewQuestionType(event.target.value as "textarea" | "yesNoDetails")} value={newQuestionType}>
+                <select onChange={(event) => setNewQuestionType(event.target.value as CustomQuestionType)} value={newQuestionType}>
                   <option value="textarea">Texto livre</option>
+                  <option value="yesNo">Sim/Não sem complemento</option>
                   <option value="yesNoDetails">Sim/Não com complemento se Sim</option>
+                  <option value="multiChoice">Múltipla seleção</option>
+                  <option value="table">Tabela</option>
                 </select>
               </label>
-              <button disabled={!newQuestionLabel.trim()} onClick={addCustomQuestion} title="Requer permissão de atualização da anamnese" type="button">
+              <button disabled={newQuestionType !== "multiChoice" && newQuestionType !== "table" && !newQuestionLabel.trim()} onClick={handleNewQuestionPrimaryAction} title="Requer permissão de atualização da anamnese" type="button">
                 <Plus size={16} />
-                Adicionar pergunta
+                {newQuestionType === "multiChoice" || newQuestionType === "table" ? "Configurar pergunta" : "Adicionar pergunta"}
               </button>
+            </div>
+          ) : null}
+
+          {isMultiChoiceModalOpen ? (
+            <div className="confirmation-modal-layer" role="presentation">
+              <button aria-label="Cancelar criação de pergunta" className="confirmation-modal-backdrop" onClick={() => setIsMultiChoiceModalOpen(false)} type="button" />
+              <section aria-labelledby="multi-choice-question-modal-title" aria-modal="true" className="confirmation-modal-panel multi-choice-question-modal" role="dialog">
+                <div className="confirmation-modal-heading">
+                  <span className="confirmation-modal-icon is-primary"><Plus aria-hidden="true" size={20} /></span>
+                  <div>
+                    <span className="eyebrow">Pergunta personalizada</span>
+                    <h3 id="multi-choice-question-modal-title">Múltipla seleção</h3>
+                  </div>
+                </div>
+                <div className="multi-choice-question-fields">
+                  <label>
+                    <span>Nome da pergunta</span>
+                    <input autoFocus onChange={(event) => setNewQuestionLabel(event.target.value)} placeholder="Ex.: Aspectos observados" value={newQuestionLabel} />
+                  </label>
+                  <div className="multi-choice-options-editor">
+                    <span>Opções de resposta</span>
+                    {multiChoiceOptionDrafts.map((option, index) => (
+                      <div className="multi-choice-option-row" key={index}>
+                        <input
+                          aria-label={`Opção ${index + 1}`}
+                          onChange={(event) => updateMultiChoiceOption(index, event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              addMultiChoiceOption();
+                            }
+                          }}
+                          placeholder={`Opção ${index + 1}`}
+                          value={option}
+                        />
+                        <button aria-label={`Remover opção ${index + 1}`} disabled={multiChoiceOptionDrafts.length === 1 && !option.trim()} onClick={() => removeMultiChoiceOption(index)} type="button">
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    ))}
+                    <button className="secondary-button" onClick={addMultiChoiceOption} type="button">
+                      <Plus size={16} />
+                      Adicionar opção
+                    </button>
+                  </div>
+                </div>
+                <div className="confirmation-modal-actions">
+                  <button className="secondary-button" onClick={() => setIsMultiChoiceModalOpen(false)} type="button">Cancelar</button>
+                  <button className="primary-button" disabled={!newQuestionLabel.trim() || parsedNewQuestionOptions.length === 0} onClick={addCustomQuestion} type="button">Criar pergunta</button>
+                </div>
+              </section>
+            </div>
+          ) : null}
+
+          {isTableQuestionModalOpen ? (
+            <div className="confirmation-modal-layer" role="presentation">
+              <button aria-label="Cancelar criação de tabela" className="confirmation-modal-backdrop" onClick={() => setIsTableQuestionModalOpen(false)} type="button" />
+              <section aria-labelledby="table-question-modal-title" aria-modal="true" className="confirmation-modal-panel table-question-modal" role="dialog">
+                <div className="confirmation-modal-heading">
+                  <span className="confirmation-modal-icon is-primary"><Plus aria-hidden="true" size={20} /></span>
+                  <div>
+                    <span className="eyebrow">Pergunta personalizada</span>
+                    <h3 id="table-question-modal-title">Tabela</h3>
+                  </div>
+                </div>
+                <div className="multi-choice-question-fields">
+                  <label>
+                    <span>Nome da pergunta</span>
+                    <input autoFocus onChange={(event) => setNewQuestionLabel(event.target.value)} placeholder="Ex.: Filhos" value={newQuestionLabel} />
+                  </label>
+                  <div className="table-question-groups">
+                    <div className="multi-choice-options-editor">
+                      <span>Itens da tabela</span>
+                      {tableRowDrafts.map((row, index) => (
+                        <div className="multi-choice-option-row" key={index}>
+                          <input
+                            aria-label={`Item ${index + 1}`}
+                            onChange={(event) => updateTableRowDraft(index, event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                addTableRowDraft();
+                              }
+                            }}
+                            placeholder={`Item ${index + 1}`}
+                            value={row}
+                          />
+                          <button aria-label={`Remover item ${index + 1}`} disabled={tableRowDrafts.length === 1 && !row.trim()} onClick={() => removeTableRowDraft(index)} type="button">
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      ))}
+                      <button className="secondary-button" onClick={addTableRowDraft} type="button">
+                        <Plus size={16} />
+                        Adicionar item
+                      </button>
+                    </div>
+                    <div className="multi-choice-options-editor">
+                      <span>Colunas</span>
+                      {tableColumnDrafts.map((column, index) => (
+                        <div className="multi-choice-option-row" key={index}>
+                          <input
+                            aria-label={`Coluna ${index + 1}`}
+                            onChange={(event) => updateTableColumnDraft(index, event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                addTableColumnDraft();
+                              }
+                            }}
+                            placeholder={`Coluna ${index + 1}`}
+                            value={column}
+                          />
+                          <button aria-label={`Remover coluna ${index + 1}`} disabled={tableColumnDrafts.length === 1 && !column.trim()} onClick={() => removeTableColumnDraft(index)} type="button">
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      ))}
+                      <button className="secondary-button" onClick={addTableColumnDraft} type="button">
+                        <Plus size={16} />
+                        Adicionar coluna
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="confirmation-modal-actions">
+                  <button className="secondary-button" onClick={() => setIsTableQuestionModalOpen(false)} type="button">Cancelar</button>
+                  <button className="primary-button" disabled={!newQuestionLabel.trim() || parsedTableRows.length === 0 || parsedTableColumns.length === 0} onClick={addCustomQuestion} type="button">Criar tabela</button>
+                </div>
+              </section>
             </div>
           ) : null}
 
@@ -1042,16 +1554,28 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                 Baixar PDF
               </button>
             ) : null}
+            {canPrintAnamnese ? (
+              <button className="secondary-button" disabled={!isActiveTemplateCompleted} onClick={() => { void handleDownloadTemplatePdf(); }} type="button">
+                <Printer size={17} />
+                PDF da ficha
+              </button>
+            ) : null}
             {canFinalizeAnamnese ? (
-              <button className="primary-button" disabled={loadedRecord.status === "finalized"} onClick={() => saveRecord("finalized")} type="button">
+              <button className="secondary-button" disabled={loadedRecord.status === "finalized" || isActiveTemplateCompleted} onClick={() => { void completeActiveTemplate(); }} type="button">
+                <CheckCircle2 size={17} />
+                Concluir ficha
+              </button>
+            ) : null}
+            {canFinalizeAnamnese ? (
+              <button className="primary-button" disabled={loadedRecord.status === "finalized" || !allTemplatesCompleted} onClick={() => saveRecord("finalized")} type="button">
                 <FileCheck2 size={17} />
-                Finalizar anamnese
+                Finalizar completa
               </button>
             ) : null}
           </div>
         </div>
       </section>
-      <AnamnesePrintDocument record={loadedRecord} templates={templates} />
+      <AnamnesePrintDocument record={loadedRecord} templates={effectiveTemplates} />
     </div>
   );
 }

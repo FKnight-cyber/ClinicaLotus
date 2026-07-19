@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { RequirePermissions } from "../auth/guards/permissions.decorator";
 import { AuthGuard } from "../auth/guards/auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
+import type { AuthenticatedUser } from "../auth/auth.types";
 import { CreatePatientDto } from "./dto/create-patient.dto";
 import { PatientsService } from "./patients.service";
 
@@ -18,8 +19,8 @@ export class PatientsController {
 
   @Post()
   @RequirePermissions("patients.create")
-  create(@Body() dto: CreatePatientDto) {
-    return this.patientsService.create(dto);
+  create(@Req() request: { user?: AuthenticatedUser }, @Body() dto: CreatePatientDto) {
+    return this.patientsService.create(request.user?.id, dto);
   }
 
   @Get(":patientId/prontuario")

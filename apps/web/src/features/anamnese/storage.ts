@@ -11,6 +11,7 @@ type AnamnesePayload = {
   patientId?: string | null;
   answers?: Record<string, TemplateAnswers>;
   customFields?: AnamneseRecord["customFields"];
+  templateConfig?: AnamneseRecord["templateConfig"];
 };
 
 async function apiRequest<T>(token: string, path: string, options: RequestInit = {}) {
@@ -82,12 +83,19 @@ export async function finalizeAnamneseRecord(token: string, recordId: string) {
   return normalizeAnamneseRecord(record);
 }
 
+export async function completeAnamneseTemplate(token: string, recordId: string, templateId: TemplateId) {
+  const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}/templates/${templateId}/complete`, {
+    method: "POST"
+  });
+  return normalizeAnamneseRecord(record);
+}
+
 export function fetchPatients(token: string, search = "") {
   const query = search.trim() ? `?search=${encodeURIComponent(search.trim())}` : "";
   return apiRequest<PatientSummary[]>(token, `/api/patients${query}`);
 }
 
-export function createPatient(token: string, payload: { name: string; birthDate?: string; document?: string }) {
+export function createPatient(token: string, payload: { name: string; birthDate?: string; cpf?: string; rg?: string }) {
   return apiRequest<PatientSummary>(token, "/api/patients", {
     method: "POST",
     body: JSON.stringify(payload)
@@ -100,6 +108,12 @@ export function fetchPatientMedicalRecord(token: string, patientId: string) {
 
 export function emitAnamnesePdfDocument(token: string, recordId: string) {
   return apiRequest<ClinicalDocumentSummary>(token, `/api/anamneses/${recordId}/documents/pdf`, {
+    method: "POST"
+  });
+}
+
+export function emitAnamneseTemplatePdfDocument(token: string, recordId: string, templateId: TemplateId) {
+  return apiRequest<ClinicalDocumentSummary>(token, `/api/anamneses/${recordId}/templates/${templateId}/documents/pdf`, {
     method: "POST"
   });
 }

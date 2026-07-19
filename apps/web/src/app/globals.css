@@ -638,8 +638,105 @@ a.operator-chip {
   color: #ffffff;
 }
 
+.template-tabs button small {
+  background: var(--primary-soft);
+  border-radius: 999px;
+  color: var(--primary-strong);
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 2px 6px;
+}
+
+.template-tabs button.is-active small {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
 .template-context {
+  align-items: flex-start;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
   padding: 18px 22px;
+}
+
+.template-context > div {
+  min-width: 0;
+}
+
+.template-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.template-status-row span {
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 5px 9px;
+}
+
+.template-status-row span.is-completed {
+  background: var(--primary-soft);
+  border-color: #9acdbd;
+  color: var(--primary-strong);
+}
+
+.template-manager-modal {
+  max-width: 760px;
+  width: min(760px, 100%);
+}
+
+.template-manager-list,
+.template-manager-new {
+  display: grid;
+  gap: 10px;
+}
+
+.template-manager-row {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(130px, 0.35fr) minmax(220px, 1fr) auto;
+}
+
+.template-manager-row label,
+.template-manager-new label {
+  display: grid;
+  gap: 6px;
+}
+
+.template-manager-row span,
+.template-manager-new span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.template-manager-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.template-manager-actions button {
+  background: #ffffff;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: var(--primary-strong);
+  min-height: 42px;
+  width: 42px;
+}
+
+.template-manager-new {
+  align-items: end;
+  border-top: 1px solid var(--line);
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-top: 12px;
 }
 
 .section-rail {
@@ -697,6 +794,10 @@ a.operator-chip {
   grid-column: span 4;
 }
 
+.patient-link-field.is-linked-patient {
+  grid-column: span 5;
+}
+
 .patient-link-field.is-birth-date {
   grid-column: span 2;
 }
@@ -720,6 +821,60 @@ a.operator-chip {
   grid-column: span 3;
   min-height: 42px;
   min-width: 0;
+  width: 100%;
+}
+
+.patient-add-button {
+  align-items: center;
+  background: #e8f6fc;
+  border-color: #8ad2f0;
+  color: #116d9f;
+  display: inline-flex;
+  gap: 8px;
+  font-weight: 700;
+  justify-content: center;
+  min-width: 200px;
+  white-space: nowrap;
+}
+
+.patient-add-button svg {
+  flex: 0 0 auto;
+}
+
+.patient-add-button:hover:not(:disabled),
+.patient-add-button:focus-visible {
+  background: #209fdd;
+  border-color: #209fdd;
+  color: #ffffff;
+}
+
+.patient-create-modal {
+  max-width: 620px;
+  width: min(620px, 100%);
+}
+
+.patient-create-fields {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.patient-create-fields label {
+  display: grid;
+  gap: 6px;
+}
+
+.patient-create-fields label:first-child {
+  grid-column: 1 / -1;
+}
+
+.patient-create-fields span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.patient-create-fields input {
   width: 100%;
 }
 
@@ -864,6 +1019,61 @@ a.operator-chip {
 
 .question-editor button:disabled {
   color: #9aa7a2;
+}
+
+.multi-choice-question-modal {
+  max-width: 620px;
+  width: min(620px, 100%);
+}
+
+.table-question-modal {
+  max-width: 780px;
+  width: min(780px, 100%);
+}
+
+.multi-choice-question-fields {
+  display: grid;
+  gap: 14px;
+}
+
+.multi-choice-question-fields label,
+.multi-choice-options-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.multi-choice-question-fields span,
+.multi-choice-options-editor > span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.multi-choice-option-row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 42px;
+}
+
+.multi-choice-option-row button {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: var(--danger);
+  display: inline-flex;
+  justify-content: center;
+  min-height: 42px;
+}
+
+.multi-choice-options-editor .secondary-button {
+  justify-self: start;
+}
+
+.table-question-groups {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .field-grid {
@@ -2171,8 +2381,13 @@ td input {
   .field-grid,
   .record-summary,
   .module-nav,
+  .table-question-groups,
   .table-option-editor,
   .question-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .question-editor.has-options {
     grid-template-columns: 1fr;
   }
 
@@ -2192,6 +2407,10 @@ td input {
   .patient-link-field.is-document,
   .patient-link-fields button {
     grid-column: 1;
+  }
+
+  .patient-create-fields {
+    grid-template-columns: 1fr;
   }
 
   .prontuario-layout {

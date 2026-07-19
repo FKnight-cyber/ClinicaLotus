@@ -1,4 +1,4 @@
-export type TemplateId = "nursing-admission" | "psychological" | "therapeutic-initial";
+export type TemplateId = string;
 
 export type FieldType = "text" | "textarea" | "date" | "time" | "number" | "yesNo" | "yesNoDetails" | "singleChoice" | "multiChoice" | "table";
 
@@ -35,6 +35,15 @@ export type FormTemplate = {
   sections: FormSection[];
 };
 
+export type TemplateConfigItem = {
+  id: TemplateId;
+  title: string;
+  shortTitle: string;
+  description?: string;
+  sortOrder: number;
+  isCustom?: boolean;
+};
+
 export type TableValue = Record<string, Record<string, string>>;
 export type ConditionalValue = {
   answer?: string;
@@ -44,6 +53,12 @@ export type FieldValue = string | string[] | TableValue | ConditionalValue;
 export type TemplateAnswers = Record<string, FieldValue>;
 
 export type AnamneseStatus = "draft" | "finalized";
+
+export type AnamneseTemplateStatus = {
+  status: "draft" | "completed";
+  completedAt?: string;
+  completedById?: string;
+};
 
 export type AnamneseRecord = {
   id: string;
@@ -56,6 +71,8 @@ export type AnamneseRecord = {
   patientId?: string | null;
   answers: Record<TemplateId, TemplateAnswers>;
   customFields?: Partial<Record<TemplateId, Record<string, FormField[]>>>;
+  templateStatuses?: Partial<Record<TemplateId, AnamneseTemplateStatus>>;
+  templateConfig?: TemplateConfigItem[];
 };
 
 export type PatientSummary = {
@@ -63,6 +80,8 @@ export type PatientSummary = {
   name: string;
   birthDate?: string | null;
   document?: string | null;
+  cpf?: string | null;
+  rg?: string | null;
   createdAt: string;
   updatedAt: string;
 };

@@ -123,7 +123,14 @@ async function drawLogo(doc: jsPDF, x: number, y: number) {
   doc.addImage(logoDataUrl, "PNG", x, y, 31, 25.5, undefined, "FAST");
 }
 
-async function drawHeader(doc: jsPDF, record: AnamneseRecord) {
+type PdfExportOptions = {
+  templateId?: TemplateId;
+  title?: string;
+  summaryStatus?: string;
+  fileNameSuffix?: string;
+};
+
+async function drawHeader(doc: jsPDF, record: AnamneseRecord, title = "ANAMNESE CLÍNICA") {
   await drawLogo(doc, margin, margin - 2);
 
   doc.setTextColor(123, 63, 178);
@@ -138,7 +145,7 @@ async function drawHeader(doc: jsPDF, record: AnamneseRecord) {
   doc.setTextColor(23, 49, 43);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13);
-  doc.text("ANAMNESE CLÍNICA", pageWidth - margin, margin + 8, { align: "right" });
+  doc.text(title, pageWidth - margin, margin + 8, { align: "right" });
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.text(record.code, pageWidth - margin, margin + 14, { align: "right" });
@@ -147,11 +154,11 @@ async function drawHeader(doc: jsPDF, record: AnamneseRecord) {
   doc.line(margin, margin + 36, pageWidth - margin, margin + 36);
 }
 
-function drawSummary(doc: jsPDF, record: AnamneseRecord, startY: number) {
+function drawSummary(doc: jsPDF, record: AnamneseRecord, startY: number, statusLabel?: string) {
   const patientName = getPrintablePatientName(record);
   const summaryRows = [
     ["Paciente", patientName],
-    ["Status", record.status === "finalized" ? "Finalizada" : "Rascunho"],
+    ["Status", statusLabel ?? (record.status === "finalized" ? "Finalizada" : "Rascunho")],
     ["Última alteração", formatDateTime(record.updatedAt)]
   ];
 
@@ -314,12 +321,13 @@ function addFooters(doc: jsPDF) {
   }
 }
 
-export async function downloadAnamnesePdf(record: AnamneseRecord, templates: FormTemplate[]) {
+export async function downloadAnamnesePdf(record: AnamneseRecord, templates: FormTemplate[], options: PdfExportOptions = {}) {
+  const printableTemplates = options.templateId ? templates.filter((template) => template.id === options.templateId) : templates;
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
-  await drawHeader(doc, record);
-  let y = drawSummary(doc, record, margin + 42) + 8;
+  await drawHeader(doc, record, options.title);
+  let y = drawSummary(doc, record, margin + 42, options.summaryStatus) + 8;
 
-  for (const template of templates) {
+  for (const template of printableTemplates) {
     y = drawSectionTitle(doc, template.title, y, "template");
 
     for (const section of template.sections) {
@@ -371,5 +379,5 @@ export async function downloadAnamnesePdf(record: AnamneseRecord, templates: For
   doc.text("Assinatura do profissional responsável", pageWidth - margin - 37.5, y + 21, { align: "center" });
 
   addFooters(doc);
-  doc.save(`anamnese-${record.code}.pdf`);
+  doc.save(`anamnese-${record.code}${options.fileNameSuffix ? `-${options.fileNameSuffix}` : ""}.pdf`);
 }

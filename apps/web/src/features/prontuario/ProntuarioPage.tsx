@@ -108,7 +108,7 @@ export function ProntuarioPage() {
             {patients.map((patient) => (
               <button className={patient.id === selectedPatientId ? "is-selected" : ""} key={patient.id} onClick={() => setSelectedPatientId(patient.id)} type="button">
                 <strong>{patient.name}</strong>
-                <span>{patient.document || "Sem documento"}</span>
+                <span>{patient.cpf || patient.rg || patient.document || "Sem documento"}</span>
               </button>
             ))}
             {patients.length === 0 ? <div className="empty-state">Nenhum paciente encontrado.</div> : null}
@@ -119,7 +119,7 @@ export function ProntuarioPage() {
           <div className="access-card-heading">
             <div>
               <h3>{selectedPatient?.name ?? "Selecione um paciente"}</h3>
-              <p>{selectedPatient?.document || message}</p>
+              <p>{selectedPatient?.cpf || selectedPatient?.rg || selectedPatient?.document || message}</p>
             </div>
           </div>
 
