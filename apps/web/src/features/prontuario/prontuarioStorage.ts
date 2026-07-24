@@ -1,7 +1,9 @@
 import type { ClinicalDocumentSummary, MedicalEvolution, MedicalEvolutionPayload, MedicalRecordEntry, PaginatedResponse, PatientSummary } from "./prontuarioTypes";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
+const patientsCacheTtlMs = 15 * 1000;
 const evolutionsCacheTtlMs = 15 * 1000;
+const patientsCache = new Map<string, { expiresAt: number; promise?: Promise<PaginatedResponse<PatientSummary>>; value?: PaginatedResponse<PatientSummary> }>();
 const evolutionsCache = new Map<string, { expiresAt: number; promise?: Promise<PaginatedResponse<MedicalEvolution>>; value?: PaginatedResponse<MedicalEvolution> }>();
 
 type ListQueryOptions = {
@@ -9,7 +11,11 @@ type ListQueryOptions = {
   offset: number;
 };
 
-function buildCacheKey(token: string, patientId: string, options: ListQueryOptions) {
+function buildPatientsCacheKey(token: string, search: string, options: ListQueryOptions) {
+  return `${token}:prontuario-patients:${search.trim().toLowerCase()}:${options.limit}:${options.offset}`;
+}
+
+function buildEvolutionsCacheKey(token: string, patientId: string, options: ListQueryOptions) {
   return `${token}:medical-evolutions:${patientId}:${options.limit}:${options.offset}`;
 }
 
@@ -39,10 +45,9 @@ function normalizePaginatedResponse<T>(payload: PaginatedResponse<T> | T[], opti
   return payload;
 }
 
-function getCachedEvolutions(token: string, patientId: string, options: ListQueryOptions, loader: () => Promise<PaginatedResponse<MedicalEvolution>>) {
-  const key = buildCacheKey(token, patientId, options);
+function getCached<T>(cache: Map<string, { expiresAt: number; promise?: Promise<T>; value?: T }>, key: string, ttlMs: number, loader: () => Promise<T>) {
   const now = Date.now();
-  const cached = evolutionsCache.get(key);
+  const cached = cache.get(key);
 
   if (cached?.value && cached.expiresAt > now) {
     return Promise.resolve(cached.value);
@@ -53,15 +58,19 @@ function getCachedEvolutions(token: string, patientId: string, options: ListQuer
   }
 
   const promise = loader().then((value) => {
-    evolutionsCache.set(key, { value, expiresAt: Date.now() + evolutionsCacheTtlMs });
+    cache.set(key, { value, expiresAt: Date.now() + ttlMs });
     return value;
   }).catch((error) => {
-    evolutionsCache.delete(key);
+    cache.delete(key);
     throw error;
   });
 
-  evolutionsCache.set(key, { promise, expiresAt: now + evolutionsCacheTtlMs });
+  cache.set(key, { promise, expiresAt: now + ttlMs });
   return promise;
+}
+
+function getCachedEvolutions(token: string, patientId: string, options: ListQueryOptions, loader: () => Promise<PaginatedResponse<MedicalEvolution>>) {
+  return getCached(evolutionsCache, buildEvolutionsCacheKey(token, patientId, options), evolutionsCacheTtlMs, loader);
 }
 
 function invalidateEvolutions(token: string, patientId: string) {
@@ -92,8 +101,10 @@ async function apiRequest<T>(token: string, path: string, options: RequestInit =
 }
 
 export function fetchProntuarioPatients(token: string, search = "", options: ListQueryOptions): Promise<PaginatedResponse<PatientSummary>> {
-  return apiRequest<PaginatedResponse<PatientSummary> | PatientSummary[]>(token, `/api/patients?${buildListQuery(options, search)}`)
-    .then((payload) => normalizePaginatedResponse(payload, options));
+  return getCached(patientsCache, buildPatientsCacheKey(token, search, options), patientsCacheTtlMs, () => (
+    apiRequest<PaginatedResponse<PatientSummary> | PatientSummary[]>(token, `/api/patients?${buildListQuery(options, search)}`)
+      .then((payload) => normalizePaginatedResponse(payload, options))
+  ));
 }
 
 export function fetchProntuarioTimeline(token: string, patientId: string, options: ListQueryOptions): Promise<PaginatedResponse<MedicalRecordEntry>> {
