@@ -29,6 +29,8 @@ type AccessUser = {
   login: string;
   name: string;
   email?: string | null;
+  userType: "MANAGER" | "PATIENT" | "NURSE" | "DOCTOR";
+  professionalArea?: string | null;
   status: "PENDING" | "ACTIVE" | "INACTIVE";
   mustChangePassword: boolean;
   groups: { accessGroup: AccessGroup }[];
@@ -53,6 +55,27 @@ const MAX_GROUP_LIMIT = 100;
 const MAX_USER_LIMIT = 100;
 const GROUP_SEARCH_DELAY_MS = 350;
 const USER_SEARCH_DELAY_MS = 350;
+const userTypeLabels: Record<AccessUser["userType"], string> = {
+  MANAGER: "Gerente",
+  PATIENT: "Paciente",
+  NURSE: "Enfermeiro",
+  DOCTOR: "Médico"
+};
+const permissionModuleLabels: Record<string, string> = {
+  access: "Controle de acesso",
+  admin: "Administração",
+  anamnese: "Anamnese",
+  audit: "Auditoria",
+  medical_evolutions: "Prontuário",
+  menu: "Menu lateral",
+  patients: "Pacientes",
+  prontuario: "Prontuário"
+};
+const permissionModuleOrder = ["Prontuário", "Pacientes", "Anamnese", "Controle de acesso", "Auditoria", "Menu lateral", "Administração"];
+
+function getPermissionModuleLabel(module: string) {
+  return permissionModuleLabels[module] ?? module;
+}
 
 function normalizeGroupsPage(payload: PaginatedAccessGroups | AccessGroup[], fallbackLimit: number): PaginatedAccessGroups {
   if (Array.isArray(payload)) {
@@ -159,7 +182,8 @@ export function AccessGroupsPage() {
 
   const permissionsByModule = useMemo(() => {
     return permissions.reduce<Record<string, Permission[]>>((accumulator, permission) => {
-      accumulator[permission.module] = [...(accumulator[permission.module] ?? []), permission];
+      const moduleLabel = getPermissionModuleLabel(permission.module);
+      accumulator[moduleLabel] = [...(accumulator[moduleLabel] ?? []), permission];
       return accumulator;
     }, {});
   }, [permissions]);
@@ -699,7 +723,7 @@ function UserCard({
   return (
     <article className="access-card compact user-card">
       <div className="access-card-heading user-card-heading">
-        <div className="user-card-identity"><strong>{user.name}</strong><span>{user.login} {user.email ? `- ${user.email}` : ""}</span></div>
+        <div className="user-card-identity"><strong>{user.name}</strong><span>{userTypeLabels[user.userType]} - {user.login} {user.email ? `- ${user.email}` : ""}</span></div>
         <span className={`status-badge user-status-badge ${statusBadge.className}`}><StatusIcon aria-hidden="true" size={16} />{statusBadge.label}</span>
       </div>
       <p>{user.groups.map((group) => group.accessGroup.name).join(", ") || "Sem grupo vinculado"}</p>
@@ -770,19 +794,30 @@ function PermissionPicker({
 }) {
   return (
     <div className="permission-picker">
-      {Object.entries(permissionsByModule).map(([module, modulePermissions]) => (
-        <fieldset key={module}>
-          <legend>{module}</legend>
-          <div className="access-checklist">
-            {modulePermissions.map((permission) => (
-              <label className="choice-pill" key={permission.key} title={permission.key}>
-                <input checked={selected.includes(permission.key)} disabled={!canManageGroups || isSaving} onChange={() => onToggle(permission.key)} type="checkbox" />
-                {permission.description}
-              </label>
-            ))}
-          </div>
-        </fieldset>
-      ))}
+      {Object.entries(permissionsByModule)
+        .sort(([firstModule], [secondModule]) => {
+          const firstIndex = permissionModuleOrder.indexOf(firstModule);
+          const secondIndex = permissionModuleOrder.indexOf(secondModule);
+
+          if (firstIndex !== -1 || secondIndex !== -1) {
+            return (firstIndex === -1 ? permissionModuleOrder.length : firstIndex) - (secondIndex === -1 ? permissionModuleOrder.length : secondIndex);
+          }
+
+          return firstModule.localeCompare(secondModule, "pt-BR");
+        })
+        .map(([module, modulePermissions]) => (
+          <fieldset key={module}>
+            <legend>{module}</legend>
+            <div className="access-checklist">
+              {modulePermissions.map((permission) => (
+                <label className="choice-pill" key={permission.key} title={permission.key}>
+                  <input checked={selected.includes(permission.key)} disabled={!canManageGroups || isSaving} onChange={() => onToggle(permission.key)} type="checkbox" />
+                  {permission.description}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        ))}
     </div>
   );
 }

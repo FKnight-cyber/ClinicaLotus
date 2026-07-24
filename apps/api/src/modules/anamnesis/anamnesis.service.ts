@@ -236,7 +236,7 @@ export class AnamnesisService {
     const finalizedRecord = await this.getById(id);
     await this.createMedicalRecordEntry(userId, finalizedRecord);
     if (finalizedRecord.patientId) {
-      this.cache.delete(`patients:medical-record:${finalizedRecord.patientId}`);
+      this.cache.deleteByPrefix(`patients:medical-record:${finalizedRecord.patientId}:`);
     }
     await this.writeAuditLog(userId, "finalize_anamnesis", id, beforeData, finalizedRecord);
     return finalizedRecord;

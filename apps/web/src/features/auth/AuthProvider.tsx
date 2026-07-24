@@ -8,6 +8,12 @@ type AuthUser = {
   login: string;
   name: string;
   email?: string | null;
+  userType?: "MANAGER" | "PATIENT" | "NURSE" | "DOCTOR";
+  professionalArea?: string | null;
+  professionalCouncil?: string | null;
+  professionalRegistration?: string | null;
+  professionalCouncilState?: string | null;
+  professionalSpecialty?: string | null;
   mustChangePassword?: boolean;
   permissions: string[];
 };

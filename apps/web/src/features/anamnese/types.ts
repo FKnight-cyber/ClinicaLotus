@@ -102,6 +102,7 @@ export type MedicalRecordEntry = {
   summary?: string | null;
   createdAt: string;
   anamnesisRecord?: { id: string; code: string; status: string } | null;
+  medicalEvolution?: { id: string; status: string; professionalArea?: string | null; cancelReason?: string | null } | null;
   createdBy?: { id: string; name: string; login: string } | null;
 };
 

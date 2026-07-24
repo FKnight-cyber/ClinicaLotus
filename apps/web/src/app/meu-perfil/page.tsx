@@ -1,0 +1,155 @@
+"use client";
+
+import { FormEvent, useEffect, useState } from "react";
+import { CheckCircle2, Save, UserCircle } from "lucide-react";
+import { AppShell } from "@/components/shell/AppShell";
+import { useAuth } from "@/features/auth/AuthProvider";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
+
+type ProfileForm = {
+  login: string;
+  name: string;
+  email: string;
+  professionalArea: string;
+  professionalCouncil: string;
+  professionalRegistration: string;
+  professionalCouncilState: string;
+  professionalSpecialty: string;
+  password: string;
+};
+
+const professionalAreaOptions = ["Médico", "Terapeuta", "Psicólogo", "Psiquiatra", "Assistente social", "Enfermagem"];
+const professionalCouncilOptions = ["CRM", "CRP", "COREN", "CRESS", "Outro"];
+
+function getDefaultProfessionalArea(userType?: string) {
+  if (userType === "DOCTOR") return "Médico";
+  if (userType === "NURSE") return "Enfermagem";
+  return "";
+}
+
+function shouldShowProfessionalArea(userType?: string) {
+  return userType === "DOCTOR" || userType === "NURSE";
+}
+
+function shouldShowMedicalFields(userType?: string) {
+  return userType === "DOCTOR";
+}
+
+function getDefaultProfessionalCouncil(userType?: string) {
+  return userType === "DOCTOR" ? "CRM" : "";
+}
+
+async function updateProfile(token: string, form: ProfileForm) {
+  const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify({
+      login: form.login,
+      name: form.name,
+      email: form.email || undefined,
+      professionalArea: form.professionalArea || undefined,
+      professionalCouncil: form.professionalCouncil || undefined,
+      professionalRegistration: form.professionalRegistration || undefined,
+      professionalCouncilState: form.professionalCouncilState || undefined,
+      professionalSpecialty: form.professionalSpecialty || undefined,
+      password: form.password || undefined
+    })
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.message ?? "Nao foi possivel atualizar o perfil.");
+  }
+
+  return response.json();
+}
+
+export default function MeuPerfilPage() {
+  const { refreshProfile, token, user } = useAuth();
+  const [form, setForm] = useState<ProfileForm>({ login: "", name: "", email: "", professionalArea: "", professionalCouncil: "", professionalRegistration: "", professionalCouncilState: "", professionalSpecialty: "", password: "" });
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    setForm({
+      login: user.login,
+      name: user.name,
+      email: user.email ?? "",
+      professionalArea: user.professionalArea ?? getDefaultProfessionalArea(user.userType),
+      professionalCouncil: user.professionalCouncil ?? getDefaultProfessionalCouncil(user.userType),
+      professionalRegistration: user.professionalRegistration ?? "",
+      professionalCouncilState: user.professionalCouncilState ?? "",
+      professionalSpecialty: user.professionalSpecialty ?? "",
+      password: ""
+    });
+  }, [user]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token) return;
+    setMessage(null);
+    setError(null);
+    setIsSaving(true);
+
+    try {
+      await updateProfile(token, form);
+      await refreshProfile();
+      setForm((currentForm) => ({ ...currentForm, password: "" }));
+      setMessage("Perfil atualizado.");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Nao foi possivel atualizar o perfil.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <AppShell activeSlug="meu-perfil">
+      <section className="user-detail-page">
+        <div className="list-header">
+          <div>
+            <span className="eyebrow">Meu Perfil</span>
+            <h2>{user?.name ?? "Meus dados"}</h2>
+            <p>Atualize os dados usados no cadastro e no acesso ao sistema.</p>
+          </div>
+          <span className="status-badge"><UserCircle aria-hidden="true" size={17} />Conta pessoal</span>
+        </div>
+
+        {message ? <div className="access-message" role="status"><CheckCircle2 aria-hidden="true" size={17} />{message}</div> : null}
+        {error ? <div className="login-error" role="alert"><span>{error}</span></div> : null}
+
+        <div className="access-single-panel-layout">
+          <section className="plain-panel">
+            <h3>Dados do cadastro</h3>
+            <form className="access-form" onSubmit={handleSubmit}>
+              <label><span>Usuario</span><input autoComplete="username" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, login: event.target.value }))} required value={form.login} /></label>
+              <label><span>Nome completo</span><input autoComplete="name" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required value={form.name} /></label>
+              <label><span>Email</span><input autoComplete="email" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} type="email" value={form.email} /></label>
+              {shouldShowProfessionalArea(user?.userType) ? <label><span>Área profissional</span><select disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, professionalArea: event.target.value }))} value={form.professionalArea}>
+                <option value="">Selecione</option>
+                {professionalAreaOptions.map((area) => <option key={area} value={area}>{area}</option>)}
+              </select></label> : null}
+              {shouldShowMedicalFields(user?.userType) ? <>
+                <label><span>Conselho profissional</span><select disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, professionalCouncil: event.target.value }))} value={form.professionalCouncil}>
+                  <option value="">Selecione</option>
+                  {professionalCouncilOptions.map((council) => <option key={council} value={council}>{council}</option>)}
+                </select></label>
+                <label><span>Número do registro profissional</span><input disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, professionalRegistration: event.target.value }))} placeholder="Ex.: 123456" value={form.professionalRegistration} /></label>
+                <label><span>UF do conselho</span><input disabled={isSaving} maxLength={2} onChange={(event) => setForm((current) => ({ ...current, professionalCouncilState: event.target.value.toUpperCase() }))} placeholder="Ex.: SP" value={form.professionalCouncilState} /></label>
+                <label><span>Especialidade</span><input disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, professionalSpecialty: event.target.value }))} placeholder="Ex.: Psiquiatria" value={form.professionalSpecialty} /></label>
+              </> : null}
+              <label><span>Nova senha</span><input autoComplete="new-password" disabled={isSaving} minLength={6} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} placeholder="Deixe em branco para manter a senha atual" type="password" value={form.password} /></label>
+              <button className="primary-button" disabled={isSaving} type="submit"><Save aria-hidden="true" size={17} />{isSaving ? "Salvando..." : "Salvar perfil"}</button>
+            </form>
+          </section>
+        </div>
+      </section>
+    </AppShell>
+  );
+}

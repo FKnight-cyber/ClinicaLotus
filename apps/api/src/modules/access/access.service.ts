@@ -151,6 +151,8 @@ export class AccessService {
             login: true,
             name: true,
             email: true,
+            userType: true,
+            professionalArea: true,
             status: true,
             mustChangePassword: true,
             groups: { include: { accessGroup: true } }
@@ -198,7 +200,7 @@ export class AccessService {
     const previousUser = await this.getUser(userId);
     await this.prisma.user.update({
       where: { id: userId },
-      data: { name: dto.name, email: dto.email || null }
+      data: { name: dto.name, email: dto.email || null, userType: dto.userType ?? previousUser.userType }
     });
     this.invalidateAccessCaches(userId);
     const nextUser = await this.getUser(userId);
@@ -233,6 +235,8 @@ export class AccessService {
         login: true,
         name: true,
         email: true,
+        userType: true,
+        professionalArea: true,
         status: true,
         mustChangePassword: true,
         groups: { include: { accessGroup: true } }

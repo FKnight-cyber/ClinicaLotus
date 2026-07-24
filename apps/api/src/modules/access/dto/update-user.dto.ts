@@ -1,4 +1,4 @@
-import { IsEmail, IsOptional, IsString } from "class-validator";
+import { IsEmail, IsIn, IsOptional, IsString } from "class-validator";
 
 export class UpdateUserDto {
   @IsString()
@@ -7,4 +7,8 @@ export class UpdateUserDto {
   @IsOptional()
   @IsEmail()
   email?: string;
+
+  @IsOptional()
+  @IsIn(["MANAGER", "PATIENT", "NURSE", "DOCTOR"])
+  userType?: "MANAGER" | "PATIENT" | "NURSE" | "DOCTOR";
 }

@@ -45,6 +45,12 @@ export class AuthService {
         login: user.login,
         name: user.name,
         email: user.email,
+        userType: user.userType,
+        professionalArea: user.professionalArea,
+        professionalCouncil: user.professionalCouncil,
+        professionalRegistration: user.professionalRegistration,
+        professionalCouncilState: user.professionalCouncilState,
+        professionalSpecialty: user.professionalSpecialty,
         mustChangePassword: user.mustChangePassword,
         permissions
       }
@@ -111,20 +117,100 @@ export class AuthService {
       login: user.login,
       name: user.name,
       email: user.email,
+      userType: user.userType,
+      professionalArea: user.professionalArea,
+      professionalCouncil: user.professionalCouncil,
+      professionalRegistration: user.professionalRegistration,
+      professionalCouncilState: user.professionalCouncilState,
+      professionalSpecialty: user.professionalSpecialty,
       permissions: this.getEffectivePermissions(user.groups)
     };
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const currentUser = await this.prisma.user.findUnique({ where: { id: userId } });
+
+    if (!currentUser || currentUser.status !== "ACTIVE") {
+      throw new UnauthorizedException("Usuário inválido ou inativo.");
+    }
+
+    const login = dto.login?.trim() || currentUser.login;
+    const name = dto.name?.trim() || currentUser.name;
+    const email = dto.email?.trim() || null;
+    const professionalArea = dto.professionalArea?.trim() || null;
+    const professionalCouncil = dto.professionalCouncil?.trim() || null;
+    const professionalRegistration = dto.professionalRegistration?.trim() || null;
+    const professionalCouncilState = dto.professionalCouncilState?.trim().toUpperCase() || null;
+    const professionalSpecialty = dto.professionalSpecialty?.trim() || null;
+    const password = dto.password?.trim();
+
+    if (!login) {
+      throw new BadRequestException("Informe o usuário.");
+    }
+
+    if (!name) {
+      throw new BadRequestException("Informe o nome.");
+    }
+
+    if (login !== currentUser.login || email !== currentUser.email) {
+      const existingUser = await this.prisma.user.findFirst({
+        where: {
+          id: { not: userId },
+          OR: [
+            { login },
+            ...(email ? [{ email }] : [])
+          ]
+        },
+        select: { id: true }
+      });
+
+      if (existingUser) {
+        throw new BadRequestException("Já existe um usuário com este login ou email.");
+      }
+    }
+
     await this.prisma.user.update({
       where: { id: userId },
-      data: { name: dto.name, email: dto.email || null }
+      data: {
+        login,
+        name,
+        email,
+        professionalArea,
+        professionalCouncil,
+        professionalRegistration,
+        professionalCouncilState,
+        professionalSpecialty,
+        ...(password ? { passwordHash: hashPassword(password), mustChangePassword: false } : {})
+      }
     });
 
     this.cache.delete(`auth:profile:${userId}`);
     this.cache.delete("access:users");
     this.cache.delete(`access:user:${userId}`);
-    return this.getProfile(userId);
+    const updatedProfile = await this.getProfile(userId);
+    await this.prisma.auditLog.create({
+      data: {
+        entity: "access_user",
+        entityId: userId,
+        action: "update_own_profile",
+        beforeData: JSON.stringify({
+          id: currentUser.id,
+          login: currentUser.login,
+          name: currentUser.name,
+          email: currentUser.email,
+          professionalArea: currentUser.professionalArea,
+          professionalCouncil: currentUser.professionalCouncil,
+          professionalRegistration: currentUser.professionalRegistration,
+          professionalCouncilState: currentUser.professionalCouncilState,
+          professionalSpecialty: currentUser.professionalSpecialty
+        }),
+        afterData: JSON.stringify(updatedProfile),
+        reason: `Perfil atualizado: ${updatedProfile.name}`,
+        userId
+      }
+    });
+    this.cache.deleteByPrefix("access:audit-logs:");
+    return updatedProfile;
   }
 
   private getEffectivePermissions(groups: Array<{ accessGroup: { active: boolean; permissions: Array<{ permission: { key: string; active: boolean } }> } }>) {

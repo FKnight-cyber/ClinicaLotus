@@ -70,6 +70,17 @@ function getPatientName(record: AnamneseRecord) {
   return record.patientName || "Paciente sem nome";
 }
 
+function formatPatientDocuments(patient: PatientSummary) {
+  const documents = [
+    patient.cpf ? `CPF: ${patient.cpf}` : null,
+    patient.rg ? `RG: ${patient.rg}` : null
+  ].filter(Boolean);
+
+  if (documents.length > 0) return documents.join(" ");
+  if (patient.document) return `Documento: ${patient.document}`;
+  return "Sem documento";
+}
+
 function getRecordSavePayload(record: AnamneseRecord) {
   return {
     patientName: getPatientName(record),
@@ -1270,13 +1281,13 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
           <div className="patient-link-fields">
             <label className="patient-link-field is-search">
               <span>Buscar paciente</span>
-              <input disabled={!canLinkPatient} onChange={(event) => setPatientSearch(event.target.value)} placeholder="Nome ou documento" value={patientSearch} />
+              <input disabled={!canLinkPatient} onChange={(event) => setPatientSearch(event.target.value)} placeholder="Nome, CPF ou RG" value={patientSearch} />
             </label>
             <label className="patient-link-field is-linked-patient">
               <span>Paciente vinculado</span>
               <select disabled={!canLinkPatient} onChange={(event) => linkPatient(event.target.value)} value={loadedRecord.patientId ?? ""}>
                 <option value="">Sem vinculo</option>
-                {patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.name}{patient.cpf || patient.rg || patient.document ? ` - ${patient.cpf ?? patient.rg ?? patient.document}` : ""}</option>)}
+                {patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.name} - {formatPatientDocuments(patient)}</option>)}
               </select>
             </label>
             {canCreateAndLinkPatient ? (

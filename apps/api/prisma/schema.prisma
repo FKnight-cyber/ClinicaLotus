@@ -18,6 +18,12 @@ enum AnamnesisStatus {
   CANCELED
 }
 
+enum MedicalEvolutionStatus {
+  DRAFT
+  FINALIZED
+  CANCELED
+}
+
 enum QuestionType {
   TEXT
   TEXTAREA
@@ -36,11 +42,24 @@ enum TableRowSource {
   CUSTOM
 }
 
+enum UserType {
+  MANAGER
+  PATIENT
+  NURSE
+  DOCTOR
+}
+
 model User {
   id                 String            @id @default(uuid())
   login              String            @unique
   name               String
   email              String?           @unique
+  userType           UserType          @default(MANAGER)
+  professionalArea   String?
+  professionalCouncil String?
+  professionalRegistration String?
+  professionalCouncilState String?
+  professionalSpecialty String?
   passwordHash       String
   status             UserStatus        @default(ACTIVE)
   mustChangePassword Boolean           @default(false)
@@ -50,6 +69,10 @@ model User {
   createdAnamneses   AnamnesisRecord[] @relation("AnamnesisCreatedBy")
   updatedAnamneses   AnamnesisRecord[] @relation("AnamnesisUpdatedBy")
   medicalRecordEntries MedicalRecordEntry[]
+  createdMedicalEvolutions MedicalEvolution[] @relation("MedicalEvolutionCreatedBy")
+  updatedMedicalEvolutions MedicalEvolution[] @relation("MedicalEvolutionUpdatedBy")
+  finalizedMedicalEvolutions MedicalEvolution[] @relation("MedicalEvolutionFinalizedBy")
+  canceledMedicalEvolutions MedicalEvolution[] @relation("MedicalEvolutionCanceledBy")
   emittedDocuments   ClinicalDocument[]
   auditLogs          AuditLog[]
 }
@@ -106,6 +129,7 @@ model Patient {
   updatedAt       DateTime          @updatedAt
   anamnesisRecord AnamnesisRecord[]
   medicalRecordEntries MedicalRecordEntry[]
+  medicalEvolutions MedicalEvolution[]
   clinicalDocuments ClinicalDocument[]
 }
 
@@ -203,6 +227,7 @@ model MedicalRecordEntry {
   id                String           @id @default(uuid())
   patientId         String
   anamnesisRecordId String?
+  medicalEvolutionId String?
   type              String
   title             String
   summary           String?
@@ -210,7 +235,37 @@ model MedicalRecordEntry {
   createdAt         DateTime         @default(now())
   patient           Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
   anamnesisRecord   AnamnesisRecord? @relation(fields: [anamnesisRecordId], references: [id], onDelete: SetNull)
+  medicalEvolution  MedicalEvolution? @relation(fields: [medicalEvolutionId], references: [id], onDelete: SetNull)
   createdBy         User?            @relation(fields: [createdById], references: [id])
+}
+
+model MedicalEvolution {
+  id                   String                 @id @default(uuid())
+  patientId            String
+  status               MedicalEvolutionStatus @default(DRAFT)
+  evolutionDate        DateTime               @default(now())
+  text                 String
+  professionalArea     String?
+  professionalName     String?
+  createdById          String?
+  updatedById          String?
+  finalizedById        String?
+  canceledById         String?
+  finalizedAt          DateTime?
+  canceledAt           DateTime?
+  cancelReason         String?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  patient              Patient                @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  createdBy            User?                  @relation("MedicalEvolutionCreatedBy", fields: [createdById], references: [id])
+  updatedBy            User?                  @relation("MedicalEvolutionUpdatedBy", fields: [updatedById], references: [id])
+  finalizedBy          User?                  @relation("MedicalEvolutionFinalizedBy", fields: [finalizedById], references: [id])
+  canceledBy           User?                  @relation("MedicalEvolutionCanceledBy", fields: [canceledById], references: [id])
+  medicalRecordEntries MedicalRecordEntry[]
+  clinicalDocuments    ClinicalDocument[]
+
+  @@index([patientId, evolutionDate])
+  @@index([status])
 }
 
 model ClinicalDocument {
@@ -221,11 +276,13 @@ model ClinicalDocument {
   contentHash       String
   metadataJson      String?
   patientId         String?
-  anamnesisRecordId String
+  anamnesisRecordId String?
+  medicalEvolutionId String?
   emittedById       String?
   emittedAt         DateTime         @default(now())
   patient           Patient?         @relation(fields: [patientId], references: [id], onDelete: SetNull)
-  anamnesisRecord   AnamnesisRecord  @relation(fields: [anamnesisRecordId], references: [id], onDelete: Cascade)
+  anamnesisRecord   AnamnesisRecord? @relation(fields: [anamnesisRecordId], references: [id], onDelete: Cascade)
+  medicalEvolution  MedicalEvolution? @relation(fields: [medicalEvolutionId], references: [id], onDelete: Cascade)
   emittedBy         User?            @relation(fields: [emittedById], references: [id])
 }
 

@@ -13,8 +13,8 @@ export class PatientsController {
 
   @Get()
   @RequirePermissions("patients.read")
-  list(@Query("search") search?: string) {
-    return this.patientsService.list(search);
+  list(@Query("search") search?: string, @Query("limit") limit?: string, @Query("offset") offset?: string) {
+    return this.patientsService.list(search, { limit, offset });
   }
 
   @Post()
@@ -25,7 +25,7 @@ export class PatientsController {
 
   @Get(":patientId/prontuario")
   @RequirePermissions("prontuario.read")
-  getMedicalRecord(@Param("patientId") patientId: string) {
-    return this.patientsService.getMedicalRecord(patientId);
+  getMedicalRecord(@Param("patientId") patientId: string, @Req() request: { user: AuthenticatedUser }, @Query("limit") limit?: string, @Query("offset") offset?: string) {
+    return this.patientsService.getMedicalRecord(patientId, request.user.permissions, { limit, offset });
   }
 }

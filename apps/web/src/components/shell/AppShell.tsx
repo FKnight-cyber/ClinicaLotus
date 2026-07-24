@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { LogOut } from "lucide-react";
+import { LogOut, UserCircle } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { ClinicLogo } from "@/components/brand/ClinicLogo";
 import { moduleItems } from "@/config/modules";
@@ -31,6 +31,16 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
         </div>
 
         <nav className="module-nav">
+          <div className="module-nav-group">
+            <Link
+              className={`module-link ${pathname === "/meu-perfil" ? "is-active" : ""}`}
+              href="/meu-perfil"
+              title="Editar meus dados de acesso"
+            >
+              <UserCircle aria-hidden="true" size={19} />
+              <span>Meu Perfil</span>
+            </Link>
+          </div>
           {visibleModules.map((module) => {
             const Icon = module.icon;
             const isActive = module.slug === activeSlug;
@@ -67,7 +77,7 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
             <h1>Anamnese clínica</h1>
           </div>
           <div className="operator-actions">
-            <Link className="operator-chip" href={user ? `/usuarios/${user.id}` : "/login"} title="Abrir detalhes do usuário">
+            <Link className="operator-chip" href="/meu-perfil" title="Abrir meu perfil">
               {user?.name ?? "Profissional logado"}
             </Link>
             <button className="icon-button" onClick={logout} title="Sair" type="button">
