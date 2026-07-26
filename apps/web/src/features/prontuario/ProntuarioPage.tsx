@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Eye, FilePenLine, Plus, Printer, Save, Search, UserRound, X, XCircle } from "lucide-react";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { downloadMedicalEvolutionPdf } from "./medicalEvolutionPdf";
-import { cancelMedicalEvolution, createMedicalEvolution, emitMedicalEvolutionPdfDocument, fetchMedicalEvolutions, fetchProntuarioPatients, finalizeMedicalEvolution, updateMedicalEvolution } from "./prontuarioStorage";
+import { cancelMedicalEvolution, createMedicalEvolution, emitMedicalEvolutionPdfDocument, fetchMedicalEvolution, fetchMedicalEvolutions, fetchProntuarioPatients, finalizeMedicalEvolution, updateMedicalEvolution } from "./prontuarioStorage";
 import { professionalAreaOptions } from "./prontuarioTypes";
 import type { MedicalEvolution, MedicalEvolutionPayload, PatientSummary, ProfessionalArea } from "./prontuarioTypes";
 
@@ -25,6 +25,7 @@ const emptyFormState: FormState = {
 
 const patientSearchLimit = 5;
 const evolutionsPageSize = 10;
+const selectedPatientStorageKey = "clinica.prontuario.selectedPatient";
 
 function formatPageSummary(total: number, offset: number, count: number, label: string) {
   if (total === 0) return `0 ${label}`;
@@ -92,6 +93,31 @@ function canUseProfileProfessionalName(userType?: string) {
   return userType === "DOCTOR" || userType === "NURSE";
 }
 
+function readStoredSelectedPatient() {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const storedPatient = window.localStorage.getItem(selectedPatientStorageKey);
+    if (!storedPatient) return null;
+    const patient = JSON.parse(storedPatient) as Partial<PatientSummary>;
+    return patient.id && patient.name ? patient as PatientSummary : null;
+  } catch {
+    window.localStorage.removeItem(selectedPatientStorageKey);
+    return null;
+  }
+}
+
+function writeStoredSelectedPatient(patient: PatientSummary | null) {
+  if (typeof window === "undefined") return;
+
+  if (!patient) {
+    window.localStorage.removeItem(selectedPatientStorageKey);
+    return;
+  }
+
+  window.localStorage.setItem(selectedPatientStorageKey, JSON.stringify(patient));
+}
+
 export function ProntuarioPage() {
   const { hasPermission, token, user } = useAuth();
   const canReadPatients = hasPermission("patients.read");
@@ -102,18 +128,19 @@ export function ProntuarioPage() {
   const canFinalizeEvolutions = hasPermission("medical_evolutions.finalize");
   const canCancelEvolutions = hasPermission("medical_evolutions.cancel");
   const canPrintEvolutions = hasPermission("medical_evolutions.print");
-  const [search, setSearch] = useState("");
+  const [initialSelectedPatient] = useState(() => readStoredSelectedPatient());
+  const [search, setSearch] = useState(initialSelectedPatient?.name ?? "");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [patients, setPatients] = useState<PatientSummary[]>([]);
-  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
-  const [selectedPatient, setSelectedPatient] = useState<PatientSummary | null>(null);
-  const selectedPatientIdRef = useRef<string | null>(null);
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(initialSelectedPatient?.id ?? null);
+  const [selectedPatient, setSelectedPatient] = useState<PatientSummary | null>(initialSelectedPatient);
+  const selectedPatientIdRef = useRef<string | null>(initialSelectedPatient?.id ?? null);
   const [evolutions, setEvolutions] = useState<MedicalEvolution[]>([]);
   const [evolutionsPatientId, setEvolutionsPatientId] = useState<string | null>(null);
   const [evolutionsTotal, setEvolutionsTotal] = useState(0);
   const [evolutionsPage, setEvolutionsPage] = useState(1);
   const [form, setForm] = useState<FormState>(emptyFormState);
-  const [message, setMessage] = useState("Selecione um paciente para visualizar as evoluções.");
+  const [message, setMessage] = useState(initialSelectedPatient ? "Carregando evoluções do paciente." : "Selecione um paciente para visualizar as evoluções.");
   const [evolutionMessage, setEvolutionMessage] = useState("Selecione um paciente para registrar evoluções.");
   const [patientListLoading, setPatientListLoading] = useState(false);
   const [evolutionsLoading, setEvolutionsLoading] = useState(false);
@@ -148,6 +175,7 @@ export function ProntuarioPage() {
     setEvolutionsPatientId(null);
     setEvolutionsPage(1);
     setMessage(patientId ? "Carregando evoluções do paciente." : "Selecione um paciente para visualizar as evoluções.");
+    writeStoredSelectedPatient(patient);
   }
 
   function setRecordsPage(nextPage: number | ((currentPage: number) => number)) {
@@ -318,8 +346,9 @@ export function ProntuarioPage() {
     setPrintingEvolutionId(evolution.id);
     try {
       setEvolutionMessage("Gerando PDF...");
+      const latestEvolution = await fetchMedicalEvolution(token, evolution.id);
       const document = await emitMedicalEvolutionPdfDocument(token, evolution.id);
-      await downloadMedicalEvolutionPdf(selectedPatient, evolution, document.code);
+      await downloadMedicalEvolutionPdf(selectedPatient, latestEvolution, document.code, user);
       setEvolutionMessage(`PDF ${document.code} gerado.`);
     } catch (error) {
       setEvolutionMessage(error instanceof Error ? error.message : "Não foi possível gerar o PDF da evolução.");

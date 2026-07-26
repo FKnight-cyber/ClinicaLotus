@@ -1,11 +1,19 @@
 import { jsPDF } from "jspdf";
 import { clinicLogoSvg } from "@/components/brand/clinicLogoSvg";
-import type { MedicalEvolution, MedicalEvolutionUser, PatientSummary } from "./prontuarioTypes";
+import type { MedicalEvolution, PatientSummary } from "./prontuarioTypes";
 
 const margin = 14;
 const pageWidth = 210;
 const pageHeight = 297;
 const contentWidth = pageWidth - margin * 2;
+
+type ProfessionalProfile = {
+  name?: string | null;
+  professionalCouncil?: string | null;
+  professionalRegistration?: string | null;
+  professionalCouncilState?: string | null;
+  professionalSpecialty?: string | null;
+};
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("pt-BR", {
@@ -25,11 +33,7 @@ function getSignatureText(evolution: MedicalEvolution) {
   return `Assinado pelo usuário ${evolution.finalizedBy.name} (${evolution.finalizedBy.login}) em ${formatDateTime(evolution.finalizedAt)}`;
 }
 
-function getResponsibleProfessional(evolution: MedicalEvolution) {
-  return evolution.finalizedBy ?? evolution.createdBy ?? evolution.updatedBy ?? null;
-}
-
-function getProfessionalCouncilText(user: MedicalEvolutionUser | null | undefined) {
+function getProfessionalCouncilText(user: ProfessionalProfile | null | undefined) {
   if (!user) return null;
 
   const council = user.professionalCouncil?.trim();
@@ -38,8 +42,7 @@ function getProfessionalCouncilText(user: MedicalEvolutionUser | null | undefine
   return [council, state].filter(Boolean).join("/");
 }
 
-function getProfessionalInfoRows(evolution: MedicalEvolution) {
-  const professional = getResponsibleProfessional(evolution);
+function getProfessionalInfoRows(professional: ProfessionalProfile | null | undefined) {
   const rows = [
     { label: "Conselho profissional", value: getProfessionalCouncilText(professional) },
     { label: "Número do registro", value: professional?.professionalRegistration?.trim() || null },
@@ -116,6 +119,14 @@ function drawInfoRow(doc: jsPDF, label: string, value: string, x: number, y: num
   doc.text(value || "-", x + 3, y + 12, { maxWidth: width - 6 });
 }
 
+function drawSectionTitle(doc: jsPDF, title: string, y: number) {
+  doc.setTextColor(23, 49, 43);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text(title, margin, y);
+  return y + 7;
+}
+
 function formatPatientDocuments(patient: PatientSummary) {
   const documents = [
     patient.cpf ? `CPF: ${patient.cpf}` : null,
@@ -140,20 +151,18 @@ function addFooters(doc: jsPDF, documentCode?: string) {
   }
 }
 
-export async function downloadMedicalEvolutionPdf(patient: PatientSummary, evolution: MedicalEvolution, documentCode?: string) {
+export async function downloadMedicalEvolutionPdf(patient: PatientSummary, evolution: MedicalEvolution, documentCode?: string, professionalProfile?: ProfessionalProfile | null) {
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
   await drawHeader(doc);
-  const professionalInfoRows = getProfessionalInfoRows(evolution);
+  const professionalInfoRows = getProfessionalInfoRows(professionalProfile);
 
   let y = margin + 44;
   const halfWidth = (contentWidth - 4) / 2;
-  drawInfoRow(doc, "Paciente", patient.name, margin, y, halfWidth);
-  drawInfoRow(doc, "Identificação", formatPatientDocuments(patient), margin + halfWidth + 4, y, halfWidth);
-  y += 23;
-  drawInfoRow(doc, "Data da evolução", formatDateTime(evolution.evolutionDate), margin, y, halfWidth);
+  const thirdWidth = (contentWidth - 8) / 3;
+
+  y = drawSectionTitle(doc, "Dados do profissional", y);
+  drawInfoRow(doc, "Profissional", evolution.professionalName || professionalProfile?.name || evolution.finalizedBy?.name || evolution.createdBy?.name || "-", margin, y, halfWidth);
   drawInfoRow(doc, "Área profissional", evolution.professionalArea || "-", margin + halfWidth + 4, y, halfWidth);
-  y += 23;
-  drawInfoRow(doc, "Profissional", evolution.professionalName || evolution.finalizedBy?.name || evolution.createdBy?.name || "-", margin, y, contentWidth);
   y += 23;
 
   for (let index = 0; index < professionalInfoRows.length; index += 2) {
@@ -167,6 +176,11 @@ export async function downloadMedicalEvolutionPdf(patient: PatientSummary, evolu
   }
 
   y += 2;
+  y = drawSectionTitle(doc, "Dados do paciente", y);
+  drawInfoRow(doc, "Data da evolução", formatDateTime(evolution.evolutionDate), margin, y, thirdWidth);
+  drawInfoRow(doc, "Nome do paciente", patient.name, margin + thirdWidth + 4, y, thirdWidth);
+  drawInfoRow(doc, "Identificação", formatPatientDocuments(patient), margin + (thirdWidth + 4) * 2, y, thirdWidth);
+  y += 23;
 
   doc.setTextColor(23, 49, 43);
   doc.setFont("helvetica", "bold");
@@ -178,12 +192,17 @@ export async function downloadMedicalEvolutionPdf(patient: PatientSummary, evolu
   doc.setFontSize(9.5);
   const lines = doc.splitTextToSize(evolution.text, contentWidth);
   for (const line of lines) {
-    if (y > pageHeight - 34) {
+    if (y > pageHeight - 58) {
       doc.addPage();
       y = margin;
     }
     doc.text(line, margin, y);
     y += 5;
+  }
+
+  if (y > pageHeight - 68) {
+    doc.addPage();
+    y = margin;
   }
 
   if (y > pageHeight - 45) {

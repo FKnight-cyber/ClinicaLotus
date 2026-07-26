@@ -117,6 +117,10 @@ export function fetchMedicalEvolutions(token: string, patientId: string, options
     .then((payload) => normalizePaginatedResponse(payload, options)));
 }
 
+export function fetchMedicalEvolution(token: string, evolutionId: string) {
+  return apiRequest<MedicalEvolution>(token, `/api/medical-evolutions/${evolutionId}`);
+}
+
 export async function createMedicalEvolution(token: string, patientId: string, payload: MedicalEvolutionPayload) {
   const evolution = await apiRequest<MedicalEvolution>(token, `/api/patients/${patientId}/evolutions`, {
     method: "POST",
