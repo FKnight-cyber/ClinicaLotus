@@ -956,17 +956,12 @@ a.operator-chip {
   font-size: 0.85rem;
 }
 
-.prontuario-layout {
+.prontuario-patient-selector {
+  border-bottom: 1px solid var(--line);
   display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-
-.prontuario-content-grid {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  padding: 18px 22px;
+  position: relative;
 }
 
 .prontuario-search {
@@ -1009,54 +1004,97 @@ a.operator-chip {
   outline: 0;
 }
 
-.prontuario-patient-list,
-.prontuario-timeline {
-  display: grid;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.prontuario-patient-list button {
+.prontuario-patient-options {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 16px 36px rgba(23, 49, 43, 0.13);
   display: grid;
   gap: 4px;
-  width: 100%;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
+  max-height: 280px;
+  overflow: auto;
+  padding: 6px;
+  width: min(720px, 100%);
+  z-index: 2;
+}
+
+.prontuario-patient-options button {
+  background: #ffffff;
+  border: 0;
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
   text-align: left;
-  cursor: pointer;
 }
 
-.prontuario-patient-list button.is-selected {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(15, 107, 90, 0.12);
+.prontuario-patient-options button:hover,
+.prontuario-patient-options button:focus-visible {
+  background: var(--surface-muted);
+  outline: 0;
 }
 
-.prontuario-patient-list span,
-.prontuario-entry span,
-.prontuario-entry small {
+.prontuario-selection-message {
+  background: var(--surface-muted);
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  display: grid;
+  gap: 5px;
+  padding: 18px 22px;
+}
+
+.prontuario-selection-message span {
+  color: var(--muted);
+}
+
+.prontuario-evolutions-toolbar > div:first-child,
+.prontuario-evolutions-toolbar .list-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.prontuario-evolutions-toolbar > div:first-child span,
+.prontuario-evolutions-toolbar .list-actions > span {
+  color: var(--muted);
+}
+
+.prontuario-evolutions-table {
+  min-width: 1120px;
+}
+
+.evolution-summary-cell {
+  color: var(--muted);
+  line-height: 1.45;
+  max-width: 340px;
+  white-space: normal;
+}
+
+.evolution-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 280px;
+}
+
+.table-action.is-primary {
+  background: var(--primary-soft);
+  border-color: #a8d7ca;
+}
+
+.table-action.is-danger {
+  color: var(--danger);
+}
+
+.table-status.is-canceled {
+  background: #fff1f1;
+  color: var(--danger);
+}
+
+.prontuario-patient-options span {
   color: var(--muted);
   font-size: 0.82rem;
-}
-
-.prontuario-entry {
-  display: grid;
-  gap: 6px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-}
-
-.prontuario-entry p {
-  margin: 0;
-  color: var(--muted);
-}
-
-.prontuario-entry.is-canceled {
-  border-color: #e6b3b3;
-  background: #fff8f8;
 }
 
 .prontuario-pagination {
@@ -1085,27 +1123,9 @@ a.operator-chip {
   width: 100%;
 }
 
-.prontuario-history-heading {
-  border-top: 1px solid var(--line);
-  margin-top: 4px;
-  padding-top: 14px;
-}
-
-.prontuario-history-list .prontuario-entry,
-.prontuario-history-list .evolution-card {
-  min-height: 0;
-}
-
-.evolution-workspace,
-.evolution-form,
-.evolution-list,
-.evolution-card {
+.evolution-form {
   display: grid;
   gap: 12px;
-}
-
-.evolution-workspace {
-  margin-top: 12px;
 }
 
 .evolution-form {
@@ -1151,9 +1171,7 @@ a.operator-chip {
   color: #87958f;
 }
 
-.evolution-actions,
-.evolution-card-actions,
-.evolution-card-meta {
+.evolution-actions {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
@@ -1166,63 +1184,10 @@ a.operator-chip {
   font-size: 0.88rem;
 }
 
-.evolution-actions > div,
-.evolution-card-actions {
+.evolution-actions > div {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-.evolution-card-actions {
-  justify-content: flex-start;
-}
-
-.evolution-card-meta {
-  justify-content: flex-start;
-}
-
-.evolution-card-meta strong {
-  margin-left: 4px;
-}
-
-.evolution-card {
-  background: #ffffff;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 14px;
-}
-
-.evolution-card.is-finalized {
-  border-color: #a8d7ca;
-}
-
-.evolution-card.is-canceled {
-  border-color: #e6b3b3;
-  background: #fff8f8;
-}
-
-.evolution-signature-badge {
-  background: var(--primary-soft);
-  border: 1px solid #a8d7ca;
-  border-radius: 999px;
-  color: var(--primary-strong);
-  display: inline-flex;
-  font-size: 0.76rem;
-  font-weight: 700;
-  justify-self: start;
-  padding: 5px 8px;
-}
-
-.evolution-card span,
-.evolution-card small {
-  color: var(--muted);
-  font-size: 0.82rem;
-}
-
-.evolution-card p {
-  color: var(--text);
-  margin: 0;
-  white-space: pre-wrap;
 }
 
 .evolution-cancel-reason {
@@ -2253,6 +2218,44 @@ td input {
   justify-content: flex-end;
 }
 
+.evolution-modal-panel {
+  max-height: calc(100vh - 44px);
+  max-width: 860px;
+  overflow: auto;
+  width: min(860px, 100%);
+}
+
+.evolution-modal-panel .confirmation-modal-heading {
+  align-items: flex-start;
+}
+
+.evolution-modal-panel .confirmation-modal-heading > div:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+
+.evolution-modal-panel .icon-button {
+  flex: 0 0 auto;
+}
+
+.evolution-modal-panel .evolution-form {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.evolution-modal-panel .evolution-form-grid {
+  grid-template-columns: minmax(170px, 0.8fr) minmax(220px, 1fr) minmax(220px, 1fr);
+}
+
+.evolution-modal-panel .evolution-actions {
+  align-items: flex-end;
+}
+
+.evolution-modal-panel .evolution-actions > div {
+  justify-content: flex-end;
+}
+
 .access-card p {
   color: var(--muted);
   margin: 0;
@@ -2713,11 +2716,6 @@ td input {
     grid-template-columns: 1fr;
   }
 
-  .prontuario-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .prontuario-content-grid,
   .evolution-form-grid {
     grid-template-columns: 1fr;
   }

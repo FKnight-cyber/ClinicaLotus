@@ -94,7 +94,7 @@ async function apiRequest<T>(token: string, path: string, options: RequestInit =
 
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throw new Error(payload?.message ?? "Nao foi possivel concluir a operacao.");
+    throw new Error(payload?.message ?? "Não foi possível concluir a operação.");
   }
 
   return response.json() as Promise<T>;

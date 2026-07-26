@@ -29,7 +29,7 @@ export default function LoginPage() {
     try {
       await login(loginValue, password);
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "Nao foi possivel entrar.");
+      setError(caughtError instanceof Error ? caughtError.message : "Não foi possível entrar.");
     } finally {
       setIsSubmitting(false);
     }
@@ -50,7 +50,7 @@ export default function LoginPage() {
 
         <form className="login-form" onSubmit={handleSubmit}>
           <label>
-            <span>Usuario</span>
+            <span>Usuário</span>
             <input
               autoComplete="username"
               onChange={(event) => setLoginValue(event.target.value)}

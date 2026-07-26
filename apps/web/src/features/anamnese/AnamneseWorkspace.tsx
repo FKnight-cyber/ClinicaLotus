@@ -581,7 +581,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
       })
       .catch((error) => {
         if (!isCurrent) return;
-        setMessage(error instanceof Error ? error.message : "Nao foi possivel carregar a anamnese.");
+        setMessage(error instanceof Error ? error.message : "Não foi possível carregar a anamnese.");
       });
 
     return () => {
@@ -611,6 +611,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
 
   useEffect(() => {
     if (!token || !canReadProntuario || !currentRecord?.patientId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMedicalRecordEntries([]);
       return;
     }
@@ -657,7 +658,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
         })
         .catch((error) => {
           if (autosaveSequenceRef.current !== sequence) return;
-          setMessage(error instanceof Error ? error.message : "Nao foi possivel salvar automaticamente.");
+          setMessage(error instanceof Error ? error.message : "Não foi possível salvar automaticamente.");
         });
     }, 800);
 
@@ -845,15 +846,15 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
 
   async function handleDownloadPdf() {
     if (!token) return;
-    setMessage("Registrando documento PDF...");
+    setMessage("Gerando PDF...");
     const document = await emitAnamnesePdfDocument(token, loadedRecord.id);
     await downloadAnamnesePdf(loadedRecord, effectiveTemplates);
-    setMessage(`PDF ${document.code} registrado. Hash ${document.contentHash.slice(0, 12)}...`);
+    setMessage(`PDF ${document.code} gerado.`);
   }
 
   async function handleDownloadTemplatePdf() {
     if (!token || !isActiveTemplateCompleted) return;
-    setMessage(`Registrando PDF da ficha ${activeTemplate.shortTitle}...`);
+    setMessage(`Gerando PDF da ficha ${activeTemplate.shortTitle}...`);
     const document = await emitAnamneseTemplatePdfDocument(token, loadedRecord.id, activeTemplate.id);
     await downloadAnamnesePdf(loadedRecord, effectiveTemplates, {
       templateId: activeTemplate.id,
@@ -861,7 +862,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
       summaryStatus: `Documento parcial - ${activeTemplate.shortTitle} concluída`,
       fileNameSuffix: activeTemplate.id
     });
-    setMessage(`PDF parcial ${document.code} registrado. Hash ${document.contentHash.slice(0, 12)}...`);
+    setMessage(`PDF parcial ${document.code} gerado.`);
   }
 
   function addCustomQuestion() {
@@ -1276,7 +1277,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
           <div>
             <span className="eyebrow">Paciente e prontuário</span>
             <h3>{selectedPatient ? selectedPatient.name : "Sem paciente vinculado"}</h3>
-            <p>{selectedPatient ? `${medicalRecordEntries.length} evento(s) no prontuario` : "Vincule um paciente para registrar a anamnese no prontuario ao finalizar."}</p>
+            <p>{selectedPatient ? `${medicalRecordEntries.length} evento(s) no prontuário` : "Vincule um paciente para registrar a anamnese no prontuário ao finalizar."}</p>
           </div>
           <div className="patient-link-fields">
             <label className="patient-link-field is-search">

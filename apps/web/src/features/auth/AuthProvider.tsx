@@ -49,7 +49,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}) {
 
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throw new Error(payload?.message ?? "Nao foi possivel concluir a operacao.");
+    throw new Error(payload?.message ?? "Não foi possível concluir a operação.");
   }
 
   return response.json() as Promise<T>;
@@ -78,6 +78,7 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
   useEffect(() => {
     const storedSession = localStorage.getItem(AUTH_STORAGE_KEY);
     if (!storedSession) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStatus("anonymous");
       return;
     }
@@ -143,7 +144,7 @@ export function AuthGate({ children }: Readonly<{ children: React.ReactNode }>) 
   }
 
   if (status !== "authenticated") {
-    return <div className="loading-panel auth-loading">Carregando sessao...</div>;
+    return <div className="loading-panel auth-loading">Carregando sessão...</div>;
   }
 
   return children;

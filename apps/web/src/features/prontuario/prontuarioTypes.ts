@@ -19,6 +19,10 @@ export type MedicalEvolutionUser = {
   id: string;
   name: string;
   login: string;
+  professionalCouncil?: string | null;
+  professionalRegistration?: string | null;
+  professionalCouncilState?: string | null;
+  professionalSpecialty?: string | null;
 };
 
 export type MedicalEvolution = {

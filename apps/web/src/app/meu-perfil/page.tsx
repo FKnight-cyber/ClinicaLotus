@@ -62,7 +62,7 @@ async function updateProfile(token: string, form: ProfileForm) {
 
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throw new Error(payload?.message ?? "Nao foi possivel atualizar o perfil.");
+    throw new Error(payload?.message ?? "Não foi possível atualizar o perfil.");
   }
 
   return response.json();
@@ -77,6 +77,7 @@ export default function MeuPerfilPage() {
 
   useEffect(() => {
     if (!user) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm({
       login: user.login,
       name: user.name,
@@ -103,7 +104,7 @@ export default function MeuPerfilPage() {
       setForm((currentForm) => ({ ...currentForm, password: "" }));
       setMessage("Perfil atualizado.");
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "Nao foi possivel atualizar o perfil.");
+      setError(caughtError instanceof Error ? caughtError.message : "Não foi possível atualizar o perfil.");
     } finally {
       setIsSaving(false);
     }
@@ -128,7 +129,7 @@ export default function MeuPerfilPage() {
           <section className="plain-panel">
             <h3>Dados do cadastro</h3>
             <form className="access-form" onSubmit={handleSubmit}>
-              <label><span>Usuario</span><input autoComplete="username" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, login: event.target.value }))} required value={form.login} /></label>
+              <label><span>Usuário</span><input autoComplete="username" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, login: event.target.value }))} required value={form.login} /></label>
               <label><span>Nome completo</span><input autoComplete="name" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required value={form.name} /></label>
               <label><span>Email</span><input autoComplete="email" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} type="email" value={form.email} /></label>
               {shouldShowProfessionalArea(user?.userType) ? <label><span>Área profissional</span><select disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, professionalArea: event.target.value }))} value={form.professionalArea}>

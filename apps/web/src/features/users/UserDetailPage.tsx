@@ -59,7 +59,7 @@ async function apiRequest<T>(token: string, path: string, options: RequestInit =
 
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throw new Error(payload?.message ?? "Nao foi possivel atualizar o usuario.");
+    throw new Error(payload?.message ?? "Não foi possível atualizar o usuário.");
   }
 
   return response.json() as Promise<T>;
@@ -124,11 +124,11 @@ export function UserDetailPage({ userId }: { userId: string }) {
       }
 
       if (!isCurrent) return;
-      setMessage("Voce nao possui permissao para visualizar este usuario.");
+      setMessage("Você não possui permissão para visualizar este usuário.");
       setIsLoading(false);
     }).catch((error) => {
       if (!isCurrent) return;
-      setMessage(error instanceof Error ? error.message : "Nao foi possivel carregar o usuario.");
+      setMessage(error instanceof Error ? error.message : "Não foi possível carregar o usuário.");
       setIsLoading(false);
     });
 
@@ -168,7 +168,7 @@ export function UserDetailPage({ userId }: { userId: string }) {
       setDraft(nextDraft);
     }
 
-    setMessage("Dados do usuario atualizados.");
+    setMessage("Dados do usuário atualizados.");
   };
 
   const handleSaveStatus = async (nextStatus = statusDraft) => {
@@ -179,7 +179,7 @@ export function UserDetailPage({ userId }: { userId: string }) {
     });
     setTargetUser(updatedUser);
     setStatusDraft(updatedUser.status);
-    setMessage(nextStatus === "ACTIVE" ? "Usuario aprovado e liberado para login." : "Status do usuario atualizado.");
+    setMessage(nextStatus === "ACTIVE" ? "Usuário aprovado e liberado para login." : "Status do usuário atualizado.");
   };
 
   const handleSaveGroups = async () => {
@@ -193,23 +193,23 @@ export function UserDetailPage({ userId }: { userId: string }) {
   };
 
   if (isLoading) {
-    return <div className="loading-panel">Carregando usuario...</div>;
+    return <div className="loading-panel">Carregando usuário...</div>;
   }
 
   if (!targetUser) {
-    return <div className="loading-panel">{message ?? "Usuario nao encontrado."}</div>;
+    return <div className="loading-panel">{message ?? "Usuário não encontrado."}</div>;
   }
 
   return (
     <section className="user-detail-page">
       <div className="list-header">
         <div>
-          <span className="eyebrow">Usuario</span>
+          <span className="eyebrow">Usuário</span>
           <h2>{targetUser.name}</h2>
           <p>{targetUser.login} {targetUser.email ? `- ${targetUser.email}` : ""}</p>
         </div>
         <div className="detail-heading-actions">
-          {canReadUsers ? <Link className="back-link" href="/modulos/controle-acesso/gerenciar-usuarios"><ArrowLeft size={16} />Gerenciar usuarios</Link> : null}
+          {canReadUsers ? <Link className="back-link" href="/modulos/controle-acesso/gerenciar-usuarios"><ArrowLeft size={16} />Gerenciar usuários</Link> : null}
           {canManageUsers ? (
             <span className={`status-badge ${targetUser.status === "ACTIVE" ? "is-finalized" : ""}`}>
               <UserCheck aria-hidden="true" size={16} />{targetUser.status}
@@ -222,7 +222,7 @@ export function UserDetailPage({ userId }: { userId: string }) {
 
       <div className="access-grid">
         <section className="plain-panel">
-          <h3>Dados do usuario</h3>
+          <h3>Dados do usuário</h3>
           <form className="access-form" onSubmit={handleSaveProfile}>
             <label><span>Login</span><input disabled value={targetUser.login} /></label>
             <label><span>Nome</span><input name="name" onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} required value={draft.name} /></label>
@@ -255,7 +255,7 @@ export function UserDetailPage({ userId }: { userId: string }) {
           <div className="access-card-heading">
             <div>
               <h3>Grupos e funcionalidades</h3>
-              <p>Os acessos efetivos do usuario sao definidos pelos grupos vinculados aqui.</p>
+              <p>Os acessos efetivos do usuário são definidos pelos grupos vinculados aqui.</p>
             </div>
             <button className="primary-button" onClick={handleSaveGroups} type="button"><ShieldCheck aria-hidden="true" size={17} />Salvar acessos</button>
           </div>

@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, FilePenLine, Plus, Printer, Save, Search, UserRound, XCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Eye, FilePenLine, Plus, Printer, Save, Search, UserRound, X, XCircle } from "lucide-react";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { downloadMedicalEvolutionPdf } from "./medicalEvolutionPdf";
-import { cancelMedicalEvolution, createMedicalEvolution, emitMedicalEvolutionPdfDocument, fetchMedicalEvolutions, fetchProntuarioPatients, fetchProntuarioTimeline, finalizeMedicalEvolution, updateMedicalEvolution } from "./prontuarioStorage";
+import { cancelMedicalEvolution, createMedicalEvolution, emitMedicalEvolutionPdfDocument, fetchMedicalEvolutions, fetchProntuarioPatients, finalizeMedicalEvolution, updateMedicalEvolution } from "./prontuarioStorage";
 import { professionalAreaOptions } from "./prontuarioTypes";
-import type { MedicalEvolution, MedicalEvolutionPayload, MedicalRecordEntry, PatientSummary, ProfessionalArea } from "./prontuarioTypes";
+import type { MedicalEvolution, MedicalEvolutionPayload, PatientSummary, ProfessionalArea } from "./prontuarioTypes";
 
 type FormState = {
   id?: string;
@@ -16,10 +16,6 @@ type FormState = {
   professionalName: string;
 };
 
-type CombinedRecord =
-  | { kind: "evolution"; id: string; date: string; evolution: MedicalEvolution }
-  | { kind: "entry"; id: string; date: string; entry: MedicalRecordEntry };
-
 const emptyFormState: FormState = {
   text: "",
   evolutionDate: "",
@@ -27,11 +23,16 @@ const emptyFormState: FormState = {
   professionalName: ""
 };
 
-const pageSize = 5;
+const patientSearchLimit = 5;
+const evolutionsPageSize = 10;
 
 function formatPageSummary(total: number, offset: number, count: number, label: string) {
   if (total === 0) return `0 ${label}`;
   return `${offset + 1}-${offset + count} de ${total} ${label}`;
+}
+
+function formatEvolutionCount(count: number) {
+  return `${count} ${count === 1 ? "evolução" : "evoluções"}`;
 }
 
 function formatDateTime(value: string) {
@@ -83,7 +84,11 @@ function getSimpleSignatureLabel(evolution: MedicalEvolution) {
   return `Assinado por ${evolution.finalizedBy.name} em ${formatDateTime(evolution.finalizedAt)}`;
 }
 
-function canUseProfileProfessionalData(userType?: string) {
+function getProfileProfessionalArea(professionalArea?: string | null) {
+  return professionalAreaOptions.includes(professionalArea as ProfessionalArea) ? professionalArea as ProfessionalArea : "";
+}
+
+function canUseProfileProfessionalName(userType?: string) {
   return userType === "DOCTOR" || userType === "NURSE";
 }
 
@@ -100,77 +105,52 @@ export function ProntuarioPage() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [patients, setPatients] = useState<PatientSummary[]>([]);
-  const [patientTotal, setPatientTotal] = useState(0);
-  const [patientPage, setPatientPage] = useState(1);
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
-  const [entries, setEntries] = useState<MedicalRecordEntry[]>([]);
-  const [entriesPatientId, setEntriesPatientId] = useState<string | null>(null);
-  const [entriesTotal, setEntriesTotal] = useState(0);
-  const [timelinePage, setTimelinePage] = useState(1);
+  const [selectedPatient, setSelectedPatient] = useState<PatientSummary | null>(null);
+  const selectedPatientIdRef = useRef<string | null>(null);
   const [evolutions, setEvolutions] = useState<MedicalEvolution[]>([]);
   const [evolutionsPatientId, setEvolutionsPatientId] = useState<string | null>(null);
   const [evolutionsTotal, setEvolutionsTotal] = useState(0);
   const [evolutionsPage, setEvolutionsPage] = useState(1);
   const [form, setForm] = useState<FormState>(emptyFormState);
-  const [message, setMessage] = useState("Busque um paciente para abrir o prontuario.");
-  const [evolutionMessage, setEvolutionMessage] = useState("Selecione um paciente para registrar evolucoes.");
+  const [message, setMessage] = useState("Selecione um paciente para visualizar as evoluções.");
+  const [evolutionMessage, setEvolutionMessage] = useState("Selecione um paciente para registrar evoluções.");
   const [patientListLoading, setPatientListLoading] = useState(false);
-  const [timelineLoading, setTimelineLoading] = useState(false);
   const [evolutionsLoading, setEvolutionsLoading] = useState(false);
   const [savingEvolution, setSavingEvolution] = useState(false);
+  const [isEvolutionModalOpen, setIsEvolutionModalOpen] = useState(false);
   const [finalizingEvolutionId, setFinalizingEvolutionId] = useState<string | null>(null);
   const [cancelingEvolutionId, setCancelingEvolutionId] = useState<string | null>(null);
   const [printingEvolutionId, setPrintingEvolutionId] = useState<string | null>(null);
   const [pendingCancelEvolutionId, setPendingCancelEvolutionId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState("");
 
-  const patientOffset = (patientPage - 1) * pageSize;
-  const timelineOffset = (timelinePage - 1) * pageSize;
-  const evolutionsOffset = (evolutionsPage - 1) * pageSize;
-  const visibleEntries = useMemo(() => entriesPatientId === selectedPatientId ? entries : [], [entries, entriesPatientId, selectedPatientId]);
+  const evolutionsOffset = (evolutionsPage - 1) * evolutionsPageSize;
   const visibleEvolutions = useMemo(() => evolutionsPatientId === selectedPatientId ? evolutions : [], [evolutions, evolutionsPatientId, selectedPatientId]);
-  const combinedRecords = useMemo<CombinedRecord[]>(() => {
-    const visibleEvolutionIds = new Set(visibleEvolutions.map((evolution) => evolution.id));
-    const evolutionRecords = visibleEvolutions.map((evolution) => ({
-      kind: "evolution" as const,
-      id: `evolution-${evolution.id}`,
-      date: evolution.evolutionDate,
-      evolution
-    }));
-    const entryRecords = visibleEntries
-      .filter((entry) => !entry.medicalEvolution?.id || !visibleEvolutionIds.has(entry.medicalEvolution.id))
-      .map((entry) => ({
-        kind: "entry" as const,
-        id: `entry-${entry.id}`,
-        date: entry.createdAt,
-        entry
-      }));
-
-    return [...evolutionRecords, ...entryRecords]
-      .sort((leftRecord, rightRecord) => new Date(rightRecord.date).getTime() - new Date(leftRecord.date).getTime());
-  }, [visibleEntries, visibleEvolutions]);
-  const recordsTotal = Math.max(entriesTotal, evolutionsTotal);
-  const recordsLoading = timelineLoading || evolutionsLoading;
+  const recordsTotal = evolutionsTotal;
+  const recordsLoading = evolutionsLoading;
+  const shouldShowPatientOptions = Boolean(search.trim() && !selectedPatient && (patientListLoading || patients.length > 0 || debouncedSearch.trim()));
 
   useEffect(() => {
     const timeout = setTimeout(() => setDebouncedSearch(search), 350);
     return () => clearTimeout(timeout);
   }, [search]);
 
-  function selectPatient(patientId: string | null) {
+  function selectPatient(patient: PatientSummary | null) {
+    const patientId = patient?.id ?? null;
+    selectedPatientIdRef.current = patientId;
     setSelectedPatientId(patientId);
+    setSelectedPatient(patient);
     setForm(emptyFormState);
-    setEntriesPatientId(null);
+    setIsEvolutionModalOpen(false);
+    setPendingCancelEvolutionId(null);
+    setCancelReason("");
     setEvolutionsPatientId(null);
-    setTimelinePage(1);
     setEvolutionsPage(1);
+    setMessage(patientId ? "Carregando evoluções do paciente." : "Selecione um paciente para visualizar as evoluções.");
   }
 
   function setRecordsPage(nextPage: number | ((currentPage: number) => number)) {
-    setTimelinePage((currentPage) => {
-      const resolvedPage = typeof nextPage === "function" ? nextPage(currentPage) : nextPage;
-      return Math.max(1, resolvedPage);
-    });
     setEvolutionsPage((currentPage) => {
       const resolvedPage = typeof nextPage === "function" ? nextPage(currentPage) : nextPage;
       return Math.max(1, resolvedPage);
@@ -179,23 +159,20 @@ export function ProntuarioPage() {
 
   useEffect(() => {
     if (!token || !canReadPatients) return;
+    if (!debouncedSearch.trim()) {
+      return;
+    }
     let isCurrent = true;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPatientListLoading(true);
 
-    fetchProntuarioPatients(token, debouncedSearch, { limit: pageSize, offset: patientOffset })
+    fetchProntuarioPatients(token, debouncedSearch, { limit: patientSearchLimit, offset: 0 })
       .then((response) => {
         if (!isCurrent) return;
-        const nextPatients = response.items;
-        setPatients(nextPatients);
-        setPatientTotal(response.total);
-        const nextSelectedPatientId = selectedPatientId && nextPatients.some((patient) => patient.id === selectedPatientId) ? selectedPatientId : nextPatients[0]?.id ?? null;
-        if (nextSelectedPatientId !== selectedPatientId) {
-          selectPatient(nextSelectedPatientId);
-        }
+        setPatients(response.items);
       })
       .catch((error) => {
-        if (isCurrent) setMessage(error instanceof Error ? error.message : "Nao foi possivel carregar pacientes.");
+        if (isCurrent) setMessage(error instanceof Error ? error.message : "Não foi possível carregar pacientes.");
       })
       .finally(() => {
         if (isCurrent) setPatientListLoading(false);
@@ -204,36 +181,7 @@ export function ProntuarioPage() {
     return () => {
       isCurrent = false;
     };
-  }, [canReadPatients, debouncedSearch, patientOffset, selectedPatientId, token]);
-
-  useEffect(() => {
-    if (!token || !selectedPatientId || !canReadProntuario) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setEntries([]);
-      return;
-    }
-    let isCurrent = true;
-    setTimelineLoading(true);
-
-    fetchProntuarioTimeline(token, selectedPatientId, { limit: pageSize, offset: timelineOffset })
-      .then((response) => {
-        if (!isCurrent) return;
-        setEntries(response.items);
-        setEntriesPatientId(selectedPatientId);
-        setEntriesTotal(response.total);
-        setMessage(response.total > 0 ? "Eventos carregados do prontuario." : "Paciente sem eventos no prontuario.");
-      })
-      .catch((error) => {
-        if (isCurrent) setMessage(error instanceof Error ? error.message : "Nao foi possivel carregar o prontuario.");
-      })
-      .finally(() => {
-        if (isCurrent) setTimelineLoading(false);
-      });
-
-    return () => {
-      isCurrent = false;
-    };
-  }, [canReadProntuario, selectedPatientId, timelineOffset, token]);
+  }, [canReadPatients, debouncedSearch, token]);
 
   useEffect(() => {
     if (!token || !selectedPatientId || !canReadEvolutions) {
@@ -244,16 +192,16 @@ export function ProntuarioPage() {
     let isCurrent = true;
     setEvolutionsLoading(true);
 
-    fetchMedicalEvolutions(token, selectedPatientId, { limit: pageSize, offset: evolutionsOffset })
+    fetchMedicalEvolutions(token, selectedPatientId, { limit: evolutionsPageSize, offset: evolutionsOffset })
       .then((response) => {
         if (!isCurrent) return;
         setEvolutions(response.items);
         setEvolutionsPatientId(selectedPatientId);
         setEvolutionsTotal(response.total);
-        setEvolutionMessage(response.total > 0 ? "Evolucoes carregadas." : "Paciente sem evolucoes registradas.");
+        setEvolutionMessage(response.total > 0 ? "Evoluções carregadas." : "Paciente sem evoluções registradas.");
       })
       .catch((error) => {
-        if (isCurrent) setEvolutionMessage(error instanceof Error ? error.message : "Nao foi possivel carregar evolucoes.");
+        if (isCurrent) setEvolutionMessage(error instanceof Error ? error.message : "Não foi possível carregar evoluções.");
       })
       .finally(() => {
         if (isCurrent) setEvolutionsLoading(false);
@@ -264,32 +212,33 @@ export function ProntuarioPage() {
     };
   }, [canReadEvolutions, evolutionsOffset, selectedPatientId, token]);
 
-  const selectedPatient = useMemo(() => patients.find((patient) => patient.id === selectedPatientId) ?? null, [patients, selectedPatientId]);
   const activeEvolution = useMemo(() => form.id ? visibleEvolutions.find((evolution) => evolution.id === form.id) ?? null : null, [form.id, visibleEvolutions]);
+  const isLockedEvolution = Boolean(activeEvolution && activeEvolution.status !== "draft");
+  const isEvolutionFormDisabled = !selectedPatient || savingEvolution || isLockedEvolution;
+  const hasEvolutionFormContent = Boolean(form.id || form.text.trim() || form.evolutionDate || form.professionalArea || form.professionalName.trim());
+  const canSaveEvolution = Boolean(selectedPatient && form.text.trim() && form.professionalArea && (form.id ? canUpdateEvolutions : canCreateEvolutions) && !savingEvolution && !isLockedEvolution);
+  const evolutionModalTitle = activeEvolution?.status === "draft" || !form.id ? form.id ? "Editar evolução" : "Nova evolução" : "Visualizar evolução";
 
   async function refreshSelectedPatientData(patientId = selectedPatientId) {
     if (!token || !patientId) return;
-    const [nextEntries, nextEvolutions] = await Promise.all([
-      canReadProntuario ? fetchProntuarioTimeline(token, patientId, { limit: pageSize, offset: timelineOffset }) : Promise.resolve({ items: [], total: 0, limit: pageSize, offset: timelineOffset }),
-      canReadEvolutions ? fetchMedicalEvolutions(token, patientId, { limit: pageSize, offset: evolutionsOffset }) : Promise.resolve({ items: [], total: 0, limit: pageSize, offset: evolutionsOffset })
-    ]);
-    setEntries(nextEntries.items);
-    setEntriesPatientId(patientId);
-    setEntriesTotal(nextEntries.total);
+    const nextEvolutions = canReadEvolutions
+      ? await fetchMedicalEvolutions(token, patientId, { limit: evolutionsPageSize, offset: evolutionsOffset })
+      : { items: [], total: 0, limit: evolutionsPageSize, offset: evolutionsOffset };
     setEvolutions(nextEvolutions.items);
     setEvolutionsPatientId(patientId);
     setEvolutionsTotal(nextEvolutions.total);
   }
 
   function startNewEvolution() {
-    const shouldUseProfile = canUseProfileProfessionalData(user?.userType);
+    const profileProfessionalArea = getProfileProfessionalArea(user?.professionalArea);
     setForm({
       ...emptyFormState,
       evolutionDate: toDateTimeLocalValue(new Date().toISOString()),
-      professionalArea: shouldUseProfile && professionalAreaOptions.includes(user?.professionalArea as ProfessionalArea) ? user?.professionalArea as ProfessionalArea : "",
-      professionalName: shouldUseProfile ? user?.name ?? "" : ""
+      professionalArea: profileProfessionalArea,
+      professionalName: profileProfessionalArea || canUseProfileProfessionalName(user?.userType) ? user?.name ?? "" : ""
     });
-    setEvolutionMessage("Novo rascunho de evolucao.");
+    setIsEvolutionModalOpen(true);
+    setEvolutionMessage("Novo rascunho de evolução.");
   }
 
   function editEvolution(evolution: MedicalEvolution) {
@@ -300,7 +249,8 @@ export function ProntuarioPage() {
       professionalArea: evolution.professionalArea ?? "",
       professionalName: evolution.professionalName ?? ""
     });
-    setEvolutionMessage(`Editando evolucao ${statusLabel(evolution.status).toLowerCase()}.`);
+    setIsEvolutionModalOpen(true);
+    setEvolutionMessage(`Editando evolução ${statusLabel(evolution.status).toLowerCase()}.`);
   }
 
   async function saveEvolution() {
@@ -318,9 +268,11 @@ export function ProntuarioPage() {
         professionalName: savedEvolution.professionalName ?? ""
       });
       await refreshSelectedPatientData(selectedPatientId);
+      setIsEvolutionModalOpen(false);
+      setForm(emptyFormState);
       setEvolutionMessage("Rascunho salvo.");
     } catch (error) {
-      setEvolutionMessage(error instanceof Error ? error.message : "Nao foi possivel salvar a evolucao.");
+      setEvolutionMessage(error instanceof Error ? error.message : "Não foi possível salvar a evolução.");
     } finally {
       setSavingEvolution(false);
     }
@@ -332,10 +284,11 @@ export function ProntuarioPage() {
     try {
       await finalizeMedicalEvolution(token, evolution);
       setForm(emptyFormState);
+      setIsEvolutionModalOpen(false);
       await refreshSelectedPatientData(evolution.patientId);
-      setEvolutionMessage("Evolucao finalizada e enviada para a timeline.");
+      setEvolutionMessage("Evolução finalizada.");
     } catch (error) {
-      setEvolutionMessage(error instanceof Error ? error.message : "Nao foi possivel finalizar a evolucao.");
+      setEvolutionMessage(error instanceof Error ? error.message : "Não foi possível finalizar a evolução.");
     } finally {
       setFinalizingEvolutionId(null);
     }
@@ -352,9 +305,9 @@ export function ProntuarioPage() {
       setPendingCancelEvolutionId(null);
       setCancelReason("");
       await refreshSelectedPatientData(evolution.patientId);
-      setEvolutionMessage("Evolucao cancelada.");
+      setEvolutionMessage("Evolução cancelada.");
     } catch (error) {
-      setEvolutionMessage(error instanceof Error ? error.message : "Nao foi possivel cancelar a evolucao.");
+      setEvolutionMessage(error instanceof Error ? error.message : "Não foi possível cancelar a evolução.");
     } finally {
       setCancelingEvolutionId(null);
     }
@@ -364,12 +317,12 @@ export function ProntuarioPage() {
     if (!token || !selectedPatient) return;
     setPrintingEvolutionId(evolution.id);
     try {
-      setEvolutionMessage("Registrando documento PDF...");
+      setEvolutionMessage("Gerando PDF...");
       const document = await emitMedicalEvolutionPdfDocument(token, evolution.id);
       await downloadMedicalEvolutionPdf(selectedPatient, evolution, document.code);
-      setEvolutionMessage(`PDF ${document.code} registrado. Hash ${document.contentHash.slice(0, 12)}...`);
+      setEvolutionMessage(`PDF ${document.code} gerado.`);
     } catch (error) {
-      setEvolutionMessage(error instanceof Error ? error.message : "Nao foi possivel gerar o PDF da evolucao.");
+      setEvolutionMessage(error instanceof Error ? error.message : "Não foi possível gerar o PDF da evolução.");
     } finally {
       setPrintingEvolutionId(null);
     }
@@ -381,9 +334,9 @@ export function ProntuarioPage() {
         <div className="page-intro">
           <div className="intro-icon" aria-hidden="true"><UserRound size={28} /></div>
           <div>
-            <span className="eyebrow">Prontuario</span>
-            <h2>Permissao necessaria</h2>
-            <p>Seu usuario nao possui permissao para visualizar pacientes e prontuario.</p>
+            <span className="eyebrow">Prontuário</span>
+            <h2>Permissão necessária</h2>
+            <p>Seu usuário não possui permissão para visualizar pacientes e prontuário.</p>
           </div>
         </div>
       </section>
@@ -391,113 +344,90 @@ export function ProntuarioPage() {
   }
 
   return (
-    <section className="prontuario-page">
+    <section className="list-page prontuario-page">
       <div className="list-header">
         <div>
-          <span className="eyebrow">Prontuario</span>
-          <h2>Timeline clinica do paciente</h2>
-          <p>Consulte eventos clinicos e registre evolucoes por area profissional.</p>
+          <span className="eyebrow">Prontuário</span>
+          <h2>Evoluções do paciente</h2>
+          <p>Busque um paciente para consultar rascunhos, evoluções finalizadas e registros cancelados.</p>
         </div>
-        <span className="status-badge"><CalendarClock aria-hidden="true" size={17} />{recordsTotal} registro(s)</span>
+        <span className="status-badge"><CalendarClock aria-hidden="true" size={17} />{selectedPatient ? formatEvolutionCount(recordsTotal) : "Paciente não selecionado"}</span>
       </div>
 
-      <div className="prontuario-layout">
-        <aside className="plain-panel prontuario-patients-panel">
-          <label className="prontuario-search">
-            <span>Buscar paciente</span>
-            <div>
-              <Search aria-hidden="true" size={16} />
-              <input onChange={(event) => { setSearch(event.target.value); setPatientPage(1); }} placeholder="Nome, CPF ou RG" value={search} />
-            </div>
-          </label>
-          <div className="prontuario-patient-list" aria-label="Pacientes">
+      <section className="prontuario-patient-selector" aria-label="Seleção de paciente">
+        <label className="prontuario-search">
+          <span>Paciente</span>
+          <div>
+            <Search aria-hidden="true" size={16} />
+            <input onChange={(event) => { setSearch(event.target.value); setPatients([]); selectPatient(null); }} placeholder="Digite o nome, CPF ou RG do paciente" value={search} />
+          </div>
+        </label>
+
+        {shouldShowPatientOptions ? (
+          <div className="prontuario-patient-options" aria-label="Opções de pacientes">
             {patients.map((patient) => (
-              <button className={patient.id === selectedPatientId ? "is-selected" : ""} key={patient.id} onClick={() => selectPatient(patient.id)} type="button">
+              <button key={patient.id} onClick={() => { setSearch(patient.name); setPatients([]); selectPatient(patient); }} type="button">
                 <strong>{patient.name}</strong>
                 <span>{formatPatientDocuments(patient)}</span>
               </button>
             ))}
             {patientListLoading ? <div className="empty-state">Carregando pacientes...</div> : null}
-            {patients.length === 0 ? <div className="empty-state">Nenhum paciente encontrado.</div> : null}
+            {patients.length === 0 && !patientListLoading ? <div className="empty-state">Nenhum paciente encontrado.</div> : null}
           </div>
-          <div className="pagination-bar prontuario-pagination" aria-label="Paginação de pacientes">
-            <span>{patientListLoading ? "Atualizando pacientes..." : formatPageSummary(patientTotal, patientOffset, patients.length, "paciente(s)")}</span>
+        ) : null}
+      </section>
+
+      {!selectedPatient ? (
+        <div className="prontuario-selection-message">
+          <strong>Selecione um paciente para visualizar as evoluções.</strong>
+          <span>{message}</span>
+        </div>
+      ) : canReadEvolutions ? (
+        <>
+          <div className="list-toolbar prontuario-evolutions-toolbar">
             <div>
-              <button disabled={patientListLoading || patientPage === 1} onClick={() => setPatientPage((currentPage) => Math.max(1, currentPage - 1))} type="button"><ChevronLeft aria-hidden="true" size={15} />Anterior</button>
-              <button disabled={patientListLoading || patientOffset + patients.length >= patientTotal} onClick={() => setPatientPage((currentPage) => currentPage + 1)} type="button">Próxima<ChevronRight aria-hidden="true" size={15} /></button>
+              <strong>{selectedPatient.name}</strong>
+              <span>{formatPatientDocuments(selectedPatient)}</span>
+            </div>
+            <div className="list-actions">
+              <span>{recordsLoading ? "Atualizando evoluções..." : evolutionMessage}</span>
+              {canCreateEvolutions ? <button className="primary-button" onClick={startNewEvolution} type="button"><Plus aria-hidden="true" size={17} />Nova evolução</button> : null}
             </div>
           </div>
-        </aside>
 
-        <div className="prontuario-content-grid">
-          <section className="plain-panel prontuario-evolution-panel">
-            <div className="access-card-heading">
-              <div>
-                <h3>{selectedPatient?.name ?? "Selecione um paciente"}</h3>
-                <p>{selectedPatient ? formatPatientDocuments(selectedPatient) : evolutionMessage}</p>
-              </div>
-              {canCreateEvolutions && selectedPatient ? <button className="secondary-button" onClick={startNewEvolution} type="button"><Plus aria-hidden="true" size={16} />Nova evolucao</button> : null}
-            </div>
-
-            {canReadEvolutions ? (
-              <div className="evolution-workspace">
-                <form className="evolution-form" onSubmit={(event) => { event.preventDefault(); void saveEvolution(); }}>
-                  <div className="evolution-form-grid">
-                    <label>
-                      <span>Data e hora</span>
-                      <input disabled={!selectedPatient || savingEvolution || activeEvolution?.status !== "draft" && Boolean(activeEvolution)} onChange={(event) => setForm((currentForm) => ({ ...currentForm, evolutionDate: event.target.value }))} type="datetime-local" value={form.evolutionDate} />
-                    </label>
-                    <label>
-                      <span>Área profissional</span>
-                      <select disabled={!selectedPatient || savingEvolution || activeEvolution?.status !== "draft" && Boolean(activeEvolution)} onChange={(event) => setForm((currentForm) => ({ ...currentForm, professionalArea: event.target.value as ProfessionalArea | "" }))} value={form.professionalArea}>
-                        <option value="">Selecione</option>
-                        {professionalAreaOptions.map((area) => <option key={area} value={area}>{area}</option>)}
-                      </select>
-                    </label>
-                    <label>
-                      <span>Profissional</span>
-                      <input disabled={!selectedPatient || savingEvolution || activeEvolution?.status !== "draft" && Boolean(activeEvolution)} onChange={(event) => setForm((currentForm) => ({ ...currentForm, professionalName: event.target.value }))} placeholder="Nome do responsavel" value={form.professionalName} />
-                    </label>
-                  </div>
-                  <label>
-                    <span>Texto da evolucao</span>
-                    <textarea disabled={!selectedPatient || savingEvolution || activeEvolution?.status !== "draft" && Boolean(activeEvolution)} onChange={(event) => setForm((currentForm) => ({ ...currentForm, text: event.target.value }))} placeholder="Registre a evolucao clinica" rows={6} value={form.text} />
-                  </label>
-                  <div className="evolution-actions">
-                    <span>{evolutionsLoading ? "Carregando evolucoes..." : evolutionMessage}</span>
-                    <div>
-                      <button className="secondary-button" disabled={savingEvolution || !form.id && !form.text} onClick={() => setForm(emptyFormState)} type="button">Limpar</button>
-                      <button className="primary-button" disabled={!selectedPatient || savingEvolution || !form.professionalArea || !canCreateEvolutions && !form.id || Boolean(form.id && !canUpdateEvolutions) || activeEvolution?.status !== "draft" && Boolean(activeEvolution)} type="submit"><Save aria-hidden="true" size={16} />{savingEvolution ? "Salvando..." : "Salvar rascunho"}</button>
-                    </div>
-                  </div>
-                </form>
-
-                <div className="access-card-heading prontuario-history-heading">
-                  <div>
-                    <h3>Histórico clínico e evoluções</h3>
-                    <p>{recordsLoading ? "Atualizando registros do paciente..." : message}</p>
-                  </div>
-                </div>
-
-                <div className="evolution-list prontuario-history-list" aria-label="Histórico clínico e evoluções">
-                  {combinedRecords.map((record) => record.kind === "evolution" ? (() => {
-                    const evolution = record.evolution;
-
-                    return (
-                    <article className={`evolution-card is-${evolution.status}`} key={evolution.id}>
-                      {(() => {
-                        const simpleSignatureLabel = getSimpleSignatureLabel(evolution);
-
-                        return simpleSignatureLabel ? <span className="evolution-signature-badge">{simpleSignatureLabel}</span> : null;
-                      })()}
-                      <div className="evolution-card-meta">
-                        <span>{formatDateTime(evolution.evolutionDate)}</span>
-                        <strong>{statusLabel(evolution.status)}</strong>
+          <div className={`records-table-shell ${recordsLoading ? "is-loading" : ""}`}>
+            <table className="records-table prontuario-evolutions-table">
+              <thead>
+                <tr>
+                  <th>Data e hora</th>
+                  <th>Status</th>
+                  <th>Área</th>
+                  <th>Profissional</th>
+                  <th>Resumo</th>
+                  <th>Assinatura</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleEvolutions.length === 0 ? (
+                  <tr>
+                    <td colSpan={7}>{recordsLoading ? "Carregando evoluções do paciente..." : "Nenhuma evolução registrada para este paciente."}</td>
+                  </tr>
+                ) : visibleEvolutions.map((evolution) => (
+                  <tr key={evolution.id}>
+                    <td>{formatDateTime(evolution.evolutionDate)}</td>
+                    <td><span className={`table-status is-${evolution.status}`}>{statusLabel(evolution.status)}</span></td>
+                    <td>{evolution.professionalArea ?? "-"}</td>
+                    <td>{evolution.professionalName ?? "-"}</td>
+                    <td className="evolution-summary-cell">{evolution.cancelReason ? `Motivo: ${evolution.cancelReason}` : evolution.text}</td>
+                    <td>{getSimpleSignatureLabel(evolution) ?? "-"}</td>
+                    <td>
+                      <div className="evolution-table-actions">
+                        <button className="table-action" onClick={() => editEvolution(evolution)} type="button">{evolution.status === "draft" ? <FilePenLine aria-hidden="true" size={15} /> : <Eye aria-hidden="true" size={15} />}{evolution.status === "draft" ? "Editar" : "Visualizar"}</button>
+                        {evolution.status === "draft" && canFinalizeEvolutions ? <button className="table-action is-primary" disabled={finalizingEvolutionId === evolution.id} onClick={() => void finalizeEvolution(evolution)} type="button"><CheckCircle2 aria-hidden="true" size={15} />Finalizar</button> : null}
+                        {evolution.status === "finalized" && canPrintEvolutions ? <button className="table-action" disabled={printingEvolutionId === evolution.id} onClick={() => void downloadEvolutionPdf(evolution)} type="button"><Printer aria-hidden="true" size={15} />PDF</button> : null}
+                        {evolution.status === "draft" && canCancelEvolutions ? <button className="table-action is-danger" disabled={cancelingEvolutionId === evolution.id} onClick={() => { setPendingCancelEvolutionId(evolution.id); setCancelReason(""); }} type="button"><XCircle aria-hidden="true" size={15} />Cancelar</button> : null}
                       </div>
-                      {evolution.professionalArea ? <small>Área: {evolution.professionalArea}</small> : null}
-                      <p>{evolution.text}</p>
-                      {evolution.professionalName ? <small>{evolution.professionalName}</small> : null}
-                      {evolution.cancelReason ? <small>Motivo: {evolution.cancelReason}</small> : null}
                       {pendingCancelEvolutionId === evolution.id ? (
                         <div className="evolution-cancel-reason">
                           <label>
@@ -510,38 +440,70 @@ export function ProntuarioPage() {
                           </div>
                         </div>
                       ) : null}
-                      <div className="evolution-card-actions">
-                        <button className="secondary-button" onClick={() => editEvolution(evolution)} type="button"><FilePenLine aria-hidden="true" size={15} />Abrir</button>
-                        {evolution.status === "draft" && canFinalizeEvolutions ? <button className="primary-button" disabled={finalizingEvolutionId === evolution.id} onClick={() => void finalizeEvolution(evolution)} type="button"><CheckCircle2 aria-hidden="true" size={15} />Finalizar</button> : null}
-                        {evolution.status === "finalized" && canPrintEvolutions ? <button className="secondary-button" disabled={printingEvolutionId === evolution.id} onClick={() => void downloadEvolutionPdf(evolution)} type="button"><Printer aria-hidden="true" size={15} />Baixar PDF</button> : null}
-                        {evolution.status !== "canceled" && canCancelEvolutions ? <button className="danger-button" disabled={cancelingEvolutionId === evolution.id} onClick={() => { setPendingCancelEvolutionId(evolution.id); setCancelReason(""); }} type="button"><XCircle aria-hidden="true" size={15} />Cancelar</button> : null}
-                      </div>
-                    </article>
-                    );
-                  })() : (
-                    <article className={`prontuario-entry ${record.entry.medicalEvolution?.status === "CANCELED" ? "is-canceled" : ""}`} key={record.id}>
-                      <span>{formatDateTime(record.entry.createdAt)}</span>
-                      <strong>{record.entry.title}</strong>
-                      {record.entry.summary ? <p>{record.entry.summary}</p> : null}
-                      {record.entry.anamnesisRecord ? <small>{record.entry.anamnesisRecord.code}</small> : null}
-                      {record.entry.medicalEvolution ? <small>{record.entry.medicalEvolution.status === "CANCELED" ? "Evolucao cancelada" : `Evolucao${record.entry.medicalEvolution.professionalArea ? ` - ${record.entry.medicalEvolution.professionalArea}` : ""}`}</small> : null}
-                    </article>
-                  ))}
-                  {recordsLoading ? <div className="empty-state">Carregando registros do paciente...</div> : null}
-                  {combinedRecords.length === 0 && !recordsLoading ? <div className="empty-state">{evolutionMessage}</div> : null}
-                </div>
-                <div className="pagination-bar prontuario-pagination" aria-label="Paginação do histórico clínico">
-                  <span>{recordsLoading ? "Atualizando histórico..." : formatPageSummary(recordsTotal, timelineOffset, combinedRecords.length, "registro(s)")}</span>
-                  <div>
-                    <button disabled={recordsLoading || timelinePage === 1} onClick={() => setRecordsPage((currentPage) => currentPage - 1)} type="button"><ChevronLeft aria-hidden="true" size={15} />Anterior</button>
-                    <button disabled={recordsLoading || timelineOffset + combinedRecords.length >= recordsTotal} onClick={() => setRecordsPage((currentPage) => currentPage + 1)} type="button">Próxima<ChevronRight aria-hidden="true" size={15} /></button>
-                  </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="pagination-bar" aria-label="Paginação de evoluções">
+            <span>{recordsLoading ? "Atualizando evoluções..." : formatPageSummary(recordsTotal, evolutionsOffset, visibleEvolutions.length, recordsTotal === 1 ? "evolução" : "evoluções")}</span>
+            <div>
+              <button disabled={recordsLoading || evolutionsPage === 1} onClick={() => setRecordsPage((currentPage) => currentPage - 1)} type="button"><ChevronLeft aria-hidden="true" size={15} />Anterior</button>
+              <button disabled={recordsLoading || evolutionsOffset + visibleEvolutions.length >= recordsTotal} onClick={() => setRecordsPage((currentPage) => currentPage + 1)} type="button">Próxima<ChevronRight aria-hidden="true" size={15} /></button>
+            </div>
+          </div>
+        </>
+      ) : <div className="empty-state prontuario-selection-message">Seu usuário não possui permissão para visualizar evoluções.</div>}
+
+      {isEvolutionModalOpen ? (
+        <div className="confirmation-modal-layer" role="presentation">
+          <button aria-label="Fechar evolução" className="confirmation-modal-backdrop" disabled={savingEvolution} onClick={() => { setIsEvolutionModalOpen(false); setForm(emptyFormState); }} type="button" />
+          <section aria-labelledby="evolution-modal-title" aria-modal="true" className="confirmation-modal-panel evolution-modal-panel" role="dialog">
+            <div className="confirmation-modal-heading">
+              <div className="confirmation-modal-icon is-primary" aria-hidden="true"><FilePenLine size={20} /></div>
+              <div>
+                <span className="eyebrow">Evolução</span>
+                <h3 id="evolution-modal-title">{evolutionModalTitle}</h3>
+                <p>{selectedPatient ? `${selectedPatient.name} - ${formatPatientDocuments(selectedPatient)}` : "Selecione um paciente antes de registrar a evolução."}</p>
+              </div>
+              <button aria-label="Fechar" className="icon-button" disabled={savingEvolution} onClick={() => { setIsEvolutionModalOpen(false); setForm(emptyFormState); }} type="button"><X aria-hidden="true" size={18} /></button>
+            </div>
+
+            <form className="evolution-form" onSubmit={(event) => { event.preventDefault(); void saveEvolution(); }}>
+              <div className="evolution-form-grid">
+                <label>
+                  <span>Data e hora</span>
+                  <input disabled={isEvolutionFormDisabled} onChange={(event) => setForm((currentForm) => ({ ...currentForm, evolutionDate: event.target.value }))} type="datetime-local" value={form.evolutionDate} />
+                </label>
+                <label>
+                  <span>Área profissional</span>
+                  <select disabled={isEvolutionFormDisabled} onChange={(event) => setForm((currentForm) => ({ ...currentForm, professionalArea: event.target.value as ProfessionalArea | "" }))} value={form.professionalArea}>
+                    <option value="">Selecione</option>
+                    {professionalAreaOptions.map((area) => <option key={area} value={area}>{area}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>Profissional</span>
+                  <input disabled={isEvolutionFormDisabled} onChange={(event) => setForm((currentForm) => ({ ...currentForm, professionalName: event.target.value }))} placeholder="Nome do responsável" value={form.professionalName} />
+                </label>
+              </div>
+              <label>
+                <span>Texto da evolução</span>
+                <textarea disabled={isEvolutionFormDisabled} onChange={(event) => setForm((currentForm) => ({ ...currentForm, text: event.target.value }))} placeholder="Registre a evolução clínica" rows={7} value={form.text} />
+              </label>
+              <div className="evolution-actions">
+                <span>{savingEvolution ? "Salvando evolução..." : evolutionMessage}</span>
+                <div>
+                  {!isLockedEvolution ? <button className="secondary-button" disabled={savingEvolution || !hasEvolutionFormContent} onClick={() => setForm(emptyFormState)} type="button">Limpar</button> : null}
+                  {!isLockedEvolution ? <button className="primary-button" disabled={!canSaveEvolution} type="submit"><Save aria-hidden="true" size={16} />{savingEvolution ? "Salvando..." : "Salvar rascunho"}</button> : null}
                 </div>
               </div>
-            ) : <div className="empty-state">Seu usuario nao possui permissao para visualizar evolucoes.</div>}
+            </form>
           </section>
         </div>
-      </div>
+      ) : null}
     </section>
   );
 }

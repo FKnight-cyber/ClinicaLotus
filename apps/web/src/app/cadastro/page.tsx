@@ -28,13 +28,13 @@ export default function RegisterPage() {
       const payload = await response.json().catch(() => null);
 
       if (!response.ok) {
-        throw new Error(payload?.message ?? "Nao foi possivel enviar o cadastro.");
+        throw new Error(payload?.message ?? "Não foi possível enviar o cadastro.");
       }
 
       setForm({ login: "", name: "", email: "", password: "" });
       setMessage(payload?.message ?? "Cadastro enviado para aprovacao do administrador.");
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "Nao foi possivel enviar o cadastro.");
+      setError(caughtError instanceof Error ? caughtError.message : "Não foi possível enviar o cadastro.");
     } finally {
       setIsSubmitting(false);
     }
@@ -52,7 +52,7 @@ export default function RegisterPage() {
         </div>
 
         <form className="login-form" onSubmit={handleSubmit}>
-          <label><span>Usuario</span><input autoComplete="username" onChange={(event) => setForm((current) => ({ ...current, login: event.target.value }))} required value={form.login} /></label>
+          <label><span>Usuário</span><input autoComplete="username" onChange={(event) => setForm((current) => ({ ...current, login: event.target.value }))} required value={form.login} /></label>
           <label><span>Nome</span><input autoComplete="name" onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required value={form.name} /></label>
           <label><span>Email</span><input autoComplete="email" onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} type="email" value={form.email} /></label>
           <label><span>Senha</span><input autoComplete="new-password" minLength={6} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} required type="password" value={form.password} /></label>

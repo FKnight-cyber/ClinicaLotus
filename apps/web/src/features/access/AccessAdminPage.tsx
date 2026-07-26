@@ -127,17 +127,17 @@ function getUserStatusConfirmation(user: AccessUser, nextStatus: AccessUser["sta
   if (nextStatus === "INACTIVE") {
     return {
       title: `Inativar ${user.name}?`,
-      actionLabel: "Inativar usuario",
-      tone: "danger",
-      message: "Ao inativar este usuario, ele deixara de aparecer nos demais pontos do sistema, incluindo anamnese e qualquer outra funcionalidade que dependa de usuarios ativos. O acesso dele tambem ficara bloqueado ate que seja ativado novamente."
+       actionLabel: "Inativar usuário",
+       tone: "danger",
+       message: "Ao inativar este usuário, ele deixará de aparecer nos demais pontos do sistema, incluindo anamnese e qualquer outra funcionalidade que dependa de usuários ativos. O acesso dele também ficará bloqueado até que seja ativado novamente."
     };
   }
 
   return {
     title: `Ativar ${user.name}?`,
-    actionLabel: "Ativar usuario",
+    actionLabel: "Ativar usuário",
     tone: "primary",
-    message: "Ao ativar este usuario, ele voltara a aparecer nas telas e fluxos que exibem usuarios ativos, incluindo anamnese e demais funcionalidades do sistema, e podera acessar os recursos permitidos pelos grupos vinculados."
+    message: "Ao ativar este usuário, ele voltará a aparecer nas telas e fluxos que exibem usuários ativos, incluindo anamnese e demais funcionalidades do sistema, e poderá acessar os recursos permitidos pelos grupos vinculados."
   };
 }
 
@@ -153,7 +153,7 @@ async function apiRequest<T>(token: string, path: string, options: RequestInit =
 
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throw new Error(payload?.message ?? "Nao foi possivel atualizar os acessos.");
+      throw new Error(payload?.message ?? "Não foi possível atualizar os acessos.");
   }
 
   return response.json() as Promise<T>;
@@ -263,7 +263,7 @@ export function AccessGroupsPage() {
       setIsLoading(false);
     }).catch((error) => {
       if (!isCurrent) return;
-      setStatusMessage(error instanceof Error ? error.message : "Nao foi possivel carregar os acessos.");
+      setStatusMessage(error instanceof Error ? error.message : "Não foi possível carregar os acessos.");
       setIsLoading(false);
     });
 
@@ -299,7 +299,7 @@ export function AccessGroupsPage() {
       setStatusMessage("Grupo criado com sucesso.");
       await loadAccessData(nextLimit, "");
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Nao foi possivel criar o grupo.");
+      setStatusMessage(error instanceof Error ? error.message : "Não foi possível criar o grupo.");
     } finally {
       setIsCreatingGroup(false);
     }
@@ -323,10 +323,10 @@ export function AccessGroupsPage() {
         ...current,
         [updatedGroup.id]: updatedGroup.permissions.map((item) => item.permission.key)
       }));
-      setStatusMessage("Permissoes do grupo atualizadas.");
+      setStatusMessage("Permissões do grupo atualizadas.");
     }).catch((error) => {
       setGroupDrafts((current) => ({ ...current, [groupId]: previousPermissionKeys }));
-      setStatusMessage(error instanceof Error ? error.message : "Nao foi possivel atualizar as permissoes.");
+      setStatusMessage(error instanceof Error ? error.message : "Não foi possível atualizar as permissões.");
     }).finally(() => {
       setSavingGroupId((currentGroupId) => currentGroupId === groupId ? null : currentGroupId);
     });
@@ -339,8 +339,8 @@ export function AccessGroupsPage() {
           <div className="intro-icon" aria-hidden="true"><ShieldCheck size={28} /></div>
           <div>
             <span className="eyebrow">Acessos</span>
-            <h2>Permissao necessaria</h2>
-            <p>Seu usuario nao possui permissao para gerenciar grupos e permissoes.</p>
+            <h2>Permissão necessária</h2>
+             <p>Seu usuário não possui permissão para gerenciar grupos e permissões.</p>
           </div>
         </div>
       </section>
@@ -351,11 +351,11 @@ export function AccessGroupsPage() {
     <section className="access-page">
       <div className="list-header">
         <div>
-          <span className="eyebrow">Administracao</span>
+            <span className="eyebrow">Administração</span>
           <h2>Grupos e acessos</h2>
-          <p>Configure permissoes por grupo. As mudancas sao salvas automaticamente ao marcar ou desmarcar uma permissao.</p>
+          <p>Configure permissões por grupo. As mudanças são salvas automaticamente ao marcar ou desmarcar uma permissão.</p>
         </div>
-        <span className="status-badge"><ShieldCheck aria-hidden="true" size={17} />{permissions.length} permissoes</span>
+        <span className="status-badge"><ShieldCheck aria-hidden="true" size={17} />{permissions.length} permissões</span>
       </div>
 
       {statusMessage ? <div className="access-message">{statusMessage}</div> : null}
@@ -367,7 +367,7 @@ export function AccessGroupsPage() {
           {canManageGroups ? (
             <form className="access-form compact-form" onSubmit={handleCreateGroup}>
               <label><span>Novo grupo</span><input disabled={isCreatingGroup} onChange={(event) => setNewGroupName(event.target.value)} placeholder="Nome do grupo" required value={newGroupName} /></label>
-              <label><span>Descricao</span><input disabled={isCreatingGroup} onChange={(event) => setNewGroupDescription(event.target.value)} placeholder="Opcional" value={newGroupDescription} /></label>
+                <label><span>Descrição</span><input disabled={isCreatingGroup} onChange={(event) => setNewGroupDescription(event.target.value)} placeholder="Opcional" value={newGroupDescription} /></label>
               <button className="primary-button" disabled={isCreatingGroup} type="submit"><ShieldCheck aria-hidden="true" size={17} />{isCreatingGroup ? "Criando..." : "Criar grupo"}</button>
             </form>
           ) : null}
@@ -396,8 +396,8 @@ export function AccessGroupsPage() {
               return (
                 <button className={`group-directory-item ${isSelected ? "is-selected" : ""}`} key={group.id} onClick={() => setSelectedGroupId(group.id)} type="button">
                   <strong>{group.name}</strong>
-                  <span>{group.description || "Sem descricao"}</span>
-                  <small>{permissionCount} permissoes</small>
+                  <span>{group.description || "Sem descrição"}</span>
+                  <small>{permissionCount} permissões</small>
                 </button>
               );
             })}
@@ -409,7 +409,7 @@ export function AccessGroupsPage() {
           <div className="access-card-heading">
             <div>
               <h3>{selectedGroup ? selectedGroup.name : "Selecione um grupo"}</h3>
-              <p>{savingGroupId === selectedGroup?.id ? "Salvando permissoes..." : selectedGroup?.description || "Escolha um grupo para revisar e editar suas permissoes."}</p>
+              <p>{savingGroupId === selectedGroup?.id ? "Salvando permissões..." : selectedGroup?.description || "Escolha um grupo para revisar e editar suas permissões."}</p>
             </div>
           </div>
           {selectedGroup ? (
@@ -513,7 +513,7 @@ export function AccessUsersAdminPage() {
       setIsLoading(false);
     }).catch((error) => {
       if (!isCurrent) return;
-      setStatusMessage(error instanceof Error ? error.message : "Nao foi possivel carregar os usuarios.");
+      setStatusMessage(error instanceof Error ? error.message : "Não foi possível carregar os usuários.");
       setIsLoading(false);
     });
 
@@ -572,9 +572,9 @@ export function AccessUsersAdminPage() {
       const nextUsersPage = await fetchUsersPage(userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserStatus, true);
       applyUsersPage(nextUsersPage);
       setStatusConfirmation(null);
-      setStatusMessage(nextStatus === "ACTIVE" ? "Usuario ativado e disponivel nos fluxos do sistema." : "Usuario inativado e removido dos fluxos operacionais do sistema.");
+      setStatusMessage(nextStatus === "ACTIVE" ? "Usuário ativado e disponível nos fluxos do sistema." : "Usuário inativado e removido dos fluxos operacionais do sistema.");
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Nao foi possivel atualizar o status do usuario.");
+      setStatusMessage(error instanceof Error ? error.message : "Não foi possível atualizar o status do usuário.");
     } finally {
       setSavingUserStatusId(null);
       setIsUsersLoading(false);
@@ -587,9 +587,9 @@ export function AccessUsersAdminPage() {
         <div className="page-intro">
           <div className="intro-icon" aria-hidden="true"><UsersRound size={28} /></div>
           <div>
-            <span className="eyebrow">Usuarios</span>
-            <h2>Permissao necessaria</h2>
-            <p>Seu usuario nao possui permissao para visualizar usuarios e solicitacoes.</p>
+            <span className="eyebrow">Usuários</span>
+            <h2>Permissão necessária</h2>
+            <p>Seu usuário não possui permissão para visualizar usuários e solicitações.</p>
           </div>
         </div>
       </section>
@@ -600,26 +600,26 @@ export function AccessUsersAdminPage() {
     <section className="access-page">
       <div className="list-header">
         <div>
-          <span className="eyebrow">Administracao</span>
-          <h2>Gerenciar usuarios</h2>
-          <p>Acompanhe solicitacoes, status e vinculos de grupos de cada usuario.</p>
+          <span className="eyebrow">Administração</span>
+          <h2>Gerenciar usuários</h2>
+          <p>Acompanhe solicitações, status e vínculos de grupos de cada usuário.</p>
         </div>
         <div className="access-summary-badges">
-          <span className="status-badge"><UsersRound aria-hidden="true" size={17} />{userTotal} usuarios</span>
+          <span className="status-badge"><UsersRound aria-hidden="true" size={17} />{userTotal} usuários</span>
           {pendingUsersCount > 0 ? <span className="status-badge">{pendingUsersCount} pendentes na lista</span> : null}
         </div>
       </div>
 
       {statusMessage ? <div className="access-message">{statusMessage}</div> : null}
-      {isLoading ? <div className="loading-panel">Carregando usuarios...</div> : null}
+      {isLoading ? <div className="loading-panel">Carregando usuários...</div> : null}
 
       <div className="access-single-panel-layout">
         <section className="plain-panel access-users-panel">
           <div className="access-section-heading">
             <div className="access-section-title-row">
               <div>
-                <h3>Usuarios e solicitacoes</h3>
-                <p>{users.length} de {userTotal} usuarios exibidos</p>
+                <h3>Usuários e solicitações</h3>
+                <p>{users.length} de {userTotal} usuários exibidos</p>
               </div>
               <div className="filter-actions-row">
                 <FilterButton activeCount={activeUserFilterCount} onClick={handleOpenUserFilters} />
@@ -630,7 +630,7 @@ export function AccessUsersAdminPage() {
           {isUserFiltersOpen ? (
             <div className="filter-drawer-layer" role="presentation">
               <button aria-label="Fechar filtros" className="filter-drawer-backdrop" onClick={() => setIsUserFiltersOpen(false)} type="button" />
-              <aside aria-label="Filtros de usuarios" className="filter-drawer-panel">
+              <aside aria-label="Filtros de usuários" className="filter-drawer-panel">
                 <div className="filter-drawer-heading">
                   <div>
                     <span className="eyebrow">Filtros</span>
@@ -639,8 +639,8 @@ export function AccessUsersAdminPage() {
                 </div>
                 <div className="filter-drawer-fields">
                   <label>
-                    <span>Buscar usuario</span>
-                    <input aria-label="Buscar usuario" onChange={(event) => setDraftUserSearch(event.target.value)} placeholder="Nome, login ou email" value={draftUserSearch} />
+                    <span>Buscar usuário</span>
+                    <input aria-label="Buscar usuário" onChange={(event) => setDraftUserSearch(event.target.value)} placeholder="Nome, login ou email" value={draftUserSearch} />
                   </label>
                   <label>
                     <span>Grupo</span>
@@ -659,7 +659,7 @@ export function AccessUsersAdminPage() {
                     </select>
                   </label>
                   <label>
-                    <span>Nº de usuarios exibidos</span>
+                    <span>Nº de usuários exibidos</span>
                     <input
                       max={MAX_USER_LIMIT}
                       min={1}
@@ -676,7 +676,7 @@ export function AccessUsersAdminPage() {
               </aside>
             </div>
           ) : null}
-          {isUsersLoading ? <div className="inline-loading">Atualizando usuarios...</div> : null}
+          {isUsersLoading ? <div className="inline-loading">Atualizando usuários...</div> : null}
           <div className={`access-user-list ${isUsersLoading ? "is-loading" : ""}`}>
             {users.map((user) => (
               <UserCard
@@ -687,7 +687,7 @@ export function AccessUsersAdminPage() {
                 user={user}
               />
             ))}
-            {users.length === 0 ? <div className="empty-state">Nenhum usuario encontrado.</div> : null}
+            {users.length === 0 ? <div className="empty-state">Nenhum usuário encontrado.</div> : null}
           </div>
         </section>
       </div>

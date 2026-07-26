@@ -46,6 +46,7 @@ export function AnamneseListPage() {
   useEffect(() => {
     if (!token) return;
     let isCurrent = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true);
 
     Promise.all([fetchAnamneseRecords(token), fetchAnamneseTemplates(token)])
@@ -57,7 +58,7 @@ export function AnamneseListPage() {
       })
       .catch((error) => {
         if (!isCurrent) return;
-        setMessage(error instanceof Error ? error.message : "Nao foi possivel carregar os registros.");
+        setMessage(error instanceof Error ? error.message : "Não foi possível carregar os registros.");
       })
       .finally(() => {
         if (isCurrent) setIsLoading(false);

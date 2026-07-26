@@ -8,10 +8,20 @@ import { CreateMedicalEvolutionDto } from "./dto/create-medical-evolution.dto";
 import { UpdateMedicalEvolutionDto } from "./dto/update-medical-evolution.dto";
 
 type MedicalEvolutionWithRelations = MedicalEvolution & {
-  createdBy?: { id: string; name: string; login: string } | null;
-  updatedBy?: { id: string; name: string; login: string } | null;
-  finalizedBy?: { id: string; name: string; login: string } | null;
-  canceledBy?: { id: string; name: string; login: string } | null;
+  createdBy?: MedicalEvolutionUserRelation | null;
+  updatedBy?: MedicalEvolutionUserRelation | null;
+  finalizedBy?: MedicalEvolutionUserRelation | null;
+  canceledBy?: MedicalEvolutionUserRelation | null;
+};
+
+type MedicalEvolutionUserRelation = {
+  id: string;
+  name: string;
+  login: string;
+  professionalCouncil: string | null;
+  professionalRegistration: string | null;
+  professionalCouncilState: string | null;
+  professionalSpecialty: string | null;
 };
 
 type ListQueryOptions = {
@@ -174,6 +184,10 @@ export class MedicalEvolutionsService {
       return this.toResponse(existingEvolution);
     }
 
+    if (existingEvolution.status === "FINALIZED") {
+      throw new BadRequestException("Evolução finalizada não pode ser cancelada.");
+    }
+
     const beforeData = this.toResponse(existingEvolution);
     const canceledEvolution = await this.prisma.medicalEvolution.update({
       where: { id },
@@ -282,7 +296,7 @@ export class MedicalEvolutionsService {
   }
 
   private invalidateCaches(patientId: string) {
-    this.cache.delete(`medical-evolutions:patient:${patientId}`);
+    this.cache.deleteByPrefix(`medical-evolutions:patient:${patientId}:`);
     this.cache.deleteByPrefix(`patients:medical-record:${patientId}:`);
   }
 
@@ -308,11 +322,21 @@ export class MedicalEvolutionsService {
   }
 
   private userRelations() {
+    const userSelect = {
+      id: true,
+      name: true,
+      login: true,
+      professionalCouncil: true,
+      professionalRegistration: true,
+      professionalCouncilState: true,
+      professionalSpecialty: true
+    };
+
     return {
-      createdBy: { select: { id: true, name: true, login: true } },
-      updatedBy: { select: { id: true, name: true, login: true } },
-      finalizedBy: { select: { id: true, name: true, login: true } },
-      canceledBy: { select: { id: true, name: true, login: true } }
+      createdBy: { select: userSelect },
+      updatedBy: { select: userSelect },
+      finalizedBy: { select: userSelect },
+      canceledBy: { select: userSelect }
     };
   }
 
