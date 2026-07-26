@@ -70,6 +70,11 @@ function invalidateAnamneseRecordCaches(token: string, record?: AnamneseRecord) 
   }
 }
 
+function removeAnamneseRecordFromCache(token: string, recordId: string) {
+  anamneseRecordsCache.delete(buildCacheKey(token, "records"));
+  anamneseRecordCache.delete(buildCacheKey(token, "record", recordId));
+}
+
 function invalidatePatientCaches(token: string, patientId?: string | null) {
   for (const key of patientsCache.keys()) {
     if (key.startsWith(`${token}:patients:`)) {
@@ -150,6 +155,13 @@ export async function saveAnamneseRecord(token: string, recordId: string, payloa
   const normalizedRecord = normalizeAnamneseRecord(record);
   invalidateAnamneseRecordCaches(token, normalizedRecord);
   return normalizedRecord;
+}
+
+export async function deleteAnamneseDraftRecord(token: string, recordId: string) {
+  await apiRequest<{ id: string }>(token, `/api/anamneses/${recordId}`, {
+    method: "DELETE"
+  });
+  removeAnamneseRecordFromCache(token, recordId);
 }
 
 export async function finalizeAnamneseRecord(token: string, recordId: string) {

@@ -123,7 +123,7 @@ docker compose down -v
 O backend usa Prisma com PostgreSQL. Em Docker, o schema e o seed rodam automaticamente ao iniciar a API:
 
 ```bash
-docker compose up -d --build
+docker compose up --build
 ```
 
 Comandos úteis dentro do container:

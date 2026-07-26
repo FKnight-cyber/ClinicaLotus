@@ -1,10 +1,10 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Eye, Filter, Plus, RotateCcw, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, Filter, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/features/auth/AuthProvider";
-import { createAnamneseRecord, fetchAnamneseRecords, fetchAnamneseTemplates, formatDateTime, getPatientName, requiredProgress } from "./storage";
+import { createAnamneseRecord, deleteAnamneseDraftRecord, fetchAnamneseRecords, fetchAnamneseTemplates, formatDateTime, getPatientName, requiredProgress } from "./storage";
 import { anamneseTemplates as fallbackTemplates } from "./templates";
 import type { AnamneseRecord, FormTemplate } from "./types";
 
@@ -35,12 +35,15 @@ export function AnamneseListPage() {
   const router = useRouter();
   const { hasPermission, token } = useAuth();
   const canCreateAnamnese = hasPermission("anamnese.create");
+  const canDeleteDraftAnamnese = hasPermission("admin.full_access");
   const [records, setRecords] = useState<AnamneseRecord[]>([]);
   const [templates, setTemplates] = useState<FormTemplate[]>(fallbackTemplates);
   const [filters, setFilters] = useState<ListFilters>(emptyFilters);
+  const [recordPendingDeletion, setRecordPendingDeletion] = useState<AnamneseRecord | null>(null);
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
+  const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [message, setMessage] = useState("Registros disponíveis para consulta");
 
   useEffect(() => {
@@ -95,6 +98,22 @@ export function AnamneseListPage() {
     const record = await createAnamneseRecord(token, { patientName: "Paciente sem nome" });
     setRecords((currentRecords) => [record, ...currentRecords]);
     router.push(`/anamnese/${record.id}`);
+  }
+
+  async function confirmDeleteDraft() {
+    if (!token || !recordPendingDeletion || recordPendingDeletion.status !== "draft") return;
+
+    setDeletingRecordId(recordPendingDeletion.id);
+    try {
+      await deleteAnamneseDraftRecord(token, recordPendingDeletion.id);
+      setRecords((currentRecords) => currentRecords.filter((record) => record.id !== recordPendingDeletion.id));
+      setMessage(`Rascunho ${recordPendingDeletion.code} excluído.`);
+      setRecordPendingDeletion(null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível excluir o rascunho.");
+    } finally {
+      setDeletingRecordId(null);
+    }
   }
 
   function updateFilter<Key extends keyof ListFilters>(key: Key, value: ListFilters[Key]) {
@@ -240,10 +259,18 @@ export function AnamneseListPage() {
                     <td>{progress.complete}/{progress.total}</td>
                     <td>{formatDateTime(record.updatedAt)}</td>
                     <td>
-                      <button className="table-action" onClick={() => router.push(`/anamnese/${record.id}`)} type="button">
-                        <Eye size={16} />
-                        Abrir
-                      </button>
+                      <div className="records-table-actions">
+                        <button className="table-action" onClick={() => router.push(`/anamnese/${record.id}`)} type="button">
+                          <Eye size={16} />
+                          Abrir
+                        </button>
+                        {canDeleteDraftAnamnese && record.status === "draft" ? (
+                          <button className="table-action is-danger" disabled={deletingRecordId === record.id} onClick={() => setRecordPendingDeletion(record)} type="button">
+                            <Trash2 size={16} />
+                            {deletingRecordId === record.id ? "Excluindo..." : "Excluir"}
+                          </button>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -266,6 +293,28 @@ export function AnamneseListPage() {
           </button>
         </div>
       </div>
+
+      {recordPendingDeletion ? (
+        <div className="confirmation-modal-layer" role="presentation">
+          <button aria-label="Cancelar exclusão de rascunho" className="confirmation-modal-backdrop" disabled={deletingRecordId === recordPendingDeletion.id} onClick={() => setRecordPendingDeletion(null)} type="button" />
+          <section aria-labelledby="delete-anamnese-draft-title" aria-modal="true" className="confirmation-modal-panel" role="dialog">
+            <div className="confirmation-modal-heading">
+              <span className="confirmation-modal-icon is-danger"><Trash2 aria-hidden="true" size={20} /></span>
+              <div>
+                <span className="eyebrow">Confirmacao obrigatoria</span>
+                <h3 id="delete-anamnese-draft-title">Excluir rascunho {recordPendingDeletion.code}?</h3>
+              </div>
+            </div>
+            <p>Esta ação remove o rascunho de anamnese de {getPatientName(recordPendingDeletion)}. Anamneses finalizadas não podem ser excluídas.</p>
+            <div className="confirmation-modal-actions">
+              <button className="secondary-button" disabled={deletingRecordId === recordPendingDeletion.id} onClick={() => setRecordPendingDeletion(null)} type="button">Cancelar</button>
+              <button className="danger-button" disabled={deletingRecordId === recordPendingDeletion.id} onClick={confirmDeleteDraft} type="button">
+                {deletingRecordId === recordPendingDeletion.id ? "Excluindo..." : "Excluir rascunho"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -2525,6 +2525,12 @@ td input {
   padding: 7px 10px;
 }
 
+.records-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
 .audit-logs-heading {
   align-items: center;
   display: flex;

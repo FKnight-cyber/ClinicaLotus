@@ -195,6 +195,20 @@ export class AnamnesisService {
     return updatedRecord;
   }
 
+  async deleteDraft(userId: string, id: string) {
+    const record = await this.findRecord(id);
+
+    if (record.status !== "DRAFT") {
+      throw new BadRequestException("Apenas rascunhos de anamnese podem ser excluídos.");
+    }
+
+    const beforeData = this.toRecordResponse(record);
+    await this.prisma.anamnesisRecord.delete({ where: { id } });
+    this.invalidateRecordCaches(id);
+    await this.writeAuditLog(userId, "delete_draft_anamnesis", id, beforeData, null);
+    return { id };
+  }
+
   async finalize(userId: string, id: string) {
     const record = await this.findRecord(id);
 
@@ -636,6 +650,7 @@ export class AnamnesisService {
 
     if (action === "complete_anamnesis_template") return "Ficha de anamnese concluída";
     if (action === "finalize_anamnesis") return "Anamnese completa finalizada";
+    if (action === "delete_draft_anamnesis") return "Rascunho de anamnese excluído";
     if (action === "emit_anamnesis_pdf") return "PDF completo de anamnese emitido";
     if (action === "emit_anamnesis_template_pdf") return "PDF parcial de ficha emitido";
     return "Evento de anamnese registrado";

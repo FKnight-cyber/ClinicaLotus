@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
 import { AuthGuard } from "../auth/guards/auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { RequirePermissions } from "../auth/guards/permissions.decorator";
@@ -40,6 +40,12 @@ export class AnamnesisController {
   @RequirePermissions("anamnese.update")
   update(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Body() dto: UpdateAnamnesisDto) {
     return this.anamnesisService.update(request.user.id, id, dto);
+  }
+
+  @Delete(":id")
+  @RequirePermissions("admin.full_access")
+  deleteDraft(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string) {
+    return this.anamnesisService.deleteDraft(request.user.id, id);
   }
 
   @Post(":id/finalize")
