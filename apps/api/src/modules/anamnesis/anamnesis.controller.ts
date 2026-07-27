@@ -14,8 +14,8 @@ export class AnamnesisController {
 
   @Get("templates")
   @RequirePermissions("anamnese.read")
-  getTemplates() {
-    return this.anamnesisService.getTemplates();
+  getTemplates(@Req() request: { user: AuthenticatedUser }) {
+    return this.anamnesisService.getTemplates(request.user.permissions);
   }
 
   @Get()
@@ -51,13 +51,13 @@ export class AnamnesisController {
   @Post(":id/finalize")
   @RequirePermissions("anamnese.finalize")
   finalize(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string) {
-    return this.anamnesisService.finalize(request.user.id, id);
+    return this.anamnesisService.finalize(request.user.id, id, request.user.permissions);
   }
 
   @Post(":id/templates/:templateId/complete")
   @RequirePermissions("anamnese.finalize")
   completeTemplate(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Param("templateId") templateId: string) {
-    return this.anamnesisService.completeTemplate(request.user.id, id, templateId);
+    return this.anamnesisService.completeTemplate(request.user.id, id, templateId, request.user.permissions);
   }
 
   @Post(":id/documents/pdf")
@@ -69,6 +69,6 @@ export class AnamnesisController {
   @Post(":id/templates/:templateId/documents/pdf")
   @RequirePermissions("anamnese.print")
   emitTemplatePdfDocument(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Param("templateId") templateId: string) {
-    return this.anamnesisService.emitTemplatePdfDocument(request.user.id, id, templateId);
+    return this.anamnesisService.emitTemplatePdfDocument(request.user.id, id, templateId, request.user.permissions);
   }
 }

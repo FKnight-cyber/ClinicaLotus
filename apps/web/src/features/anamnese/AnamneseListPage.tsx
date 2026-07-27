@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { createAnamneseRecord, deleteAnamneseDraftRecord, fetchAnamneseRecords, fetchAnamneseTemplates, formatDateTime, getPatientName, requiredProgress } from "./storage";
 import { anamneseTemplates as fallbackTemplates } from "./templates";
+import { filterAnamneseTemplatesByPermissions } from "./templatePermissions";
 import type { AnamneseRecord, FormTemplate } from "./types";
 
 const pageSize = 6;
@@ -33,7 +34,7 @@ const emptyFilters: ListFilters = {
 
 export function AnamneseListPage() {
   const router = useRouter();
-  const { hasPermission, token } = useAuth();
+  const { hasPermission, token, user } = useAuth();
   const canCreateAnamnese = hasPermission("anamnese.create");
   const canDeleteDraftAnamnese = hasPermission("admin.full_access");
   const [records, setRecords] = useState<AnamneseRecord[]>([]);
@@ -72,9 +73,12 @@ export function AnamneseListPage() {
     };
   }, [token]);
 
+  const userPermissions = useMemo(() => user?.permissions ?? [], [user?.permissions]);
+  const visibleTemplates = useMemo(() => filterAnamneseTemplatesByPermissions(templates, userPermissions), [templates, userPermissions]);
+
   const filteredRecords = useMemo(() => {
     return records.filter((record) => {
-      const progress = requiredProgress(record, templates);
+      const progress = requiredProgress(record, visibleTemplates);
       const patientMatches = getPatientName(record).toLowerCase().includes(filters.patient.trim().toLowerCase());
       const codeMatches = record.code.toLowerCase().includes(filters.code.trim().toLowerCase());
       const statusMatches = filters.status === "all" || record.status === filters.status;
@@ -85,7 +89,7 @@ export function AnamneseListPage() {
 
       return patientMatches && codeMatches && statusMatches && requiredMatches && updatedFromMatches && updatedToMatches;
     });
-  }, [filters, records, templates]);
+  }, [filters, records, visibleTemplates]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -244,7 +248,7 @@ export function AnamneseListPage() {
               </tr>
             ) : (
               pageRecords.map((record) => {
-                const progress = requiredProgress(record, templates);
+                const progress = requiredProgress(record, visibleTemplates);
                 return (
                   <tr key={record.id}>
                     <td>

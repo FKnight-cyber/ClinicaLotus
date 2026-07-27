@@ -28,12 +28,12 @@ function getDefaultProfessionalArea(userType?: string) {
   return "";
 }
 
-function shouldShowProfessionalArea(userType?: string) {
-  return userType === "DOCTOR" || userType === "NURSE";
+function shouldShowProfessionalArea(userType: string | undefined, canViewMedicalInfo: boolean) {
+  return canViewMedicalInfo || userType === "NURSE";
 }
 
-function shouldShowMedicalFields(userType?: string) {
-  return userType === "DOCTOR";
+function shouldShowMedicalFields(canViewMedicalInfo: boolean) {
+  return canViewMedicalInfo;
 }
 
 function getDefaultProfessionalCouncil(userType?: string) {
@@ -69,11 +69,12 @@ async function updateProfile(token: string, form: ProfileForm) {
 }
 
 export default function MeuPerfilPage() {
-  const { refreshProfile, token, user } = useAuth();
+  const { hasPermission, refreshProfile, token, user } = useAuth();
   const [form, setForm] = useState<ProfileForm>({ login: "", name: "", email: "", professionalArea: "", professionalCouncil: "", professionalRegistration: "", professionalCouncilState: "", professionalSpecialty: "", password: "" });
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const canViewMedicalInfo = hasPermission("profile.medical_info.read");
 
   useEffect(() => {
     if (!user) return;
@@ -132,11 +133,11 @@ export default function MeuPerfilPage() {
               <label><span>Usuário</span><input autoComplete="username" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, login: event.target.value }))} required value={form.login} /></label>
               <label><span>Nome completo</span><input autoComplete="name" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required value={form.name} /></label>
               <label><span>Email</span><input autoComplete="email" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} type="email" value={form.email} /></label>
-              {shouldShowProfessionalArea(user?.userType) ? <label><span>Área profissional</span><select disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, professionalArea: event.target.value }))} value={form.professionalArea}>
+              {shouldShowProfessionalArea(user?.userType, canViewMedicalInfo) ? <label><span>Área profissional</span><select disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, professionalArea: event.target.value }))} value={form.professionalArea}>
                 <option value="">Selecione</option>
                 {professionalAreaOptions.map((area) => <option key={area} value={area}>{area}</option>)}
               </select></label> : null}
-              {shouldShowMedicalFields(user?.userType) ? <>
+              {shouldShowMedicalFields(canViewMedicalInfo) ? <>
                 <label><span>Conselho profissional</span><select disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, professionalCouncil: event.target.value }))} value={form.professionalCouncil}>
                   <option value="">Selecione</option>
                   {professionalCouncilOptions.map((council) => <option key={council} value={council}>{council}</option>)}

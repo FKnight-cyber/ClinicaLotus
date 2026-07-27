@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import type { AnamnesisRecord, AnamnesisStatus, QuestionType } from "@prisma/client";
 import { AppCacheService } from "../../shared/cache/app-cache.service";
 import { PrismaService } from "../../shared/prisma/prisma.service";
@@ -17,6 +17,12 @@ type TemplateStatus = {
 type TemplateStatuses = Record<string, TemplateStatus>;
 type CustomFieldsJson = Record<string, Record<string, Array<{ id?: string }>>>;
 type TemplateConfigItem = { id?: string; title?: string; shortTitle?: string; isCustom?: boolean };
+
+const templatePermissionById: Record<string, string> = {
+  "nursing-admission": "anamnese.templates.nursing.read",
+  psychological: "anamnese.templates.psychological.read",
+  "therapeutic-initial": "anamnese.templates.therapeutic.read"
+};
 
 type StoredAnswer = {
   valueText: string | null;
@@ -54,8 +60,22 @@ export class AnamnesisService {
     private readonly cache: AppCacheService
   ) {}
 
-  async getTemplates() {
-    return this.cache.getOrSet("anamnesis:templates", 10 * 60 * 1000, () => this.loadTemplates());
+  async getTemplates(userPermissions: string[] = []) {
+    const templates = await this.cache.getOrSet("anamnesis:templates", 10 * 60 * 1000, () => this.loadTemplates());
+    return templates.filter((template) => this.canAccessTemplate(template.id, userPermissions));
+  }
+
+  private canAccessTemplate(templateId: string | undefined, userPermissions: string[] = []) {
+    if (!templateId) return true;
+    const permission = templatePermissionById[templateId];
+    if (!permission) return true;
+    return userPermissions.includes("admin.full_access") || userPermissions.includes(permission);
+  }
+
+  private ensureTemplateAccess(templateId: string, userPermissions: string[] = []) {
+    if (!this.canAccessTemplate(templateId, userPermissions)) {
+      throw new ForbiddenException("Usuário sem permissão para acessar esta ficha de anamnese.");
+    }
   }
 
   private async loadTemplates() {
@@ -211,7 +231,7 @@ export class AnamnesisService {
     return { id };
   }
 
-  async finalize(userId: string, id: string) {
+  async finalize(userId: string, id: string, userPermissions: string[] = []) {
     const record = await this.findRecord(id);
 
     if (record.status === "FINALIZED") {
@@ -219,7 +239,7 @@ export class AnamnesisService {
     }
 
     const answers = this.answersFromRecord(record);
-    const incompleteTemplates = await this.getIncompleteTemplates(this.templateStatusesFromRecord(record), record.templateConfigJson);
+    const incompleteTemplates = await this.getIncompleteTemplates(this.templateStatusesFromRecord(record), record.templateConfigJson, userPermissions);
 
     if (incompleteTemplates.length > 0) {
       throw new BadRequestException({
@@ -228,7 +248,7 @@ export class AnamnesisService {
       });
     }
 
-    const missingRequiredFields = await this.getMissingRequiredFields(answers);
+    const missingRequiredFields = await this.getMissingRequiredFields(answers, undefined, userPermissions);
 
     if (missingRequiredFields.length > 0) {
       throw new BadRequestException({
@@ -258,7 +278,7 @@ export class AnamnesisService {
     return finalizedRecord;
   }
 
-  async completeTemplate(userId: string, id: string, templateId: string) {
+  async completeTemplate(userId: string, id: string, templateId: string, userPermissions: string[] = []) {
     const record = await this.findRecord(id);
 
     if (record.status === "FINALIZED") {
@@ -266,8 +286,9 @@ export class AnamnesisService {
     }
 
     await this.ensureRecordTemplateExists(record, templateId);
+    this.ensureTemplateAccess(templateId, userPermissions);
     const answers = this.answersFromRecord(record);
-    const missingRequiredFields = await this.getMissingRequiredFields(answers, templateId);
+    const missingRequiredFields = await this.getMissingRequiredFields(answers, templateId, userPermissions);
 
     if (missingRequiredFields.length > 0) {
       throw new BadRequestException({
@@ -341,9 +362,10 @@ export class AnamnesisService {
     };
   }
 
-  async emitTemplatePdfDocument(userId: string, id: string, templateId: string) {
+  async emitTemplatePdfDocument(userId: string, id: string, templateId: string, userPermissions: string[] = []) {
     const record = await this.findRecord(id);
     const template = await this.ensureRecordTemplateExists(record, templateId);
+    this.ensureTemplateAccess(templateId, userPermissions);
     const templateStatus = this.templateStatusesFromRecord(record)[templateId];
 
     if (templateStatus?.status !== "completed") {
@@ -531,7 +553,7 @@ export class AnamnesisService {
     return JSON.stringify(value);
   }
 
-  private async getMissingRequiredFields(answers: AnamnesisAnswers, templateId?: string) {
+  private async getMissingRequiredFields(answers: AnamnesisAnswers, templateId?: string, userPermissions: string[] = []) {
     const requiredQuestions = await this.cache.getOrSet("anamnesis:questions:required", 10 * 60 * 1000, () => this.prisma.anamnesisQuestion.findMany({
       where: { active: true, required: true },
       orderBy: { sortOrder: "asc" },
@@ -546,6 +568,7 @@ export class AnamnesisService {
 
     return requiredQuestions
       .filter((question) => !templateId || question.section.template.key === templateId)
+      .filter((question) => this.canAccessTemplate(question.section.template.key, userPermissions))
       .filter((question) => !this.isFilled(answers[question.section.template.key]?.[question.key]))
       .map((question) => ({
         templateTitle: question.section.template.title,
@@ -599,12 +622,13 @@ export class AnamnesisService {
     return record.templateConfigJson ? JSON.parse(record.templateConfigJson) as TemplateConfigItem[] : [];
   }
 
-  private async getIncompleteTemplates(templateStatuses: TemplateStatuses, templateConfigJson?: string | null) {
+  private async getIncompleteTemplates(templateStatuses: TemplateStatuses, templateConfigJson?: string | null, userPermissions: string[] = []) {
     const configuredTemplates = templateConfigJson ? JSON.parse(templateConfigJson) as TemplateConfigItem[] : [];
-    const templates = configuredTemplates.length > 0 ? configuredTemplates : await this.getTemplates();
+    const templates = configuredTemplates.length > 0 ? configuredTemplates : await this.getTemplates(userPermissions);
     return templates
       .map((template) => ({ id: template.id ?? "", title: template.title ?? template.shortTitle ?? template.id ?? "Ficha" }))
       .filter((template) => template.id.length > 0)
+      .filter((template) => this.canAccessTemplate(template.id, userPermissions))
       .filter((template) => templateStatuses[template.id]?.status !== "completed")
       .map((template) => ({ templateId: template.id, templateTitle: template.title }));
   }

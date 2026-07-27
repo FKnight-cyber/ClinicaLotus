@@ -69,9 +69,10 @@ const permissionModuleLabels: Record<string, string> = {
   medical_evolutions: "Prontuário",
   menu: "Menu lateral",
   patients: "Pacientes",
+  profile: "Perfil",
   prontuario: "Prontuário"
 };
-const permissionModuleOrder = ["Prontuário", "Pacientes", "Anamnese", "Controle de acesso", "Auditoria", "Menu lateral", "Administração"];
+const permissionModuleOrder = ["Prontuário", "Pacientes", "Anamnese", "Perfil", "Controle de acesso", "Auditoria", "Menu lateral", "Administração"];
 
 function getPermissionModuleLabel(module: string) {
   return permissionModuleLabels[module] ?? module;

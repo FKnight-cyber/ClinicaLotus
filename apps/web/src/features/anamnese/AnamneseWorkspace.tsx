@@ -12,6 +12,7 @@ import { AnamnesePrintDocument } from "./AnamnesePrintDocument";
 import { downloadAnamnesePdf } from "./pdfExport";
 import { completeAnamneseTemplate, createAnamneseRecord, createPatient, emitAnamnesePdfDocument, emitAnamneseTemplatePdfDocument, fetchAnamneseRecord, fetchAnamneseTemplates, fetchPatients, finalizeAnamneseRecord, saveAnamneseRecord } from "./storage";
 import { anamneseTemplates as fallbackTemplates } from "./templates";
+import { filterAnamneseTemplateConfigByPermissions, filterAnamneseTemplatesByPermissions } from "./templatePermissions";
 import type { AnamneseRecord, FieldValue, FormField, FormSection, FormTemplate, PatientSummary, SectionConfigItem, TableValue, TemplateAnswers, TemplateConfigItem, TemplateId, ValidationIssue } from "./types";
 
 const yesNoOptions = ["Sim", "Não"];
@@ -713,8 +714,16 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   }
 
   const loadedRecord = currentRecord;
-  const effectiveTemplates = getEffectiveTemplates(templates, loadedRecord.templateConfig);
-  const activeTemplate = effectiveTemplates.find((template) => template.id === activeTemplateId) ?? effectiveTemplates[0] ?? fallbackTemplates[0];
+  const userPermissions = user?.permissions ?? [];
+  const visibleTemplates = filterAnamneseTemplatesByPermissions(templates, userPermissions);
+  const visibleTemplateConfig = filterAnamneseTemplateConfigByPermissions(loadedRecord.templateConfig, userPermissions);
+  const effectiveTemplates = getEffectiveTemplates(visibleTemplates, visibleTemplateConfig);
+  const activeTemplate = effectiveTemplates.find((template) => template.id === activeTemplateId) ?? effectiveTemplates[0];
+
+  if (!activeTemplate) {
+    return <div className="loading-panel">Nenhuma ficha de anamnese disponível para o seu grupo de acesso.</div>;
+  }
+
   const activeSection = activeTemplate.sections[activeSectionIndex] ?? activeTemplate.sections[0];
   const customFields = loadedRecord.customFields?.[activeTemplate.id]?.[activeSection.id] ?? [];
   const sectionOverrides = loadedRecord.customFields?.[activeTemplate.id]?.[`__overrides__${activeSection.id}`] ?? [];
@@ -843,7 +852,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     lastSavedSnapshotRef.current = getRecordSnapshot(record);
     setCurrentRecord(record);
     setIssues([]);
-    setActiveTemplateId("nursing-admission");
+    setActiveTemplateId(effectiveTemplates[0]?.id ?? "nursing-admission");
     setActiveSectionIndex(0);
     setMessage("Novo rascunho criado no banco");
     router.replace(`/anamnese/${record.id}`);
@@ -1152,10 +1161,17 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     setCurrentRecord((record) => {
       if (!record) return record;
 
+      const existingConfigById = new Map((record.templateConfig ?? []).map((config) => [config.id, config]));
+      const editableConfig = normalizedConfig.flatMap((config) => {
+        if (record.templateStatuses?.[config.id]?.status !== "completed") return [config];
+        const existingConfig = existingConfigById.get(config.id);
+        return existingConfig ? [existingConfig] : [];
+      });
+
       const nextAnswers = { ...record.answers };
       const nextCustomFields = { ...record.customFields };
 
-      for (const config of normalizedConfig) {
+      for (const config of editableConfig) {
         nextAnswers[config.id] = nextAnswers[config.id] ?? {};
         if (config.isCustom) {
           nextCustomFields[config.id] = nextCustomFields[config.id] ?? { [customTemplateSectionId]: [] };
@@ -1166,14 +1182,23 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
         ...record,
         answers: nextAnswers,
         customFields: nextCustomFields,
-        templateConfig: normalizedConfig,
+        templateConfig: editableConfig,
         updatedAt: new Date().toISOString()
       };
     });
     setMessage("Configuração das fichas atualizada");
   }
 
+  function isTemplateConfigLocked(templateId: TemplateId) {
+    return loadedRecord.templateStatuses?.[templateId]?.status === "completed";
+  }
+
   function updateTemplateConfigItem(templateId: TemplateId, patch: Partial<TemplateConfigItem>) {
+    if (isTemplateConfigLocked(templateId)) {
+      setMessage("Ficha concluída não pode ser editada.");
+      return;
+    }
+
     applyTemplateConfig(getTemplateConfigItems().map((config) => config.id === templateId ? { ...config, ...patch } : config));
   }
 
@@ -1183,6 +1208,10 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     const nextIndex = currentIndex + direction;
 
     if (currentIndex < 0 || nextIndex < 0 || nextIndex >= configItems.length) return;
+    if (isTemplateConfigLocked(templateId) || isTemplateConfigLocked(configItems[nextIndex].id)) {
+      setMessage("Ficha concluída não pode ser reordenada.");
+      return;
+    }
 
     const nextConfigItems = [...configItems];
     [nextConfigItems[currentIndex], nextConfigItems[nextIndex]] = [nextConfigItems[nextIndex], nextConfigItems[currentIndex]];
@@ -1560,22 +1589,28 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                 </div>
               </div>
               <div className="template-manager-list">
-                {getTemplateConfigItems().map((templateConfig, index, configItems) => (
+                {getTemplateConfigItems().map((templateConfig, index, configItems) => {
+                  const isTemplateLocked = isTemplateConfigLocked(templateConfig.id);
+                  const previousTemplateLocked = index > 0 && isTemplateConfigLocked(configItems[index - 1].id);
+                  const nextTemplateLocked = index < configItems.length - 1 && isTemplateConfigLocked(configItems[index + 1].id);
+
+                  return (
                   <div className="template-manager-row" key={templateConfig.id}>
                     <label>
                       <span>Nome da aba</span>
-                      <input onChange={(event) => updateTemplateConfigItem(templateConfig.id, { shortTitle: event.target.value })} value={templateConfig.shortTitle} />
+                      <input disabled={isTemplateLocked} onChange={(event) => updateTemplateConfigItem(templateConfig.id, { shortTitle: event.target.value })} value={templateConfig.shortTitle} />
                     </label>
                     <label>
                       <span>Título da ficha</span>
-                      <input onChange={(event) => updateTemplateConfigItem(templateConfig.id, { title: event.target.value })} value={templateConfig.title} />
+                      <input disabled={isTemplateLocked} onChange={(event) => updateTemplateConfigItem(templateConfig.id, { title: event.target.value })} value={templateConfig.title} />
                     </label>
                     <div className="template-manager-actions">
-                      <button aria-label={`Mover ${templateConfig.shortTitle} para cima`} disabled={index === 0} onClick={() => moveTemplateConfigItem(templateConfig.id, -1)} type="button">↑</button>
-                      <button aria-label={`Mover ${templateConfig.shortTitle} para baixo`} disabled={index === configItems.length - 1} onClick={() => moveTemplateConfigItem(templateConfig.id, 1)} type="button">↓</button>
+                      <button aria-label={`Mover ${templateConfig.shortTitle} para cima`} disabled={isTemplateLocked || previousTemplateLocked || index === 0} onClick={() => moveTemplateConfigItem(templateConfig.id, -1)} type="button">↑</button>
+                      <button aria-label={`Mover ${templateConfig.shortTitle} para baixo`} disabled={isTemplateLocked || nextTemplateLocked || index === configItems.length - 1} onClick={() => moveTemplateConfigItem(templateConfig.id, 1)} type="button">↓</button>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
               <div className="template-manager-new">
                 <label>

@@ -32,12 +32,6 @@ type PaginatedAccessGroups = {
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
-const userTypeLabels: Record<AccessUser["userType"], string> = {
-  MANAGER: "Gerente",
-  PATIENT: "Paciente",
-  NURSE: "Enfermeiro",
-  DOCTOR: "Médico"
-};
 
 function normalizeGroupsPage(payload: PaginatedAccessGroups | AccessGroup[]): PaginatedAccessGroups {
   if (Array.isArray(payload)) {
@@ -73,7 +67,7 @@ export function UserDetailPage({ userId }: { userId: string }) {
   const isSelf = user?.id === userId;
   const [targetUser, setTargetUser] = useState<AccessUser | null>(null);
   const [groups, setGroups] = useState<AccessGroup[]>([]);
-  const [draft, setDraft] = useState<{ name: string; email: string; userType: AccessUser["userType"] }>({ name: "", email: "", userType: "MANAGER" });
+  const [draft, setDraft] = useState<{ name: string; email: string }>({ name: "", email: "" });
   const [groupDraft, setGroupDraft] = useState<string[]>([]);
   const [statusDraft, setStatusDraft] = useState<AccessUser["status"]>("PENDING");
   const [message, setMessage] = useState<string | null>(null);
@@ -96,7 +90,7 @@ export function UserDetailPage({ userId }: { userId: string }) {
         const nextGroupsPage = normalizeGroupsPage(nextGroups);
         setTargetUser(nextUser);
         setGroups(nextGroupsPage.items);
-        setDraft({ name: nextUser.name, email: nextUser.email ?? "", userType: nextUser.userType });
+        setDraft({ name: nextUser.name, email: nextUser.email ?? "" });
         setGroupDraft(nextUser.groups.map((group) => group.accessGroup.id));
         setStatusDraft(nextUser.status);
         setIsLoading(false);
@@ -118,7 +112,7 @@ export function UserDetailPage({ userId }: { userId: string }) {
 
         if (!isCurrent) return;
         setTargetUser(nextUser);
-        setDraft({ name: nextUser.name, email: nextUser.email ?? "", userType: nextUser.userType });
+        setDraft({ name: nextUser.name, email: nextUser.email ?? "" });
         setIsLoading(false);
         return;
       }
@@ -147,17 +141,16 @@ export function UserDetailPage({ userId }: { userId: string }) {
     const formData = new FormData(event.currentTarget);
     const nextDraft = {
       name: String(formData.get("name") ?? draft.name),
-      email: String(formData.get("email") ?? draft.email),
-      userType: String(formData.get("userType") ?? draft.userType) as AccessUser["userType"]
+      email: String(formData.get("email") ?? draft.email)
     };
 
     if (canManageUsers) {
       const updatedUser = await apiRequest<AccessUser>(token, `/api/access/users/${targetUser.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ name: nextDraft.name, email: nextDraft.email || undefined, userType: nextDraft.userType })
+        body: JSON.stringify({ name: nextDraft.name, email: nextDraft.email || undefined })
       });
       setTargetUser(updatedUser);
-      setDraft({ name: updatedUser.name, email: updatedUser.email ?? "", userType: updatedUser.userType });
+      setDraft({ name: updatedUser.name, email: updatedUser.email ?? "" });
       if (isSelf) await refreshProfile();
     } else if (isSelf) {
       await apiRequest(token, "/api/auth/me", {
@@ -204,9 +197,9 @@ export function UserDetailPage({ userId }: { userId: string }) {
     <section className="user-detail-page">
       <div className="list-header">
         <div>
-          <span className="eyebrow">Usuário</span>
-          <h2>{targetUser.name}</h2>
-          <p>{targetUser.login} {targetUser.email ? `- ${targetUser.email}` : ""}</p>
+          <span className="eyebrow">Controle de acesso</span>
+          <h2>Detalhes do usuário</h2>
+          <p>{targetUser.name} - {targetUser.login} {targetUser.email ? `- ${targetUser.email}` : ""}</p>
         </div>
         <div className="detail-heading-actions">
           {canReadUsers ? <Link className="back-link" href="/modulos/controle-acesso/gerenciar-usuarios"><ArrowLeft size={16} />Gerenciar usuários</Link> : null}
@@ -227,9 +220,6 @@ export function UserDetailPage({ userId }: { userId: string }) {
             <label><span>Login</span><input disabled value={targetUser.login} /></label>
             <label><span>Nome</span><input name="name" onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} required value={draft.name} /></label>
             <label><span>Email</span><input name="email" onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} type="email" value={draft.email} /></label>
-            {canManageUsers ? <label><span>Tipo de usuário</span><select name="userType" onChange={(event) => setDraft((current) => ({ ...current, userType: event.target.value as AccessUser["userType"] }))} value={draft.userType}>
-              {Object.entries(userTypeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select></label> : null}
             {isSelf || canManageUsers ? <button className="primary-button" type="submit"><Save aria-hidden="true" size={17} />Salvar dados</button> : null}
           </form>
         </section>
