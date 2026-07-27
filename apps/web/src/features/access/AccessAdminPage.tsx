@@ -50,17 +50,12 @@ type PaginatedAccessUsers = {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
 const DEFAULT_GROUP_LIMIT = 40;
-const DEFAULT_USER_LIMIT = 5;
+const DEFAULT_USER_LIMIT = 40;
 const MAX_GROUP_LIMIT = 100;
 const MAX_USER_LIMIT = 100;
 const GROUP_SEARCH_DELAY_MS = 350;
 const USER_SEARCH_DELAY_MS = 350;
-const userTypeLabels: Record<AccessUser["userType"], string> = {
-  MANAGER: "Gerente",
-  PATIENT: "Paciente",
-  NURSE: "Enfermeiro",
-  DOCTOR: "Médico"
-};
+const USER_FILTERS_STORAGE_KEY = "clinica.access.users.filters";
 const permissionModuleLabels: Record<string, string> = {
   access: "Controle de acesso",
   admin: "Administração",
@@ -92,6 +87,41 @@ function normalizeUsersPage(payload: PaginatedAccessUsers | AccessUser[], fallba
   }
 
   return payload;
+}
+
+function normalizeUserLimit(value: unknown) {
+  const parsedLimit = Number(value);
+  if (!Number.isFinite(parsedLimit)) return DEFAULT_USER_LIMIT;
+  return Math.min(Math.max(Math.trunc(parsedLimit), 1), MAX_USER_LIMIT);
+}
+
+function normalizeUserStatus(value: unknown): AccessUser["status"] | "" {
+  return value === "ACTIVE" || value === "PENDING" || value === "INACTIVE" ? value : "";
+}
+
+function readStoredUserFilters() {
+  const defaultFilters = { search: "", groupId: "", status: "" as AccessUser["status"] | "", limit: DEFAULT_USER_LIMIT };
+  if (typeof window === "undefined") return defaultFilters;
+
+  try {
+    const storedFilters = window.localStorage.getItem(USER_FILTERS_STORAGE_KEY);
+    if (!storedFilters) return defaultFilters;
+    const parsedFilters = JSON.parse(storedFilters) as { search?: unknown; groupId?: unknown; status?: unknown; limit?: unknown };
+
+    return {
+      search: typeof parsedFilters.search === "string" ? parsedFilters.search : "",
+      groupId: typeof parsedFilters.groupId === "string" ? parsedFilters.groupId : "",
+      status: normalizeUserStatus(parsedFilters.status),
+      limit: normalizeUserLimit(parsedFilters.limit)
+    };
+  } catch {
+    window.localStorage.removeItem(USER_FILTERS_STORAGE_KEY);
+    return defaultFilters;
+  }
+}
+
+function writeStoredUserFilters(search: string, groupId: string, status: AccessUser["status"] | "", limit: number) {
+  window.localStorage.setItem(USER_FILTERS_STORAGE_KEY, JSON.stringify({ search, groupId, status, limit }));
 }
 
 function buildGroupsPath(limit: number, search: string) {
@@ -433,18 +463,19 @@ export function AccessUsersAdminPage() {
   const canManageUsers = hasPermission("access.users.manage");
   const usersCacheRef = useRef(new Map<string, PaginatedAccessUsers>());
   const userGroupsCacheRef = useRef<AccessGroup[] | null>(null);
+  const [initialUserFilters] = useState(readStoredUserFilters);
   const [users, setUsers] = useState<AccessUser[]>([]);
   const [userGroups, setUserGroups] = useState<AccessGroup[]>([]);
   const [userTotal, setUserTotal] = useState(0);
-  const [userLimit, setUserLimit] = useState(DEFAULT_USER_LIMIT);
-  const [userSearch, setUserSearch] = useState("");
-  const [debouncedUserSearch, setDebouncedUserSearch] = useState("");
-  const [selectedUserGroupId, setSelectedUserGroupId] = useState("");
-  const [selectedUserStatus, setSelectedUserStatus] = useState("");
-  const [draftUserLimit, setDraftUserLimit] = useState(DEFAULT_USER_LIMIT);
-  const [draftUserSearch, setDraftUserSearch] = useState("");
-  const [draftSelectedUserGroupId, setDraftSelectedUserGroupId] = useState("");
-  const [draftSelectedUserStatus, setDraftSelectedUserStatus] = useState("");
+  const [userLimit, setUserLimit] = useState(initialUserFilters.limit);
+  const [userSearch, setUserSearch] = useState(initialUserFilters.search);
+  const [debouncedUserSearch, setDebouncedUserSearch] = useState(initialUserFilters.search);
+  const [selectedUserGroupId, setSelectedUserGroupId] = useState(initialUserFilters.groupId);
+  const [selectedUserStatus, setSelectedUserStatus] = useState<AccessUser["status"] | "">(initialUserFilters.status);
+  const [draftUserLimit, setDraftUserLimit] = useState(initialUserFilters.limit);
+  const [draftUserSearch, setDraftUserSearch] = useState(initialUserFilters.search);
+  const [draftSelectedUserGroupId, setDraftSelectedUserGroupId] = useState(initialUserFilters.groupId);
+  const [draftSelectedUserStatus, setDraftSelectedUserStatus] = useState<AccessUser["status"] | "">(initialUserFilters.status);
   const [isUserFiltersOpen, setIsUserFiltersOpen] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -492,6 +523,10 @@ export function AccessUsersAdminPage() {
 
     return () => window.clearTimeout(timeoutId);
   }, [userSearch]);
+
+  useEffect(() => {
+    writeStoredUserFilters(userSearch, selectedUserGroupId, selectedUserStatus, userLimit);
+  }, [selectedUserGroupId, selectedUserStatus, userLimit, userSearch]);
 
   useEffect(() => {
     if (!token) return;
@@ -652,7 +687,7 @@ export function AccessUsersAdminPage() {
                   </label>
                   <label>
                     <span>Status</span>
-                    <select aria-label="Filtrar por status" onChange={(event) => setDraftSelectedUserStatus(event.target.value)} value={draftSelectedUserStatus}>
+                    <select aria-label="Filtrar por status" onChange={(event) => setDraftSelectedUserStatus(normalizeUserStatus(event.target.value))} value={draftSelectedUserStatus}>
                       <option value="">Todos os status</option>
                       <option value="ACTIVE">Ativos</option>
                       <option value="PENDING">Pendentes</option>
@@ -664,7 +699,7 @@ export function AccessUsersAdminPage() {
                     <input
                       max={MAX_USER_LIMIT}
                       min={1}
-                      onChange={(event) => setDraftUserLimit(Math.min(Math.max(Number(event.target.value) || DEFAULT_USER_LIMIT, 1), MAX_USER_LIMIT))}
+                      onChange={(event) => setDraftUserLimit(normalizeUserLimit(event.target.value))}
                       type="number"
                       value={draftUserLimit}
                     />
@@ -724,7 +759,7 @@ function UserCard({
   return (
     <article className="access-card compact user-card">
       <div className="access-card-heading user-card-heading">
-        <div className="user-card-identity"><strong>{user.name}</strong><span>{userTypeLabels[user.userType]} - {user.login} {user.email ? `- ${user.email}` : ""}</span></div>
+        <div className="user-card-identity"><strong>{user.name}</strong><span>{user.login}{user.email ? ` - ${user.email}` : ""}</span></div>
         <span className={`status-badge user-status-badge ${statusBadge.className}`}><StatusIcon aria-hidden="true" size={16} />{statusBadge.label}</span>
       </div>
       <p>{user.groups.map((group) => group.accessGroup.name).join(", ") || "Sem grupo vinculado"}</p>
