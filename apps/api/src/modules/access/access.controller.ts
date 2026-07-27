@@ -31,6 +31,12 @@ export class AccessController {
     return this.accessService.listAnamnesisAuditLogs(query);
   }
 
+  @Get("audit-logs/medical-evolutions")
+  @RequirePermissions("audit.medical_evolutions.read")
+  listMedicalEvolutionAuditLogs(@Query() query: ListAccessAuditLogsQueryDto) {
+    return this.accessService.listMedicalEvolutionAuditLogs(query);
+  }
+
   @Get("permissions")
   @RequirePermissions("access.groups.read")
   listPermissions() {

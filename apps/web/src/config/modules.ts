@@ -139,6 +139,12 @@ export const moduleItems: ModuleItem[] = [
         label: "Logs de Anamnese",
         href: "/modulos/auditoria/logs-anamnese",
         visibilityPermission: "audit.anamnesis.read"
+      },
+      {
+        slug: "logs-evolucoes",
+        label: "Logs de Evoluções",
+        href: "/modulos/auditoria/logs-evolucoes",
+        visibilityPermission: "audit.medical_evolutions.read"
       }
     ]
   },

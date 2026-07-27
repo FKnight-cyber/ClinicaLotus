@@ -41,16 +41,21 @@ export class AccessService {
     ]);
   }
 
+  listMedicalEvolutionAuditLogs(query: ListAccessAuditLogsQueryDto = {}) {
+    return this.listAuditLogsByScope(query, ["medical_evolution"], "access:audit-logs:medical-evolutions", ["finalize_medical_evolution"]);
+  }
+
   private listAuditLogsByScope(query: ListAccessAuditLogsQueryDto = {}, allowedEntities: string[], cachePrefix: string, allowedActions?: string[]) {
     const limit = this.normalizeListLimit(query.limit);
     const page = this.normalizePage(query.page);
     const skip = (page - 1) * limit;
     const search = query.search?.trim();
-    const entity = query.entity && allowedEntities.includes(query.entity) ? query.entity : undefined;
+    const requestedEntity = query.entity?.trim();
+    const entity = requestedEntity && allowedEntities.includes(requestedEntity) ? requestedEntity : undefined;
     const requestedAction = query.action?.trim();
     const action = requestedAction && (!allowedActions || allowedActions.includes(requestedAction)) ? requestedAction : undefined;
     const where = {
-      entity: entity ?? { in: allowedEntities },
+      entity: requestedEntity && !entity ? "__invalid_entity__" : entity ?? { in: allowedEntities },
       ...(action ? { action } : allowedActions ? { action: { in: allowedActions } } : {}),
       ...(search ? { OR: [
         { action: { contains: search, mode: "insensitive" as const } },

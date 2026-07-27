@@ -14,7 +14,7 @@ type AuditUser = {
 
 type AccessAuditLog = {
   id: string;
-  entity: "access_group" | "access_user" | "anamnesis_record" | "AnamnesisRecord";
+  entity: "access_group" | "access_user" | "anamnesis_record" | "AnamnesisRecord" | "medical_evolution";
   entityId?: string | null;
   action: string;
   beforeData?: string | null;
@@ -33,8 +33,15 @@ type PaginatedAccessAuditLogs = {
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
-const DEFAULT_AUDIT_LIMIT = 5;
+const DEFAULT_AUDIT_LIMIT = 40;
 const MAX_AUDIT_LIMIT = 100;
+
+type StoredAuditFilters = {
+  search?: string;
+  selectedEntity?: string;
+  selectedAction?: string;
+  limit?: number;
+};
 
 type AuditEntityFilter = "" | AccessAuditLog["entity"];
 
@@ -93,6 +100,18 @@ export const anamnesisAuditConfig: AuditLogsPageConfig = {
   }
 };
 
+export const medicalEvolutionAuditConfig: AuditLogsPageConfig = {
+  title: "Logs de Evoluções",
+  description: "Consulte as finalizações de evoluções clínicas registradas no prontuário.",
+  permission: "audit.medical_evolutions.read",
+  permissionMessage: "Seu usuário não possui permissão para visualizar logs de evoluções.",
+  endpoint: "/api/access/audit-logs/medical-evolutions",
+  entityOptions: [{ value: "medical_evolution", label: "Evoluções" }],
+  actionLabels: {
+    finalize_medical_evolution: "Evolução finalizada"
+  }
+};
+
 function buildAuditLogsPath(endpoint: string, limit: number, page: number, search: string, entity: string, action: string) {
   const params = new URLSearchParams({ limit: String(limit), page: String(page) });
   const normalizedSearch = search.trim();
@@ -106,6 +125,36 @@ function buildAuditLogsCacheKey(limit: number, page: number, search: string, ent
   return `${limit}:${page}:${search.trim().toLowerCase()}:${entity}:${action}`;
 }
 
+function buildAuditFiltersStorageKey(endpoint: string) {
+  return `audit-logs:filters:${endpoint}`;
+}
+
+function normalizeStoredLimit(limit?: number) {
+  if (typeof limit !== "number" || !Number.isFinite(limit)) return DEFAULT_AUDIT_LIMIT;
+  return Math.min(Math.max(Math.trunc(limit), 1), MAX_AUDIT_LIMIT);
+}
+
+function readStoredAuditFilters(endpoint: string, entityOptions: AuditEntityOption[], actionLabels: Record<string, string>) {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const storedValue = window.localStorage.getItem(buildAuditFiltersStorageKey(endpoint));
+    if (!storedValue) return null;
+
+    const storedFilters = JSON.parse(storedValue) as StoredAuditFilters;
+    const allowedEntities = entityOptions.map((entityOption) => entityOption.value);
+    const allowedActions = Object.keys(actionLabels);
+    return {
+      search: typeof storedFilters.search === "string" ? storedFilters.search : "",
+      selectedEntity: storedFilters.selectedEntity && allowedEntities.includes(storedFilters.selectedEntity as Exclude<AuditEntityFilter, "">) ? storedFilters.selectedEntity as AuditEntityFilter : "",
+      selectedAction: storedFilters.selectedAction && allowedActions.includes(storedFilters.selectedAction) ? storedFilters.selectedAction : "",
+      limit: normalizeStoredLimit(storedFilters.limit)
+    };
+  } catch {
+    return null;
+  }
+}
+
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
 }
@@ -113,6 +162,7 @@ function formatDateTime(value: string) {
 function formatEntity(entity: AccessAuditLog["entity"]) {
   if (entity === "access_group") return "Grupos e acessos";
   if (entity === "anamnesis_record" || entity === "AnamnesisRecord") return "Anamnese";
+  if (entity === "medical_evolution") return "Evoluções";
   return "Gerenciar usuários";
 }
 
@@ -134,6 +184,9 @@ function parseAuditPayload(payload?: string | null) {
       code?: string;
       patientName?: string;
       fileName?: string;
+      professionalArea?: string | null;
+      professionalName?: string | null;
+      finalizedAt?: string | null;
       record?: { code?: string; patientName?: string };
       createdTemplates?: Array<{ title?: string; shortTitle?: string }>;
     };
@@ -174,6 +227,13 @@ function readAuditDetails(log: AccessAuditLog) {
   if (log.action === "emit_anamnesis_pdf" || log.action === "EMIT_PDF") return `PDF completo emitido${afterPayload?.fileName ? `: ${afterPayload.fileName}` : ""}.`;
   if (log.action === "emit_anamnesis_template_pdf" || log.action === "EMIT_TEMPLATE_PDF") return `PDF parcial emitido${afterPayload?.fileName ? `: ${afterPayload.fileName}` : ""}.`;
 
+  if (log.action === "finalize_medical_evolution") {
+    const professional = afterPayload?.professionalName ? ` por ${afterPayload.professionalName}` : "";
+    const area = afterPayload?.professionalArea ? ` (${afterPayload.professionalArea})` : "";
+    const finalizedAt = afterPayload?.finalizedAt ? ` em ${formatDateTime(afterPayload.finalizedAt)}` : "";
+    return `Evolução finalizada${professional}${area}${finalizedAt}.`;
+  }
+
   if (log.action === "update_user_status") {
     return `Status alterado de ${formatStatus(beforePayload?.status)} para ${formatStatus(afterPayload?.status)}.`;
   }
@@ -209,9 +269,10 @@ function readAuditTarget(log: AccessAuditLog) {
   if (!payload) return log.entityId ?? "Registro não informado";
 
   try {
-    const parsed = JSON.parse(payload) as { name?: string; login?: string; code?: string; patientName?: string; record?: { code?: string; patientName?: string } };
+    const parsed = JSON.parse(payload) as { name?: string; login?: string; code?: string; patientName?: string; professionalName?: string | null; professionalArea?: string | null; record?: { code?: string; patientName?: string } };
     if (parsed.record?.code) return `${parsed.record.code}${parsed.record.patientName ? ` - ${parsed.record.patientName}` : ""}`;
     if (parsed.code) return `${parsed.code}${parsed.patientName ? ` - ${parsed.patientName}` : ""}`;
+    if (parsed.professionalName) return `${parsed.professionalName}${parsed.professionalArea ? ` - ${parsed.professionalArea}` : ""}`;
     if (parsed.name && parsed.login) return `${parsed.name} (${parsed.login})`;
     if (parsed.name) return parsed.name;
   } catch {
@@ -244,19 +305,20 @@ type AccessAuditLogsPageProps = {
 export function AccessAuditLogsPage({ config = accessAuditConfig }: AccessAuditLogsPageProps) {
   const { hasPermission, token } = useAuth();
   const logsCacheRef = useRef(new Map<string, PaginatedAccessAuditLogs>());
+  const [initialFilters] = useState(() => readStoredAuditFilters(config.endpoint, config.entityOptions, config.actionLabels));
   const auditActionOptions = Object.entries(config.actionLabels).map(([value, label]) => ({ value, label }));
   const [logs, setLogs] = useState<AccessAuditLog[]>([]);
   const [total, setTotal] = useState(0);
-  const [limit, setLimit] = useState(DEFAULT_AUDIT_LIMIT);
+  const [limit, setLimit] = useState(initialFilters?.limit ?? DEFAULT_AUDIT_LIMIT);
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [selectedEntity, setSelectedEntity] = useState<AuditEntityFilter>("");
-  const [selectedAction, setSelectedAction] = useState("");
-  const [draftSearch, setDraftSearch] = useState("");
-  const [draftSelectedEntity, setDraftSelectedEntity] = useState<AuditEntityFilter>("");
-  const [draftSelectedAction, setDraftSelectedAction] = useState("");
-  const [draftLimit, setDraftLimit] = useState(DEFAULT_AUDIT_LIMIT);
+  const [search, setSearch] = useState(initialFilters?.search ?? "");
+  const [debouncedSearch, setDebouncedSearch] = useState(initialFilters?.search ?? "");
+  const [selectedEntity, setSelectedEntity] = useState<AuditEntityFilter>(initialFilters?.selectedEntity ?? "");
+  const [selectedAction, setSelectedAction] = useState(initialFilters?.selectedAction ?? "");
+  const [draftSearch, setDraftSearch] = useState(initialFilters?.search ?? "");
+  const [draftSelectedEntity, setDraftSelectedEntity] = useState<AuditEntityFilter>(initialFilters?.selectedEntity ?? "");
+  const [draftSelectedAction, setDraftSelectedAction] = useState(initialFilters?.selectedAction ?? "");
+  const [draftLimit, setDraftLimit] = useState(initialFilters?.limit ?? DEFAULT_AUDIT_LIMIT);
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
   const [totalPages, setTotalPages] = useState(1);
   const [message, setMessage] = useState<string | null>(null);
@@ -294,6 +356,15 @@ export function AccessAuditLogsPage({ config = accessAuditConfig }: AccessAuditL
 
     return () => window.clearTimeout(timeoutId);
   }, [search]);
+
+  useEffect(() => {
+    window.localStorage.setItem(buildAuditFiltersStorageKey(config.endpoint), JSON.stringify({
+      search,
+      selectedEntity,
+      selectedAction,
+      limit
+    }));
+  }, [config.endpoint, search, selectedEntity, selectedAction, limit]);
 
   useEffect(() => {
     if (!token || !canReadAuditLogs) return;
