@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, ArrowLeft, CalendarClock, ClipboardList, FileText, ToggleLeft, ToggleRight, UserRound } from "lucide-react";
+import { Activity, ArrowLeft, CalendarClock, ClipboardList, FileDown, FileText, ToggleLeft, ToggleRight, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useShellTitle } from "@/components/shell/AppShell";
 import { useAuth } from "@/features/auth/AuthProvider";
+import { downloadPatientSummaryReportPdf } from "./patientSummaryReportPdf";
 
 type PatientStatus = "ACTIVE" | "INACTIVE";
 type ClinicalStatus = "draft" | "finalized" | "canceled";
@@ -24,6 +25,16 @@ type PatientDetail = {
 };
 
 type PatientStatusResponse = Omit<PatientDetail, "anamneses" | "evolutions">;
+
+type ClinicalDocumentSummary = {
+  id: string;
+  code: string;
+  type: string;
+  fileName: string;
+  contentHash: string;
+  emittedAt: string;
+  patientId?: string | null;
+};
 
 type PatientAnamnesis = {
   id: string;
@@ -114,7 +125,7 @@ function countByStatus(items: Array<{ status: ClinicalStatus }>, status: Clinica
 }
 
 export function PatientDetailPage({ patientId }: { patientId: string }) {
-  const { hasPermission, token } = useAuth();
+  const { hasPermission, token, user } = useAuth();
   const canReadPatients = hasPermission("patients.read");
   const canReadAnamnese = hasPermission("anamnese.read");
   const canReadEvolutions = hasPermission("medical_evolutions.read");
@@ -123,6 +134,7 @@ export function PatientDetailPage({ patientId }: { patientId: string }) {
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingStatus, setIsSavingStatus] = useState(false);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
   useEffect(() => {
     if (!token || !canReadPatients) return;
@@ -182,6 +194,26 @@ export function PatientDetailPage({ patientId }: { patientId: string }) {
     }
   }
 
+  async function handleDownloadReport() {
+    if (!token || !patient) return;
+    setIsGeneratingReport(true);
+    setMessage("Gerando relatório do paciente...");
+
+    try {
+      const document = await apiRequest<ClinicalDocumentSummary>(token, `/api/patients/${patient.id}/report/pdf`, { method: "POST" });
+      await downloadPatientSummaryReportPdf(patient, {
+        code: document.code,
+        emittedAt: document.emittedAt,
+        emittedBy: user ? { name: user.name, login: user.login } : null
+      });
+      setMessage(`Relatório ${document.code} gerado.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível gerar o relatório do paciente.");
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  }
+
   if (!canReadPatients) {
     return <div className="loading-panel">Você não possui permissão para visualizar pacientes.</div>;
   }
@@ -207,6 +239,9 @@ export function PatientDetailPage({ patientId }: { patientId: string }) {
             <ToggleIcon aria-hidden="true" size={17} />{isSavingStatus ? "Atualizando..." : patient.status === "ACTIVE" ? "Inativar" : "Ativar"}
           </button>
         ) : null}
+        <button className="secondary-button" disabled={isGeneratingReport} onClick={handleDownloadReport} type="button">
+          <FileDown aria-hidden="true" size={17} />{isGeneratingReport ? "Gerando..." : "Baixar relatório"}
+        </button>
       </div>
 
       {message ? <div className="access-message">{message}</div> : null}

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Injectable, NotFoundException } from "@nestjs/common";
 import type { AnamnesisStatus, MedicalEvolutionStatus, PatientStatus, Prisma } from "@prisma/client";
 import { AppCacheService } from "../../shared/cache/app-cache.service";
@@ -215,6 +216,34 @@ export class PatientsService {
     return patient;
   }
 
+  async emitSummaryReportDocument(actorUserId: string | undefined, patientId: string, userPermissions: string[] = []) {
+    const patient = await this.getById(patientId, userPermissions);
+    const contentHash = createHash("sha256").update(JSON.stringify(patient)).digest("hex");
+    const document = await this.prisma.clinicalDocument.create({
+      data: {
+        code: await this.nextDocumentCode(),
+        type: "PATIENT_SUMMARY_REPORT_PDF",
+        fileName: `relatorio-paciente-${patient.id.slice(0, 8)}.pdf`,
+        contentHash,
+        metadataJson: JSON.stringify({ patientId: patient.id, patientName: patient.name, emittedFrom: "web-pdf-export", scope: "patient-summary" }),
+        patientId: patient.id,
+        emittedById: actorUserId
+      }
+    });
+
+    await this.writePatientDocumentAuditLog(actorUserId, patient.id, "emit_patient_summary_report_pdf", document, `Relatório resumido emitido: ${patient.name}`);
+
+    return {
+      id: document.id,
+      code: document.code,
+      type: document.type,
+      fileName: document.fileName,
+      contentHash: document.contentHash,
+      emittedAt: document.emittedAt.toISOString(),
+      patientId: document.patientId
+    };
+  }
+
   getMedicalRecord(patientId: string, userPermissions: string[] = [], options?: ListQueryOptions) {
     const canReadEvolutions = userPermissions.includes("admin.full_access") || userPermissions.includes("medical_evolutions.read");
     const pagination = parsePaginationOptions(options);
@@ -281,6 +310,33 @@ export class PatientsService {
     if (status === "FINALIZED") return "finalized";
     if (status === "CANCELED") return "canceled";
     return "draft";
+  }
+
+  private async nextDocumentCode() {
+    const year = new Date().getFullYear();
+    const prefix = `DOC-${year}-`;
+    const latestDocument = await this.prisma.clinicalDocument.findFirst({
+      where: { code: { startsWith: prefix } },
+      orderBy: { code: "desc" },
+      select: { code: true }
+    });
+    const latestSequence = Number.parseInt(latestDocument?.code.replace(prefix, "") ?? "0", 10);
+    return `${prefix}${String((Number.isFinite(latestSequence) ? latestSequence : 0) + 1).padStart(4, "0")}`;
+  }
+
+  private async writePatientDocumentAuditLog(userId: string | undefined, patientId: string, action: string, document: unknown, reason: string) {
+    await this.prisma.auditLog.create({
+      data: {
+        entity: "patient",
+        entityId: patientId,
+        action,
+        beforeData: null,
+        afterData: JSON.stringify(document),
+        reason,
+        userId: userId ?? null
+      }
+    });
+    this.cache.deleteByPrefix("access:audit-logs:");
   }
 
   private async writeAuditLog(userId: string | undefined, action: string, beforeData: unknown, afterData: unknown, reason: string) {

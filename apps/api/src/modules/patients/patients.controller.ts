@@ -31,6 +31,12 @@ export class PatientsController {
     return this.patientsService.getById(patientId, request.user.permissions);
   }
 
+  @Post(":patientId/report/pdf")
+  @RequirePermissions("patients.read")
+  emitSummaryReportDocument(@Req() request: { user: AuthenticatedUser }, @Param("patientId") patientId: string) {
+    return this.patientsService.emitSummaryReportDocument(request.user.id, patientId, request.user.permissions);
+  }
+
   @Patch(":patientId")
   @RequirePermissions("patients.update")
   update(@Req() request: { user?: AuthenticatedUser }, @Param("patientId") patientId: string, @Body() dto: UpdatePatientDto) {
