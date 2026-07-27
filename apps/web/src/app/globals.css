@@ -2677,6 +2677,10 @@ td input {
   min-width: 860px;
 }
 
+.patients-table {
+  min-width: 1040px;
+}
+
 .records-table th,
 .records-table td {
   padding: 13px 12px;
@@ -2701,6 +2705,11 @@ td input {
   color: var(--primary-strong);
 }
 
+.table-status.is-inactive {
+  background: #eef1f0;
+  color: #5f6f68;
+}
+
 .table-action {
   align-items: center;
   background: #ffffff;
@@ -2711,12 +2720,136 @@ td input {
   gap: 7px;
   min-height: 36px;
   padding: 7px 10px;
+  text-decoration: none;
+}
+
+.table-action:disabled,
+.table-action.is-disabled {
+  background: #f4f7f5;
+  border-color: var(--line);
+  color: var(--muted);
+  opacity: 0.68;
+}
+
+.permission-tooltip {
+  display: inline-flex;
 }
 
 .records-table-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+}
+
+.patients-table-actions {
+  min-width: 360px;
+}
+
+.patients-inline-loading {
+  margin: 14px 22px 0;
+}
+
+.patient-modal-panel {
+  max-width: 720px;
+  width: min(720px, 100%);
+}
+
+.patient-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.patient-form-full {
+  grid-column: 1 / -1;
+}
+
+.patient-detail-page {
+  display: grid;
+  gap: 18px;
+}
+
+.patient-detail-actions-row {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  padding-bottom: 18px;
+}
+
+.patient-detail-summary-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr);
+}
+
+.patient-registration-panel,
+.patient-analysis-panel,
+.patient-history-panel {
+  min-width: 0;
+}
+
+.patient-detail-fields {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.patient-detail-fields div {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 4px;
+  padding-top: 10px;
+}
+
+.patient-detail-fields dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.patient-detail-fields dd {
+  margin: 0;
+}
+
+.patient-analysis-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.patient-analysis-card {
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+}
+
+.patient-analysis-card span,
+.patient-analysis-card small {
+  color: var(--muted);
+}
+
+.patient-analysis-card strong {
+  font-size: 1.2rem;
+}
+
+.patient-detail-table-shell {
+  padding: 0;
+}
+
+.patient-detail-history-table {
+  min-width: 980px;
+}
+
+.patient-history-summary {
+  color: var(--muted);
+  line-height: 1.45;
+  max-width: 520px;
+  white-space: normal;
 }
 
 .audit-logs-heading {

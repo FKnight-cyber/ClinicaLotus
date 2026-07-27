@@ -10,7 +10,7 @@ import { emitMedicalEvolutionPdfDocument, fetchMedicalEvolution, fetchMedicalEvo
 import type { MedicalEvolution } from "@/features/prontuario/prontuarioTypes";
 import { AnamnesePrintDocument } from "./AnamnesePrintDocument";
 import { downloadAnamnesePdf } from "./pdfExport";
-import { completeAnamneseTemplate, createAnamneseRecord, createPatient, emitAnamnesePdfDocument, emitAnamneseTemplatePdfDocument, fetchAnamneseRecord, fetchAnamneseTemplates, fetchPatients, finalizeAnamneseRecord, saveAnamneseRecord } from "./storage";
+import { completeAnamneseTemplate, createAnamneseRecord, emitAnamnesePdfDocument, emitAnamneseTemplatePdfDocument, fetchAnamneseRecord, fetchAnamneseTemplates, fetchPatients, finalizeAnamneseRecord, saveAnamneseRecord } from "./storage";
 import { anamneseTemplates as fallbackTemplates } from "./templates";
 import { filterAnamneseTemplateConfigByPermissions, filterAnamneseTemplatesByPermissions } from "./templatePermissions";
 import type { AnamneseRecord, FieldValue, FormField, FormSection, FormTemplate, PatientSummary, SectionConfigItem, TableValue, TemplateAnswers, TemplateConfigItem, TemplateId, ValidationIssue } from "./types";
@@ -546,7 +546,6 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const canFinalizeAnamnese = hasPermission("anamnese.finalize");
   const canPrintAnamnese = hasPermission("anamnese.print");
   const canReadPatients = hasPermission("patients.read");
-  const canCreatePatient = hasPermission("patients.create");
   const canReadEvolutionHistory = hasPermission("medical_evolutions.read");
   const canPrintEvolutionHistory = hasPermission("medical_evolutions.print");
   const canUpdateAnamneseOptions = canUpdateAnamnese;
@@ -576,7 +575,6 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const [patientSearch, setPatientSearch] = useState("");
   const [debouncedPatientSearch, setDebouncedPatientSearch] = useState("");
   const [isPatientOptionsOpen, setIsPatientOptionsOpen] = useState(false);
-  const [isPatientModalOpen, setIsPatientModalOpen] = useState(false);
   const [isEvolutionHistoryOpen, setIsEvolutionHistoryOpen] = useState(false);
   const [evolutionHistory, setEvolutionHistory] = useState<MedicalEvolution[]>([]);
   const [evolutionHistoryTotal, setEvolutionHistoryTotal] = useState(0);
@@ -584,10 +582,6 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const [isEvolutionHistoryLoading, setIsEvolutionHistoryLoading] = useState(false);
   const [printingEvolutionId, setPrintingEvolutionId] = useState<string | null>(null);
   const [evolutionHistoryMessage, setEvolutionHistoryMessage] = useState("Histórico não carregado.");
-  const [newPatientName, setNewPatientName] = useState("");
-  const [newPatientBirthDate, setNewPatientBirthDate] = useState("");
-  const [newPatientCpf, setNewPatientCpf] = useState("");
-  const [newPatientRg, setNewPatientRg] = useState("");
   const lastSavedSnapshotRef = useRef<string | null>(null);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autosaveSequenceRef = useRef(0);
@@ -744,7 +738,6 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const canEditCurrentRecord = canUpdateAnamnese && loadedRecord.status !== "finalized";
   const canEditActiveTemplate = canEditCurrentRecord && !isActiveTemplateCompleted;
   const canLinkPatient = canEditCurrentRecord && canReadPatients;
-  const canCreateAndLinkPatient = canLinkPatient && canCreatePatient;
   const shouldShowPatientOptions = canLinkPatient && isPatientOptionsOpen;
   const evolutionHistoryOffset = (evolutionHistoryPage - 1) * evolutionHistoryPageSize;
   const canOpenEvolutionHistory = canReadEvolutionHistory && Boolean(loadedRecord.patientId);
@@ -903,29 +896,6 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     } finally {
       setPrintingEvolutionId(null);
     }
-  }
-
-  async function handleCreatePatient() {
-    if (!token || !newPatientName.trim()) return;
-    const patient = await createPatient(token, {
-      name: newPatientName.trim(),
-      birthDate: newPatientBirthDate || undefined,
-      cpf: newPatientCpf.trim() || undefined,
-      rg: newPatientRg.trim() || undefined
-    });
-    setPatients((currentPatients) => [patient, ...currentPatients.filter((item) => item.id !== patient.id)]);
-    setCurrentRecord((record) => record ? {
-      ...record,
-      patientId: patient.id,
-      patientName: patient.name,
-      updatedAt: new Date().toISOString()
-    } : record);
-    setNewPatientName("");
-    setNewPatientBirthDate("");
-    setNewPatientCpf("");
-    setNewPatientRg("");
-    setIsPatientModalOpen(false);
-    setMessage(`Paciente criado e vinculado: ${patient.name}`);
   }
 
   async function handleDownloadPdf() {
@@ -1430,12 +1400,6 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                 </div>
               ) : null}
             </div>
-            {canCreateAndLinkPatient ? (
-              <button className="secondary-button patient-add-button" disabled={!canLinkPatient} onClick={() => setIsPatientModalOpen(true)} type="button">
-                <Plus size={16} />
-                Adicionar paciente
-              </button>
-            ) : null}
           </div>
         </div> : null}
 
@@ -1497,43 +1461,6 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                   <button disabled={isEvolutionHistoryLoading || evolutionHistoryPage === 1} onClick={() => setEvolutionHistoryPage((currentPage) => Math.max(1, currentPage - 1))} type="button"><ChevronLeft aria-hidden="true" size={15} />Anterior</button>
                   <button disabled={isEvolutionHistoryLoading || evolutionHistoryOffset + evolutionHistory.length >= evolutionHistoryTotal} onClick={() => setEvolutionHistoryPage((currentPage) => currentPage + 1)} type="button">Próxima<ChevronRight aria-hidden="true" size={15} /></button>
                 </div>
-              </div>
-            </section>
-          </div>
-        ) : null}
-
-        {isPatientModalOpen ? (
-          <div className="confirmation-modal-layer" role="presentation">
-            <button aria-label="Cancelar cadastro de paciente" className="confirmation-modal-backdrop" onClick={() => setIsPatientModalOpen(false)} type="button" />
-            <section aria-labelledby="patient-create-modal-title" aria-modal="true" className="confirmation-modal-panel patient-create-modal" role="dialog">
-              <div className="confirmation-modal-heading">
-                <span className="confirmation-modal-icon is-primary"><Plus aria-hidden="true" size={20} /></span>
-                <div>
-                  <span className="eyebrow">Paciente e prontuário</span>
-                  <h3 id="patient-create-modal-title">Adicionar paciente</h3>
-                </div>
-              </div>
-              <div className="patient-create-fields">
-                <label>
-                  <span>Nome completo</span>
-                  <input autoFocus onChange={(event) => setNewPatientName(event.target.value)} placeholder="Nome completo" value={newPatientName} />
-                </label>
-                <label>
-                  <span>Nascimento</span>
-                  <input onChange={(event) => setNewPatientBirthDate(event.target.value)} type="date" value={newPatientBirthDate} />
-                </label>
-                <label>
-                  <span>CPF</span>
-                  <input onChange={(event) => setNewPatientCpf(event.target.value)} placeholder="CPF" value={newPatientCpf} />
-                </label>
-                <label>
-                  <span>RG</span>
-                  <input onChange={(event) => setNewPatientRg(event.target.value)} placeholder="RG" value={newPatientRg} />
-                </label>
-              </div>
-              <div className="confirmation-modal-actions">
-                <button className="secondary-button" onClick={() => setIsPatientModalOpen(false)} type="button">Cancelar</button>
-                <button className="primary-button" disabled={!newPatientName.trim()} onClick={handleCreatePatient} type="button">Criar e vincular</button>
               </div>
             </section>
           </div>
@@ -2040,7 +1967,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
             <span className="confirmation-modal-icon is-primary"><FileText aria-hidden="true" size={20} /></span>
             <div>
               <h3>Selecione um paciente para preencher a anamnese</h3>
-              <p>Use a busca acima para vincular um paciente existente ou cadastre um novo paciente antes de abrir as fichas.</p>
+              <p>Use a busca acima para vincular um paciente ativo já cadastrado antes de abrir as fichas.</p>
             </div>
           </div>
         )}

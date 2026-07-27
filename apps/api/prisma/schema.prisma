@@ -12,6 +12,11 @@ enum UserStatus {
   INACTIVE
 }
 
+enum PatientStatus {
+  ACTIVE
+  INACTIVE
+}
+
 enum AnamnesisStatus {
   DRAFT
   FINALIZED
@@ -121,6 +126,7 @@ model AccessGroupPermission {
 model Patient {
   id              String            @id @default(uuid())
   name            String
+  status          PatientStatus     @default(ACTIVE)
   birthDate       DateTime?
   document        String?
   cpf             String?

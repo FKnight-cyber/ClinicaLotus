@@ -5,10 +5,12 @@ applyTo: "apps/web/src/**/*.{ts,tsx,css}"
 # Web Data Loading And UX Pattern
 
 - Do not fetch large lists only to filter or paginate on the client. Prefer backend query params for `limit`, `search`, status, and other filters.
-- Use conservative defaults for admin list sizes. Start with `5` records when no specific requirement exists, and expose a clear control when the user can request more, capped at `100`.
+- Use conservative defaults for admin list sizes. Start with `5` records when no specific requirement exists, and expose a clear control when the user can request more, capped at `100`. Patient list screens are the explicit exception: default to `40` patients displayed, still capped at `100`.
 - Label list-size controls in user language, such as `Grupos exibidos`, not generic labels like `Quantidade`.
 - Cache stable reference data in component refs when it does not need to reload for every interaction, for example permissions or static option lists.
 - Cache repeated list results by every input that affects the result, such as `limit + search`. Clear that cache after creates, updates, deletes, or permission changes that can affect the list.
+- Persist applied filters in `localStorage` for operational list screens where users repeatedly return to the same working set, including patient lists. Store only non-sensitive UI filter state such as `search`, `status`, and `limit`, and load it before the first API request.
+- Any patient lookup outside the dedicated patient administration page must request or rely on active patients only. Do not show inactive patients in Anamnese, Prontuario, scheduling, attendance, or other operational patient selectors.
 - Debounce text search before calling the API. Use a short delay around `300-400ms` unless the product needs instant server-side search.
 - Separate loading states by interaction:
   - initial page loading for first render;

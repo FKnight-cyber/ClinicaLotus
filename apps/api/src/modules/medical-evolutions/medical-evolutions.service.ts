@@ -304,6 +304,7 @@ export class MedicalEvolutionsService {
 
   private invalidateCaches(patientId: string) {
     this.cache.deleteByPrefix(`medical-evolutions:patient:${patientId}:`);
+    this.cache.deleteByPrefix(`patients:detail:${patientId}:`);
     this.cache.deleteByPrefix(`patients:medical-record:${patientId}:`);
   }
 

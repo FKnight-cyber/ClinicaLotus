@@ -87,6 +87,7 @@ export type AnamneseRecord = {
 export type PatientSummary = {
   id: string;
   name: string;
+  status?: "ACTIVE" | "INACTIVE";
   birthDate?: string | null;
   document?: string | null;
   cpf?: string | null;

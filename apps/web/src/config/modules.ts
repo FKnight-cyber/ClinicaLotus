@@ -161,11 +161,11 @@ export const moduleItems: ModuleItem[] = [
   {
     slug: "pacientes",
     label: "Pacientes",
-    description: "Cadastro e histórico de pacientes previsto para evolução do MVP.",
+    description: "Cadastro, busca, status e acesso ao histórico de pacientes.",
     href: "/modulos/pacientes",
     icon: UsersRound,
     visibilityPermission: "menu.pacientes.view",
-    status: "locked",
+    status: "active",
     actions: ["Novo paciente", "Editar cadastro", "Ver histórico"]
   },
   {

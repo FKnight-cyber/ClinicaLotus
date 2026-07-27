@@ -101,8 +101,11 @@ async function apiRequest<T>(token: string, path: string, options: RequestInit =
 }
 
 export function fetchProntuarioPatients(token: string, search = "", options: ListQueryOptions): Promise<PaginatedResponse<PatientSummary>> {
+  const params = new URLSearchParams(buildListQuery(options, search));
+  params.set("status", "ACTIVE");
+
   return getCached(patientsCache, buildPatientsCacheKey(token, search, options), patientsCacheTtlMs, () => (
-    apiRequest<PaginatedResponse<PatientSummary> | PatientSummary[]>(token, `/api/patients?${buildListQuery(options, search)}`)
+    apiRequest<PaginatedResponse<PatientSummary> | PatientSummary[]>(token, `/api/patients?${params.toString()}`)
       .then((payload) => normalizePaginatedResponse(payload, options))
   ));
 }

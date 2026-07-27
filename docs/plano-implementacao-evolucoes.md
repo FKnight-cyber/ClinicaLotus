@@ -106,10 +106,10 @@ Na primeira entrega, `medical_evolutions.print` pode ser criada apenas para prep
 
 ### Checklist
 
-- [ ] Adicionar permissoes no seed.
-- [ ] Vincular permissoes aos grupos `Administrador` e `Developer`.
+- [x] Adicionar permissoes no seed.
+- [x] Vincular permissoes aos grupos `Administrador` e `Developer`.
 - [ ] Validar que usuario sem permissao nao acessa as acoes.
-- [ ] Validar que usuario com permissao consegue criar/finalizar/cancelar.
+- [x] Validar que usuario com permissao consegue criar/finalizar/cancelar.
 
 ---
 
@@ -175,14 +175,14 @@ medicalEvolution   MedicalEvolution? @relation(fields: [medicalEvolutionId], ref
 
 ### Checklist
 
-- [ ] Adicionar enum `MedicalEvolutionStatus`.
-- [ ] Adicionar modelo `MedicalEvolution`.
-- [ ] Adicionar relacoes em `Patient`.
-- [ ] Adicionar relacoes em `User`.
-- [ ] Adicionar relacao opcional em `MedicalRecordEntry`.
-- [ ] Rodar `prisma generate`.
-- [ ] Rodar sincronizacao do banco no ambiente local.
-- [ ] Validar que Prisma Client reconhece os novos modelos.
+- [x] Adicionar enum `MedicalEvolutionStatus`.
+- [x] Adicionar modelo `MedicalEvolution`.
+- [x] Adicionar relacoes em `Patient`.
+- [x] Adicionar relacoes em `User`.
+- [x] Adicionar relacao opcional em `MedicalRecordEntry`.
+- [x] Rodar `prisma generate`.
+- [x] Rodar sincronizacao do banco no ambiente local.
+- [x] Validar que Prisma Client reconhece os novos modelos.
 
 ---
 
@@ -269,21 +269,21 @@ Usar `entity = "medical_evolution"` e snapshots `beforeData`/`afterData` quando 
 
 ### Checklist
 
-- [ ] Criar modulo `medical-evolutions`.
-- [ ] Criar controller.
-- [ ] Criar service.
-- [ ] Criar DTOs com validacoes.
-- [ ] Registrar modulo no `AppModule` ou modulo raiz correspondente.
-- [ ] Implementar listagem por paciente.
-- [ ] Implementar criacao de rascunho.
-- [ ] Implementar edicao de rascunho.
-- [ ] Implementar finalizacao.
-- [ ] Implementar cancelamento com motivo.
-- [ ] Criar `MedicalRecordEntry` ao finalizar.
-- [ ] Invalidar cache de prontuario apos criar/finalizar/cancelar.
-- [ ] Escrever logs de auditoria.
-- [ ] Validar permissoes no backend.
-- [ ] Rodar typecheck da API.
+- [x] Criar modulo `medical-evolutions`.
+- [x] Criar controller.
+- [x] Criar service.
+- [x] Criar DTOs com validacoes.
+- [x] Registrar modulo no `AppModule` ou modulo raiz correspondente.
+- [x] Implementar listagem por paciente.
+- [x] Implementar criacao de rascunho.
+- [x] Implementar edicao de rascunho.
+- [x] Implementar finalizacao.
+- [x] Implementar cancelamento com motivo.
+- [x] Criar `MedicalRecordEntry` ao finalizar.
+- [x] Invalidar cache de prontuario apos criar/finalizar/cancelar.
+- [x] Escrever logs de auditoria.
+- [x] Validar permissoes no backend.
+- [x] Rodar typecheck da API.
 
 ---
 
@@ -302,11 +302,11 @@ O endpoint atual `GET /api/patients/:patientId/prontuario` deve continuar sendo 
 
 ### Checklist
 
-- [ ] Ajustar `MedicalRecordEntry` para referenciar evolucao medica.
-- [ ] Criar evento na timeline ao finalizar evolucao.
-- [ ] Garantir ordenacao decrescente por data.
-- [ ] Garantir que eventos cancelados nao confundem a timeline.
-- [ ] Testar prontuario de paciente com anamnese e evolucao.
+- [x] Ajustar `MedicalRecordEntry` para referenciar evolucao medica.
+- [x] Criar evento na timeline ao finalizar evolucao.
+- [x] Garantir ordenacao decrescente por data.
+- [x] Garantir que eventos cancelados nao confundem a timeline.
+- [x] Testar prontuario de paciente com anamnese e evolucao.
 
 ---
 
@@ -364,20 +364,20 @@ Separar estados:
 
 ### Checklist
 
-- [ ] Criar tipos frontend de evolucao.
-- [ ] Criar funcoes de API para evolucoes.
-- [ ] Separar storage de prontuario, se conveniente.
-- [ ] Adicionar botao `Nova evolucao`.
-- [ ] Criar formulario de evolucao.
-- [ ] Implementar salvar rascunho.
-- [ ] Implementar edicao de rascunho.
-- [ ] Implementar finalizacao.
-- [ ] Implementar cancelamento com motivo.
-- [ ] Atualizar lista de evolucoes apos mutacoes.
-- [ ] Atualizar timeline apos finalizacao/cancelamento.
-- [ ] Tratar estados de loading e erro.
-- [ ] Respeitar permissoes na interface.
-- [ ] Rodar typecheck do web.
+- [x] Criar tipos frontend de evolucao.
+- [x] Criar funcoes de API para evolucoes.
+- [x] Separar storage de prontuario, se conveniente.
+- [x] Adicionar botao `Nova evolucao`.
+- [x] Criar formulario de evolucao.
+- [x] Implementar salvar rascunho.
+- [x] Implementar edicao de rascunho.
+- [x] Implementar finalizacao.
+- [x] Implementar cancelamento com motivo.
+- [x] Atualizar lista de evolucoes apos mutacoes.
+- [x] Atualizar timeline apos finalizacao/cancelamento.
+- [x] Tratar estados de loading e erro.
+- [x] Respeitar permissoes na interface.
+- [x] Rodar typecheck do web.
 
 ---
 
@@ -385,36 +385,36 @@ Separar estados:
 
 ### Etapa 1 - Banco e permissoes
 
-- [ ] Seed executa sem erro.
-- [ ] Permissoes aparecem no controle de acesso.
-- [ ] Prisma Client compila com `MedicalEvolution`.
+- [x] Seed executa sem erro.
+- [x] Permissoes aparecem no controle de acesso.
+- [x] Prisma Client compila com `MedicalEvolution`.
 
 ### Etapa 2 - API
 
-- [ ] Criar evolucao para paciente existente.
-- [ ] Listar evolucoes do paciente.
-- [ ] Editar evolucao em rascunho.
-- [ ] Tentar finalizar evolucao sem texto e receber erro claro.
-- [ ] Finalizar evolucao com texto.
-- [ ] Confirmar criacao de entrada no prontuario.
-- [ ] Cancelar evolucao com motivo.
-- [ ] Tentar cancelar sem motivo e receber erro claro.
-- [ ] Confirmar auditoria das acoes.
+- [x] Criar evolucao para paciente existente.
+- [x] Listar evolucoes do paciente.
+- [x] Editar evolucao em rascunho.
+- [x] Tentar finalizar evolucao sem texto e receber erro claro.
+- [x] Finalizar evolucao com texto.
+- [x] Confirmar criacao de entrada no prontuario.
+- [x] Cancelar evolucao com motivo.
+- [x] Tentar cancelar sem motivo e receber erro claro.
+- [x] Confirmar auditoria das acoes.
 - [ ] Confirmar bloqueio por permissao no backend.
 
 ### Etapa 3 - Frontend
 
-- [ ] Abrir `/modulos/prontuario`.
-- [ ] Buscar paciente.
-- [ ] Criar nova evolucao.
-- [ ] Selecionar area profissional da evolucao.
-- [ ] Salvar rascunho.
-- [ ] Reabrir paciente e confirmar rascunho listado.
-- [ ] Editar rascunho.
-- [ ] Finalizar evolucao.
-- [ ] Confirmar evento na timeline.
-- [ ] Cancelar evolucao com motivo.
-- [ ] Confirmar exibicao de status cancelado no historico.
+- [x] Abrir `/modulos/prontuario`.
+- [x] Buscar paciente.
+- [x] Criar nova evolucao.
+- [x] Selecionar area profissional da evolucao.
+- [x] Salvar rascunho.
+- [x] Reabrir paciente e confirmar rascunho listado.
+- [x] Editar rascunho.
+- [x] Finalizar evolucao.
+- [x] Confirmar evento na timeline.
+- [x] Cancelar evolucao com motivo.
+- [x] Confirmar exibicao de status cancelado no historico.
 - [ ] Confirmar que botoes somem conforme permissoes.
 
 ---
@@ -516,7 +516,7 @@ Use esta area para anotar decisoes e testes executados durante o desenvolvimento
 - [ ] Definir se `professionalName` sera texto livre temporario ou vinculo com cadastro de profissional.
 - [ ] Definir se rascunho pode ser visto/editado por outro usuario autorizado.
 - [ ] Definir se evolucao cancelada aparece ou nao na timeline principal.
-- [ ] Definir quando implementar impressao/PDF rastreavel.
+- [x] Definir quando implementar impressao/PDF rastreavel.
 
 ### Testes do usuario
 

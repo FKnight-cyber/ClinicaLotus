@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/shell/AppShell";
 import { PlaceholderModule } from "@/components/placeholder/PlaceholderModule";
 import { getModuleBySlug } from "@/config/modules";
+import { PacientesPage } from "@/features/pacientes/PacientesPage";
 import { ProntuarioPage } from "@/features/prontuario/ProntuarioPage";
 
 type PlaceholderPageProps = {
@@ -28,6 +29,14 @@ export default async function PlaceholderPage({ params }: PlaceholderPageProps) 
     return (
       <AppShell activeSlug={moduleItem.slug}>
         <ProntuarioPage />
+      </AppShell>
+    );
+  }
+
+  if (moduleItem.slug === "pacientes") {
+    return (
+      <AppShell activeSlug={moduleItem.slug}>
+        <PacientesPage />
       </AppShell>
     );
   }

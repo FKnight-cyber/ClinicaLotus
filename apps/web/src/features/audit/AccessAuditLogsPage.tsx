@@ -76,7 +76,8 @@ const accessAuditConfig: AuditLogsPageConfig = {
   create_user: "Usuário criado",
   update_user: "Dados do usuário atualizados",
   update_user_groups: "Grupos do usuário atualizados",
-  update_user_status: "Status do usuário atualizado"
+  update_user_status: "Status do usuário atualizado",
+  update_own_profile: "Perfil atualizado"
   }
 };
 
@@ -257,6 +258,8 @@ function readAuditDetails(log: AccessAuditLog) {
     ].filter(Boolean);
     return changes.join(". ") || "Dados regravados sem mudança visível.";
   }
+
+  if (log.action === "update_own_profile") return log.reason ?? `Perfil atualizado: ${afterPayload?.name ?? readAuditTarget(log)}.`;
 
   if (log.action === "create_group") return `Grupo criado com o nome ${afterPayload?.name ?? readAuditTarget(log)}.`;
   if (log.action === "create_user") return `Usuário criado com status ${formatStatus(afterPayload?.status)}.`;

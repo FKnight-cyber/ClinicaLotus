@@ -1,5 +1,6 @@
 "use client";
 
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { LogOut, UserCircle } from "lucide-react";
 import { usePathname } from "next/navigation";
@@ -12,10 +13,25 @@ type AppShellProps = {
   children: React.ReactNode;
 };
 
+const ShellTitleContext = createContext<((title: string | null) => void) | null>(null);
+
+export function useShellTitle(title: string | null) {
+  const setShellTitle = useContext(ShellTitleContext);
+
+  useEffect(() => {
+    setShellTitle?.(title);
+    return () => setShellTitle?.(null);
+  }, [setShellTitle, title]);
+}
+
 export function AppShell({ activeSlug, children }: AppShellProps) {
   const { hasPermission, logout, user } = useAuth();
   const pathname = usePathname();
+  const [customTitle, setCustomTitle] = useState<string | null>(null);
+  const setShellTitle = useMemo(() => setCustomTitle, []);
   const visibleModules = moduleItems.filter((module) => module.slug === "anamnese" || hasPermission(module.visibilityPermission));
+  const activeModule = moduleItems.find((module) => module.slug === activeSlug);
+  const title = customTitle ?? activeModule?.label ?? "Sistema clínico";
 
   return (
     <div className="app-shell">
@@ -74,7 +90,7 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
         <header className="topbar">
           <div>
             <span className="eyebrow">Sistema clínico</span>
-            <h1>Anamnese clínica</h1>
+            <h1>{title}</h1>
           </div>
           <div className="operator-actions">
             <Link className="operator-chip" href="/meu-perfil" title="Abrir meu perfil">
@@ -86,7 +102,9 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
           </div>
         </header>
 
-        {children}
+        <ShellTitleContext.Provider value={setShellTitle}>
+          {children}
+        </ShellTitleContext.Provider>
       </main>
     </div>
   );

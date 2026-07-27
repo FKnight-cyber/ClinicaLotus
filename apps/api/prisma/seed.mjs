@@ -41,6 +41,8 @@ const basePermissions = [
   ["anamnese.templates.therapeutic.read", "anamnese", "read_template_therapeutic", "Visualizar ficha Terapêutica"],
   ["patients.read", "patients", "read", "Visualizar pacientes"],
   ["patients.create", "patients", "create", "Cadastrar pacientes"],
+  ["patients.update", "patients", "update", "Editar pacientes"],
+  ["patients.inactivate", "patients", "inactivate", "Ativar e inativar pacientes"],
   ["prontuario.read", "prontuario", "read", "Visualizar prontuário"],
   ["medical_evolutions.read", "medical_evolutions", "read", "Visualizar evoluções"],
   ["medical_evolutions.create", "medical_evolutions", "create", "Criar evoluções"],

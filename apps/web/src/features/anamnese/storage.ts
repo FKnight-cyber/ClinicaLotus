@@ -187,17 +187,10 @@ export async function completeAnamneseTemplate(token: string, recordId: string, 
 
 export function fetchPatients(token: string, search = "") {
   const normalizedSearch = search.trim();
-  const query = normalizedSearch ? `?search=${encodeURIComponent(normalizedSearch)}` : "";
+  const params = new URLSearchParams({ status: "ACTIVE" });
+  if (normalizedSearch) params.set("search", normalizedSearch);
+  const query = `?${params.toString()}`;
   return getCached(patientsCache, buildCacheKey(token, "patients", normalizedSearch.toLowerCase()), patientsCacheTtlMs, () => apiRequest<PatientSummary[]>(token, `/api/patients${query}`));
-}
-
-export async function createPatient(token: string, payload: { name: string; birthDate?: string; cpf?: string; rg?: string }) {
-  const patient = await apiRequest<PatientSummary>(token, "/api/patients", {
-    method: "POST",
-    body: JSON.stringify(payload)
-  });
-  invalidatePatientCaches(token, patient.id);
-  return patient;
 }
 
 export function fetchPatientMedicalRecord(token: string, patientId: string) {

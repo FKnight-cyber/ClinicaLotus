@@ -227,6 +227,10 @@ export class AnamnesisService {
     const beforeData = this.toRecordResponse(record);
     await this.prisma.anamnesisRecord.delete({ where: { id } });
     this.invalidateRecordCaches(id);
+    if (beforeData.patientId) {
+      this.cache.deleteByPrefix(`patients:detail:${beforeData.patientId}:`);
+      this.cache.deleteByPrefix(`patients:medical-record:${beforeData.patientId}:`);
+    }
     await this.writeAuditLog(userId, "delete_draft_anamnesis", id, beforeData, null);
     return { id };
   }
@@ -272,6 +276,7 @@ export class AnamnesisService {
     const finalizedRecord = await this.getById(id);
     await this.createMedicalRecordEntry(userId, finalizedRecord);
     if (finalizedRecord.patientId) {
+      this.cache.deleteByPrefix(`patients:detail:${finalizedRecord.patientId}:`);
       this.cache.deleteByPrefix(`patients:medical-record:${finalizedRecord.patientId}:`);
     }
     await this.writeAuditLog(userId, "finalize_anamnesis", id, beforeData, finalizedRecord);

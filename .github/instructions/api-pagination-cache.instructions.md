@@ -9,6 +9,7 @@ applyTo: "apps/api/src/**/*.ts"
 - Clamp user-provided limits in the service layer. Do not allow callers to request more than `100` records.
 - Return list payloads with explicit metadata: `{ items, total, limit }`. Add `offset` or `page` only when the UI needs true page navigation.
 - Keep search in the database query when possible, using Prisma `where` conditions, so search works across the full dataset and not only the currently loaded slice.
+- Patient search/list endpoints must default to active patients only when no explicit status is provided. Use an explicit all-status value such as `status=ALL` only for the dedicated patient administration page.
 - Cache read-heavy reference data and repeated list queries with keys that include every query input that changes the result, such as `limit`, `search`, `status`, or user scope.
 - Invalidate cache by prefix after mutations that can affect list results, permissions, auth profile, or user/group relationships.
 - Avoid reusing one cache key for multiple query shapes.
