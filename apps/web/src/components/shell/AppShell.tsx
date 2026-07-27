@@ -29,7 +29,7 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
   const pathname = usePathname();
   const [customTitle, setCustomTitle] = useState<string | null>(null);
   const setShellTitle = useMemo(() => setCustomTitle, []);
-  const visibleModules = moduleItems.filter((module) => module.slug === "anamnese" || hasPermission(module.visibilityPermission));
+  const visibleModules = moduleItems.filter((module) => hasPermission(module.visibilityPermission));
   const activeModule = moduleItems.find((module) => module.slug === activeSlug);
   const title = customTitle ?? activeModule?.label ?? "Sistema clínico";
 

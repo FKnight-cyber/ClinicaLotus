@@ -193,3 +193,10 @@ export const moduleItems: ModuleItem[] = [
 export function getModuleBySlug(slug: string) {
   return moduleItems.find((item) => item.slug === slug);
 }
+
+export function getDefaultModuleHrefForPermissions(permissions: string[]) {
+  const permissionSet = new Set(permissions);
+  const firstVisibleModule = moduleItems.find((module) => module.status === "active" && permissionSet.has(module.visibilityPermission));
+
+  return firstVisibleModule?.href ?? "/meu-perfil";
+}

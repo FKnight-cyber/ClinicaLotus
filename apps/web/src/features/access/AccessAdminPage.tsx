@@ -49,7 +49,7 @@ type PaginatedAccessUsers = {
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
-const DEFAULT_GROUP_LIMIT = 5;
+const DEFAULT_GROUP_LIMIT = 40;
 const DEFAULT_USER_LIMIT = 5;
 const MAX_GROUP_LIMIT = 100;
 const MAX_USER_LIMIT = 100;

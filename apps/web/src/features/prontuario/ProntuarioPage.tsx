@@ -128,6 +128,7 @@ export function ProntuarioPage() {
   const canFinalizeEvolutions = hasPermission("medical_evolutions.finalize");
   const canCancelEvolutions = hasPermission("medical_evolutions.cancel");
   const canPrintEvolutions = hasPermission("medical_evolutions.print");
+  const canAccessEvolutionHistory = canReadProntuario || canReadEvolutions;
   const [initialSelectedPatient] = useState(() => readStoredSelectedPatient());
   const [search, setSearch] = useState(initialSelectedPatient?.name ?? "");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -357,7 +358,7 @@ export function ProntuarioPage() {
     }
   }
 
-  if (!canReadPatients || !canReadProntuario) {
+  if (!canReadPatients || !canAccessEvolutionHistory) {
     return (
       <section className="placeholder-page">
         <div className="page-intro">
@@ -365,7 +366,7 @@ export function ProntuarioPage() {
           <div>
             <span className="eyebrow">Prontuário</span>
             <h2>Permissão necessária</h2>
-            <p>Seu usuário não possui permissão para visualizar pacientes e prontuário.</p>
+            <p>Seu usuário não possui permissão para visualizar pacientes e evoluções.</p>
           </div>
         </div>
       </section>

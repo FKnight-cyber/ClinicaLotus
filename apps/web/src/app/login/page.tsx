@@ -5,6 +5,7 @@ import { LockKeyhole, LogIn } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ClinicLogo } from "@/components/brand/ClinicLogo";
+import { getDefaultModuleHrefForPermissions } from "@/config/modules";
 import { useAuth } from "@/features/auth/AuthProvider";
 
 export default function LoginPage() {
@@ -17,7 +18,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (status === "authenticated" && user) {
-      router.replace("/anamnese");
+      router.replace(getDefaultModuleHrefForPermissions(user.permissions));
     }
   }, [router, status, user]);
 

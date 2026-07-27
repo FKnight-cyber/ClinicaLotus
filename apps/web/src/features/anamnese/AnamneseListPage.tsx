@@ -35,6 +35,7 @@ const emptyFilters: ListFilters = {
 export function AnamneseListPage() {
   const router = useRouter();
   const { hasPermission, token, user } = useAuth();
+  const canReadAnamnese = hasPermission("anamnese.read");
   const canCreateAnamnese = hasPermission("anamnese.create");
   const canDeleteDraftAnamnese = hasPermission("admin.full_access");
   const [records, setRecords] = useState<AnamneseRecord[]>([]);
@@ -48,7 +49,7 @@ export function AnamneseListPage() {
   const [message, setMessage] = useState("Registros disponíveis para consulta");
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !canReadAnamnese) return;
     let isCurrent = true;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true);
@@ -71,7 +72,7 @@ export function AnamneseListPage() {
     return () => {
       isCurrent = false;
     };
-  }, [token]);
+  }, [canReadAnamnese, token]);
 
   const userPermissions = useMemo(() => user?.permissions ?? [], [user?.permissions]);
   const visibleTemplates = useMemo(() => filterAnamneseTemplatesByPermissions(templates, userPermissions), [templates, userPermissions]);
@@ -129,6 +130,10 @@ export function AnamneseListPage() {
     setFilters(emptyFilters);
     setPage(1);
     setMessage("Filtros limpos");
+  }
+
+  if (!canReadAnamnese) {
+    return <div className="loading-panel">Você não possui permissão para visualizar anamneses.</div>;
   }
 
   if (isLoading) {

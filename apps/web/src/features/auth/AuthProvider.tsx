@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { getDefaultModuleHrefForPermissions } from "@/config/modules";
 
 type AuthUser = {
   id: string;
@@ -107,7 +108,7 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
         body: JSON.stringify({ login, password })
       });
       persistSession(session.accessToken, session.user);
-      router.replace("/anamnese");
+      router.replace(getDefaultModuleHrefForPermissions(session.user.permissions));
     },
     logout: () => {
       clearSession();

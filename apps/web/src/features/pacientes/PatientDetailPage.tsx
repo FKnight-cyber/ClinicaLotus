@@ -117,6 +117,7 @@ export function PatientDetailPage({ patientId }: { patientId: string }) {
   const { hasPermission, token } = useAuth();
   const canReadPatients = hasPermission("patients.read");
   const canReadAnamnese = hasPermission("anamnese.read");
+  const canReadEvolutions = hasPermission("medical_evolutions.read");
   const canUpdatePatientStatus = hasPermission("patients.inactivate");
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -146,18 +147,20 @@ export function PatientDetailPage({ patientId }: { patientId: string }) {
     };
   }, [token, canReadPatients, patientId]);
 
-  const latestEvolution = patient?.evolutions.find((evolution) => evolution.status === "finalized") ?? patient?.evolutions[0] ?? null;
+  const latestEvolution = canReadEvolutions ? patient?.evolutions.find((evolution) => evolution.status === "finalized") ?? patient?.evolutions[0] ?? null : null;
   const latestAnamnesis = patient?.anamneses.find((anamnesis) => anamnesis.status === "finalized") ?? patient?.anamneses[0] ?? null;
   const analysisSummary = useMemo(() => {
     if (!patient) return [];
 
     return [
-      { label: "Evoluções", value: String(patient.evolutions.length), detail: `${countByStatus(patient.evolutions, "finalized")} finalizadas` },
+      canReadEvolutions
+        ? { label: "Evoluções", value: String(patient.evolutions.length), detail: `${countByStatus(patient.evolutions, "finalized")} finalizadas` }
+        : { label: "Evoluções", value: "Restrito", detail: "Permissão necessária" },
       { label: "Anamneses", value: String(patient.anamneses.length), detail: `${countByStatus(patient.anamneses, "finalized")} finalizadas` },
       { label: "Última evolução", value: latestEvolution ? formatDate(latestEvolution.evolutionDate) : "Sem registro", detail: latestEvolution?.professionalArea ?? "Histórico clínico" },
       { label: "Última anamnese", value: latestAnamnesis ? latestAnamnesis.code : "Sem registro", detail: latestAnamnesis ? formatDateTime(latestAnamnesis.updatedAt) : "Histórico de acolhimento" }
     ];
-  }, [latestAnamnesis, latestEvolution, patient]);
+  }, [canReadEvolutions, latestAnamnesis, latestEvolution, patient]);
   useShellTitle(patient ? `Paciente ${patient.name}` : null);
 
   async function handleStatusChange() {
@@ -266,7 +269,9 @@ export function PatientDetailPage({ patientId }: { patientId: string }) {
               </tr>
             </thead>
             <tbody>
-              {patient.evolutions.length === 0 ? (
+              {!canReadEvolutions ? (
+                <tr><td colSpan={5}>Seu usuário não possui permissão para visualizar evoluções.</td></tr>
+              ) : patient.evolutions.length === 0 ? (
                 <tr><td colSpan={5}>Nenhuma evolução registrada.</td></tr>
               ) : patient.evolutions.map((evolution) => (
                 <tr key={evolution.id}>

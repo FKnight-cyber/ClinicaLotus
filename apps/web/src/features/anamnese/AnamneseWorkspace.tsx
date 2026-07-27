@@ -541,6 +541,7 @@ type AnamneseWorkspaceProps = {
 export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const router = useRouter();
   const { hasPermission, token, user } = useAuth();
+  const canReadAnamnese = hasPermission("anamnese.read");
   const canCreateAnamnese = hasPermission("anamnese.create");
   const canUpdateAnamnese = hasPermission("anamnese.update");
   const canFinalizeAnamnese = hasPermission("anamnese.finalize");
@@ -587,7 +588,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const autosaveSequenceRef = useRef(0);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !canReadAnamnese) return;
     let isCurrent = true;
 
     Promise.all([fetchAnamneseRecord(token, recordId), fetchAnamneseTemplates(token)])
@@ -606,7 +607,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     return () => {
       isCurrent = false;
     };
-  }, [recordId, token]);
+  }, [canReadAnamnese, recordId, token]);
 
   useEffect(() => {
     const timeout = setTimeout(() => setDebouncedPatientSearch(patientSearch), 350);
@@ -702,6 +703,10 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
       clearTimeout(autosaveTimerRef.current);
     }
   }, []);
+
+  if (!canReadAnamnese) {
+    return <div className="loading-panel">Você não possui permissão para visualizar anamneses.</div>;
+  }
 
   if (!currentRecord) {
     return <div className="loading-panel">Carregando anamnese...</div>;
