@@ -33,6 +33,11 @@ export type MedicalEvolution = {
   text: string;
   professionalArea?: ProfessionalArea | null;
   professionalName?: string | null;
+  finalizedProfessionalName?: string | null;
+  finalizedProfessionalCouncil?: string | null;
+  finalizedProfessionalRegistration?: string | null;
+  finalizedProfessionalCouncilState?: string | null;
+  finalizedProfessionalSpecialty?: string | null;
   finalizedAt?: string | null;
   canceledAt?: string | null;
   cancelReason?: string | null;

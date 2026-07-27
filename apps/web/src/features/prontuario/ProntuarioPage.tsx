@@ -348,7 +348,7 @@ export function ProntuarioPage() {
       setEvolutionMessage("Gerando PDF...");
       const latestEvolution = await fetchMedicalEvolution(token, evolution.id);
       const document = await emitMedicalEvolutionPdfDocument(token, evolution.id);
-      await downloadMedicalEvolutionPdf(selectedPatient, latestEvolution, document.code, user);
+      await downloadMedicalEvolutionPdf(selectedPatient, latestEvolution, document.code);
       setEvolutionMessage(`PDF ${document.code} gerado.`);
     } catch (error) {
       setEvolutionMessage(error instanceof Error ? error.message : "Não foi possível gerar o PDF da evolução.");

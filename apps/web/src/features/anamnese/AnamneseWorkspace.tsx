@@ -1,18 +1,22 @@
 "use client";
 
-import { AlertCircle, ArrowLeft, CheckCircle2, CircleDot, FileCheck2, FileText, Pencil, Plus, Printer, Save, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, CircleDot, FileCheck2, FileSearch, FileText, Pencil, Plus, Printer, Save, Search, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/features/auth/AuthProvider";
+import { downloadMedicalEvolutionPdf } from "@/features/prontuario/medicalEvolutionPdf";
+import { emitMedicalEvolutionPdfDocument, fetchMedicalEvolution, fetchMedicalEvolutions } from "@/features/prontuario/prontuarioStorage";
+import type { MedicalEvolution } from "@/features/prontuario/prontuarioTypes";
 import { AnamnesePrintDocument } from "./AnamnesePrintDocument";
 import { downloadAnamnesePdf } from "./pdfExport";
-import { completeAnamneseTemplate, createAnamneseRecord, createPatient, emitAnamnesePdfDocument, emitAnamneseTemplatePdfDocument, fetchAnamneseRecord, fetchAnamneseTemplates, fetchPatientMedicalRecord, fetchPatients, finalizeAnamneseRecord, saveAnamneseRecord } from "./storage";
+import { completeAnamneseTemplate, createAnamneseRecord, createPatient, emitAnamnesePdfDocument, emitAnamneseTemplatePdfDocument, fetchAnamneseRecord, fetchAnamneseTemplates, fetchPatients, finalizeAnamneseRecord, saveAnamneseRecord } from "./storage";
 import { anamneseTemplates as fallbackTemplates } from "./templates";
-import type { AnamneseRecord, FieldValue, FormField, FormSection, FormTemplate, MedicalRecordEntry, PatientSummary, SectionConfigItem, TableValue, TemplateAnswers, TemplateConfigItem, TemplateId, ValidationIssue } from "./types";
+import type { AnamneseRecord, FieldValue, FormField, FormSection, FormTemplate, PatientSummary, SectionConfigItem, TableValue, TemplateAnswers, TemplateConfigItem, TemplateId, ValidationIssue } from "./types";
 
 const yesNoOptions = ["Sim", "Não"];
 const customTemplateSectionId = "custom-section";
+const evolutionHistoryPageSize = 5;
 type CustomQuestionType = "textarea" | "yesNo" | "yesNoDetails" | "multiChoice" | "table";
 
 function createEmptyRecord(): AnamneseRecord {
@@ -41,6 +45,17 @@ function formatDateTime(value: string) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(new Date(value));
+}
+
+function formatPageSummary(total: number, offset: number, count: number, label: string) {
+  if (total === 0) return `0 ${label}`;
+  return `${offset + 1}-${offset + count} de ${total} ${label}`;
+}
+
+function getEvolutionStatusLabel(status: MedicalEvolution["status"]) {
+  if (status === "finalized") return "Finalizada";
+  if (status === "canceled") return "Cancelada";
+  return "Rascunho";
 }
 
 function isFilled(value: FieldValue | undefined) {
@@ -524,14 +539,15 @@ type AnamneseWorkspaceProps = {
 
 export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const router = useRouter();
-  const { hasPermission, token } = useAuth();
+  const { hasPermission, token, user } = useAuth();
   const canCreateAnamnese = hasPermission("anamnese.create");
   const canUpdateAnamnese = hasPermission("anamnese.update");
   const canFinalizeAnamnese = hasPermission("anamnese.finalize");
   const canPrintAnamnese = hasPermission("anamnese.print");
   const canReadPatients = hasPermission("patients.read");
   const canCreatePatient = hasPermission("patients.create");
-  const canReadProntuario = hasPermission("prontuario.read");
+  const canReadEvolutionHistory = hasPermission("medical_evolutions.read");
+  const canPrintEvolutionHistory = hasPermission("medical_evolutions.print");
   const canUpdateAnamneseOptions = canUpdateAnamnese;
   const canUpdateAnamneseQuestions = canUpdateAnamnese;
   const [currentRecord, setCurrentRecord] = useState<AnamneseRecord | null>(null);
@@ -547,6 +563,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const [isTableQuestionModalOpen, setIsTableQuestionModalOpen] = useState(false);
   const [tableRowDrafts, setTableRowDrafts] = useState([""]);
   const [tableColumnDrafts, setTableColumnDrafts] = useState([""]);
+  const [isTemplateCompletionConfirmOpen, setIsTemplateCompletionConfirmOpen] = useState(false);
   const [isTemplateManagerOpen, setIsTemplateManagerOpen] = useState(false);
   const [newTemplateTitle, setNewTemplateTitle] = useState("");
   const [isSectionManagerOpen, setIsSectionManagerOpen] = useState(false);
@@ -557,12 +574,19 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const [patients, setPatients] = useState<PatientSummary[]>([]);
   const [patientSearch, setPatientSearch] = useState("");
   const [debouncedPatientSearch, setDebouncedPatientSearch] = useState("");
+  const [isPatientOptionsOpen, setIsPatientOptionsOpen] = useState(false);
   const [isPatientModalOpen, setIsPatientModalOpen] = useState(false);
+  const [isEvolutionHistoryOpen, setIsEvolutionHistoryOpen] = useState(false);
+  const [evolutionHistory, setEvolutionHistory] = useState<MedicalEvolution[]>([]);
+  const [evolutionHistoryTotal, setEvolutionHistoryTotal] = useState(0);
+  const [evolutionHistoryPage, setEvolutionHistoryPage] = useState(1);
+  const [isEvolutionHistoryLoading, setIsEvolutionHistoryLoading] = useState(false);
+  const [printingEvolutionId, setPrintingEvolutionId] = useState<string | null>(null);
+  const [evolutionHistoryMessage, setEvolutionHistoryMessage] = useState("Histórico não carregado.");
   const [newPatientName, setNewPatientName] = useState("");
   const [newPatientBirthDate, setNewPatientBirthDate] = useState("");
   const [newPatientCpf, setNewPatientCpf] = useState("");
   const [newPatientRg, setNewPatientRg] = useState("");
-  const [medicalRecordEntries, setMedicalRecordEntries] = useState<MedicalRecordEntry[]>([]);
   const lastSavedSnapshotRef = useRef<string | null>(null);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autosaveSequenceRef = useRef(0);
@@ -610,23 +634,32 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   }, [canReadPatients, debouncedPatientSearch, token]);
 
   useEffect(() => {
-    if (!token || !canReadProntuario || !currentRecord?.patientId) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setMedicalRecordEntries([]);
-      return;
-    }
+    if (!token || !canReadEvolutionHistory || !isEvolutionHistoryOpen || !currentRecord?.patientId) return;
     let isCurrent = true;
+    const offset = (evolutionHistoryPage - 1) * evolutionHistoryPageSize;
 
-    fetchPatientMedicalRecord(token, currentRecord.patientId)
-      .then((entries) => {
-        if (isCurrent) setMedicalRecordEntries(entries);
+    Promise.resolve().then(() => {
+      if (isCurrent) setIsEvolutionHistoryLoading(true);
+    });
+
+    fetchMedicalEvolutions(token, currentRecord.patientId, { limit: evolutionHistoryPageSize, offset })
+      .then((response) => {
+        if (!isCurrent) return;
+        setEvolutionHistory(response.items);
+        setEvolutionHistoryTotal(response.total);
+        setEvolutionHistoryMessage(response.total > 0 ? "Histórico de evoluções carregado." : "Paciente sem evoluções registradas.");
       })
-      .catch(() => undefined);
+      .catch((error) => {
+        if (isCurrent) setEvolutionHistoryMessage(error instanceof Error ? error.message : "Não foi possível carregar o histórico de evoluções.");
+      })
+      .finally(() => {
+        if (isCurrent) setIsEvolutionHistoryLoading(false);
+      });
 
     return () => {
       isCurrent = false;
     };
-  }, [canReadProntuario, currentRecord?.patientId, token]);
+  }, [canReadEvolutionHistory, currentRecord?.patientId, evolutionHistoryPage, isEvolutionHistoryOpen, token]);
 
   useEffect(() => {
     if (!token || !currentRecord || !canUpdateAnamnese || currentRecord.status === "finalized") return;
@@ -698,11 +731,16 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const allTemplatesCompleted = effectiveTemplates.every((template) => loadedRecord.templateStatuses?.[template.id]?.status === "completed");
   const selectedPatient = patients.find((patient) => patient.id === loadedRecord.patientId) ?? null;
   const hasLinkedPatient = Boolean(loadedRecord.patientId);
+  const linkedPatientName = selectedPatient?.name ?? (hasLinkedPatient ? getPatientName(loadedRecord) : "Sem paciente vinculado");
   const canEditCurrentRecord = canUpdateAnamnese && loadedRecord.status !== "finalized";
+  const canEditActiveTemplate = canEditCurrentRecord && !isActiveTemplateCompleted;
   const canLinkPatient = canEditCurrentRecord && canReadPatients;
   const canCreateAndLinkPatient = canLinkPatient && canCreatePatient;
-  const canManageCurrentQuestions = canUpdateAnamneseQuestions && canEditCurrentRecord;
-  const canManageCurrentOptions = canUpdateAnamneseOptions && canEditCurrentRecord;
+  const shouldShowPatientOptions = canLinkPatient && isPatientOptionsOpen;
+  const evolutionHistoryOffset = (evolutionHistoryPage - 1) * evolutionHistoryPageSize;
+  const canOpenEvolutionHistory = canReadEvolutionHistory && Boolean(loadedRecord.patientId);
+  const canManageCurrentQuestions = canUpdateAnamneseQuestions && canEditActiveTemplate;
+  const canManageCurrentOptions = canUpdateAnamneseOptions && canEditActiveTemplate;
   const parsedNewQuestionOptions = multiChoiceOptionDrafts
     .map((option) => option.trim())
     .filter((option, index, options) => option.length > 0 && options.findIndex((currentOption) => currentOption.toLowerCase() === option.toLowerCase()) === index);
@@ -778,6 +816,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
 
   async function completeActiveTemplate() {
     if (!token || loadedRecord.status === "finalized") return;
+    setIsTemplateCompletionConfirmOpen(false);
     if (autosaveTimerRef.current) {
       clearTimeout(autosaveTimerRef.current);
     }
@@ -818,7 +857,43 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
       patientName: patient?.name ?? record.patientName,
       updatedAt: new Date().toISOString()
     } : record);
+    setPatientSearch(patient?.name ?? "");
+    setIsPatientOptionsOpen(false);
+    setIsEvolutionHistoryOpen(false);
+    setEvolutionHistory([]);
+    setEvolutionHistoryTotal(0);
+    setEvolutionHistoryPage(1);
     setMessage(patient ? `Paciente vinculado: ${patient.name}` : "Vinculo com paciente removido");
+  }
+
+  function openEvolutionHistory() {
+    if (!canOpenEvolutionHistory) return;
+    setEvolutionHistoryPage(1);
+    setIsEvolutionHistoryOpen(true);
+  }
+
+  async function downloadEvolutionHistoryPdf(evolution: MedicalEvolution) {
+    if (!token || !loadedRecord.patientId) return;
+
+    const patient = selectedPatient ?? {
+      id: loadedRecord.patientId,
+      name: linkedPatientName,
+      createdAt: loadedRecord.createdAt,
+      updatedAt: loadedRecord.updatedAt
+    };
+
+    setPrintingEvolutionId(evolution.id);
+    try {
+      setEvolutionHistoryMessage("Gerando PDF da evolução...");
+      const latestEvolution = await fetchMedicalEvolution(token, evolution.id);
+      const document = await emitMedicalEvolutionPdfDocument(token, evolution.id);
+      await downloadMedicalEvolutionPdf(patient, latestEvolution, document.code);
+      setEvolutionHistoryMessage(`PDF ${document.code} gerado.`);
+    } catch (error) {
+      setEvolutionHistoryMessage(error instanceof Error ? error.message : "Não foi possível gerar o PDF da evolução.");
+    } finally {
+      setPrintingEvolutionId(null);
+    }
   }
 
   async function handleCreatePatient() {
@@ -1276,21 +1351,56 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
         {canReadPatients ? <div className="patient-link-panel">
           <div>
             <span className="eyebrow">Paciente e prontuário</span>
-            <h3>{selectedPatient ? selectedPatient.name : "Sem paciente vinculado"}</h3>
-            <p>{selectedPatient ? `${medicalRecordEntries.length} evento(s) no prontuário` : "Vincule um paciente para registrar a anamnese no prontuário ao finalizar."}</p>
+            <div className="patient-link-title-row">
+              <h3>{linkedPatientName}</h3>
+              {canOpenEvolutionHistory ? (
+                <button aria-label="Ver histórico de evoluções do paciente" className="patient-history-button" onClick={openEvolutionHistory} title="Ver histórico de evoluções do paciente" type="button">
+                  <FileSearch aria-hidden="true" size={17} />
+                </button>
+              ) : null}
+            </div>
+            <p>{hasLinkedPatient ? "Paciente vinculado para registro no prontuário ao finalizar." : "Vincule um paciente para registrar a anamnese no prontuário ao finalizar."}</p>
           </div>
           <div className="patient-link-fields">
-            <label className="patient-link-field is-search">
-              <span>Buscar paciente</span>
-              <input disabled={!canLinkPatient} onChange={(event) => setPatientSearch(event.target.value)} placeholder="Nome, CPF ou RG" value={patientSearch} />
-            </label>
-            <label className="patient-link-field is-linked-patient">
-              <span>Paciente vinculado</span>
-              <select disabled={!canLinkPatient} onChange={(event) => linkPatient(event.target.value)} value={loadedRecord.patientId ?? ""}>
-                <option value="">Sem vinculo</option>
-                {patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.name} - {formatPatientDocuments(patient)}</option>)}
-              </select>
-            </label>
+            <div className="patient-link-selector">
+              <label className="patient-link-search">
+                <span>Paciente vinculado</span>
+                <div>
+                  <Search aria-hidden="true" size={16} />
+                  <input
+                    disabled={!canLinkPatient}
+                    onChange={(event) => {
+                      setPatientSearch(event.target.value);
+                      setIsPatientOptionsOpen(true);
+                    }}
+                    onFocus={() => setIsPatientOptionsOpen(true)}
+                    placeholder="Digite o nome, CPF ou RG do paciente"
+                    value={patientSearch}
+                  />
+                </div>
+              </label>
+              {shouldShowPatientOptions ? (
+                <div className="patient-link-options" aria-label="Opções de pacientes">
+                  {hasLinkedPatient ? (
+                    <button className="is-unlink" onClick={() => linkPatient("")} type="button">
+                      <strong>Sem vínculo</strong>
+                      <span>Remover paciente vinculado desta anamnese</span>
+                    </button>
+                  ) : null}
+                  {patients.map((patient) => {
+                    const isSelected = patient.id === loadedRecord.patientId;
+                    return (
+                      <button className={isSelected ? "is-selected" : ""} key={patient.id} onClick={() => linkPatient(patient.id)} type="button">
+                        <strong>{patient.name}</strong>
+                        <span>{formatPatientDocuments(patient)}</span>
+                        {isSelected ? <CheckCircle2 aria-hidden="true" size={16} /> : null}
+                      </button>
+                    );
+                  })}
+                  {patients.length === 0 ? <div className="empty-state">Nenhum paciente encontrado.</div> : null}
+                </div>
+              ) : null}
+            </div>
             {canCreateAndLinkPatient ? (
               <button className="secondary-button patient-add-button" disabled={!canLinkPatient} onClick={() => setIsPatientModalOpen(true)} type="button">
                 <Plus size={16} />
@@ -1298,12 +1408,70 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
               </button>
             ) : null}
           </div>
-          {medicalRecordEntries.length > 0 ? (
-            <ul className="medical-record-list">
-              {medicalRecordEntries.slice(0, 3).map((entry) => <li key={entry.id}><strong>{entry.title}</strong><span>{entry.summary}</span></li>)}
-            </ul>
-          ) : null}
         </div> : null}
+
+        {isEvolutionHistoryOpen && loadedRecord.patientId ? (
+          <div className="confirmation-modal-layer" role="presentation">
+            <button aria-label="Fechar histórico de evoluções" className="confirmation-modal-backdrop" onClick={() => setIsEvolutionHistoryOpen(false)} type="button" />
+            <section aria-labelledby="evolution-history-title" aria-modal="true" className="confirmation-modal-panel evolution-history-modal" role="dialog">
+              <div className="confirmation-modal-heading">
+                <span className="confirmation-modal-icon is-primary"><FileText aria-hidden="true" size={20} /></span>
+                <div>
+                  <span className="eyebrow">Prontuário</span>
+                  <h3 id="evolution-history-title">Histórico de evoluções</h3>
+                </div>
+                <button className="icon-button" onClick={() => setIsEvolutionHistoryOpen(false)} title="Fechar histórico" type="button"><X aria-hidden="true" size={18} /></button>
+              </div>
+              <p>{linkedPatientName}. {isEvolutionHistoryLoading ? "Atualizando histórico..." : evolutionHistoryMessage}</p>
+              <div className={`records-table-shell ${isEvolutionHistoryLoading ? "is-loading" : ""}`}>
+                <table className="records-table evolution-history-table">
+                  <colgroup>
+                    <col className="evolution-history-date-column" />
+                    <col className="evolution-history-status-column" />
+                    <col className="evolution-history-area-column" />
+                    <col className="evolution-history-actions-column" />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th>Data e hora</th>
+                      <th>Status</th>
+                      <th>Área</th>
+                      <th>Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {evolutionHistory.length === 0 ? (
+                      <tr>
+                        <td colSpan={4}>{isEvolutionHistoryLoading ? "Carregando evoluções do paciente..." : "Nenhuma evolução registrada para este paciente."}</td>
+                      </tr>
+                    ) : evolutionHistory.map((evolution) => (
+                      <tr key={evolution.id}>
+                        <td>{formatDateTime(evolution.evolutionDate)}</td>
+                        <td><span className={`table-status is-${evolution.status}`}>{getEvolutionStatusLabel(evolution.status)}</span></td>
+                        <td>{evolution.professionalArea ?? "-"}</td>
+                        <td>
+                          {evolution.status === "finalized" && canPrintEvolutionHistory ? (
+                            <button className="table-action" disabled={printingEvolutionId === evolution.id} onClick={() => void downloadEvolutionHistoryPdf(evolution)} type="button">
+                              <Printer aria-hidden="true" size={15} />
+                              {printingEvolutionId === evolution.id ? "Gerando..." : "PDF"}
+                            </button>
+                          ) : "-"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="pagination-bar" aria-label="Paginação do histórico de evoluções">
+                <span>{isEvolutionHistoryLoading ? "Atualizando evoluções..." : formatPageSummary(evolutionHistoryTotal, evolutionHistoryOffset, evolutionHistory.length, evolutionHistoryTotal === 1 ? "evolução" : "evoluções")}</span>
+                <div>
+                  <button disabled={isEvolutionHistoryLoading || evolutionHistoryPage === 1} onClick={() => setEvolutionHistoryPage((currentPage) => Math.max(1, currentPage - 1))} type="button"><ChevronLeft aria-hidden="true" size={15} />Anterior</button>
+                  <button disabled={isEvolutionHistoryLoading || evolutionHistoryOffset + evolutionHistory.length >= evolutionHistoryTotal} onClick={() => setEvolutionHistoryPage((currentPage) => currentPage + 1)} type="button">Próxima<ChevronRight aria-hidden="true" size={15} /></button>
+                </div>
+              </div>
+            </section>
+          </div>
+        ) : null}
 
         {isPatientModalOpen ? (
           <div className="confirmation-modal-layer" role="presentation">
@@ -1695,6 +1863,26 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
             </div>
           ) : null}
 
+          {isTemplateCompletionConfirmOpen ? (
+            <div className="confirmation-modal-layer" role="presentation">
+              <button aria-label="Cancelar conclusão da ficha" className="confirmation-modal-backdrop" onClick={() => setIsTemplateCompletionConfirmOpen(false)} type="button" />
+              <section aria-labelledby="template-completion-confirm-title" aria-modal="true" className="confirmation-modal-panel" role="dialog">
+                <div className="confirmation-modal-heading">
+                  <span className="confirmation-modal-icon is-primary"><CheckCircle2 aria-hidden="true" size={20} /></span>
+                  <div>
+                    <span className="eyebrow">Confirmacao obrigatoria</span>
+                    <h3 id="template-completion-confirm-title">Concluir ficha {activeTemplate.shortTitle}?</h3>
+                  </div>
+                </div>
+                <p>Ao concluir esta ficha, ela ficará bloqueada: não será mais possível editar respostas, adicionar perguntas, editar ou excluir itens desta ficha.</p>
+                <div className="confirmation-modal-actions">
+                  <button className="secondary-button" onClick={() => setIsTemplateCompletionConfirmOpen(false)} type="button">Cancelar</button>
+                  <button className="primary-button" onClick={() => { void completeActiveTemplate(); }} type="button">Concluir ficha</button>
+                </div>
+              </section>
+            </div>
+          ) : null}
+
           <div className="field-grid">
             {sectionFields.map((field) => (
               <div className={`field-card ${field.type === "textarea" || field.type === "table" || field.type === "yesNoDetails" ? "is-wide" : ""}`} key={field.id}>
@@ -1738,7 +1926,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                 )}
                 {field.helper ? <em>{field.helper}</em> : null}
                 <FieldRenderer
-                  canEditRecord={canEditCurrentRecord}
+                  canEditRecord={canEditActiveTemplate}
                   canUpdateAnamneseOptions={canManageCurrentOptions}
                   field={field}
                   onChange={(value) => updateField(activeTemplate.id, field.id, value)}
@@ -1774,7 +1962,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                 Nova
               </button>
             ) : null}
-            {canUpdateAnamnese ? (
+            {canUpdateAnamnese && !isActiveTemplateCompleted ? (
               <button className="secondary-button" disabled={loadedRecord.status === "finalized"} onClick={() => saveRecord("draft")} type="button">
                 <Save size={17} />
                 Salvar rascunho
@@ -1798,8 +1986,8 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                 PDF da ficha
               </button>
             ) : null}
-            {canFinalizeAnamnese ? (
-              <button className="secondary-button" disabled={loadedRecord.status === "finalized" || isActiveTemplateCompleted} onClick={() => { void completeActiveTemplate(); }} type="button">
+            {canFinalizeAnamnese && !isActiveTemplateCompleted ? (
+              <button className="secondary-button" disabled={loadedRecord.status === "finalized"} onClick={() => setIsTemplateCompletionConfirmOpen(true)} type="button">
                 <CheckCircle2 size={17} />
                 Concluir ficha
               </button>

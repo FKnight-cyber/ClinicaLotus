@@ -169,6 +169,8 @@ export class AnamnesisService {
       throw new BadRequestException("Anamnese finalizada não pode ser editada.");
     }
 
+    this.ensureCompletedTemplatesAreUnchanged(existingRecord, dto);
+
     const beforeData = this.toRecordResponse(existingRecord);
     const createdTemplates = this.getCreatedCustomTemplates(existingRecord.templateConfigJson, dto.templateConfig);
 
@@ -486,6 +488,49 @@ export class AnamnesisService {
     }));
   }
 
+  private ensureCompletedTemplatesAreUnchanged(record: RecordWithAnswers, dto: UpdateAnamnesisDto) {
+    const completedTemplateIds = Object.entries(this.templateStatusesFromRecord(record))
+      .filter(([, templateStatus]) => templateStatus.status === "completed")
+      .map(([templateId]) => templateId);
+
+    if (completedTemplateIds.length === 0) return;
+
+    const existingAnswers = dto.answers ? this.answersFromRecord(record) : null;
+    const existingCustomFields = record.customFieldsJson ? JSON.parse(record.customFieldsJson) as Record<string, unknown> : {};
+    const existingTemplateConfig = record.templateConfigJson ? JSON.parse(record.templateConfigJson) as TemplateConfigItem[] : [];
+
+    for (const templateId of completedTemplateIds) {
+      if (dto.answers && Object.prototype.hasOwnProperty.call(dto.answers, templateId) && this.stableStringify(dto.answers[templateId] ?? {}) !== this.stableStringify(existingAnswers?.[templateId] ?? {})) {
+        throw new BadRequestException("Ficha concluída não pode ser editada.");
+      }
+
+      if (dto.customFields && Object.prototype.hasOwnProperty.call(dto.customFields, templateId) && this.stableStringify(dto.customFields[templateId] ?? {}) !== this.stableStringify(existingCustomFields[templateId] ?? {})) {
+        throw new BadRequestException("Ficha concluída não pode ser editada.");
+      }
+
+      if (dto.templateConfig) {
+        const nextTemplateConfig = dto.templateConfig.find((templateConfig) => templateConfig.id === templateId);
+        const currentTemplateConfig = existingTemplateConfig.find((templateConfig) => templateConfig.id === templateId);
+
+        if (this.stableStringify(nextTemplateConfig ?? null) !== this.stableStringify(currentTemplateConfig ?? null)) {
+          throw new BadRequestException("Ficha concluída não pode ser editada.");
+        }
+      }
+    }
+  }
+
+  private stableStringify(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map((item) => this.stableStringify(item)).join(",")}]`;
+    if (value && typeof value === "object") {
+      return `{${Object.entries(value as Record<string, unknown>)
+        .sort(([firstKey], [secondKey]) => firstKey.localeCompare(secondKey))
+        .map(([key, item]) => `${JSON.stringify(key)}:${this.stableStringify(item)}`)
+        .join(",")}}`;
+    }
+
+    return JSON.stringify(value);
+  }
+
   private async getMissingRequiredFields(answers: AnamnesisAnswers, templateId?: string) {
     const requiredQuestions = await this.cache.getOrSet("anamnesis:questions:required", 10 * 60 * 1000, () => this.prisma.anamnesisQuestion.findMany({
       where: { active: true, required: true },
@@ -615,9 +660,14 @@ export class AnamnesisService {
 
   private async nextDocumentCode() {
     const year = new Date().getFullYear();
-    const startOfYear = new Date(year, 0, 1);
-    const documentsThisYear = await this.prisma.clinicalDocument.count({ where: { emittedAt: { gte: startOfYear } } });
-    return `DOC-${year}-${String(documentsThisYear + 1).padStart(4, "0")}`;
+    const prefix = `DOC-${year}-`;
+    const latestDocument = await this.prisma.clinicalDocument.findFirst({
+      where: { code: { startsWith: prefix } },
+      orderBy: { code: "desc" },
+      select: { code: true }
+    });
+    const latestSequence = Number.parseInt(latestDocument?.code.replace(prefix, "") ?? "0", 10);
+    return `${prefix}${String((Number.isFinite(latestSequence) ? latestSequence : 0) + 1).padStart(4, "0")}`;
   }
 
   private async createMedicalRecordEntry(userId: string, record: ReturnType<AnamnesisService["toRecordResponse"]>) {

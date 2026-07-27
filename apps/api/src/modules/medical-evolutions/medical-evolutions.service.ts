@@ -153,12 +153,19 @@ export class MedicalEvolutionsService {
     }
 
     const beforeData = this.toResponse(existingEvolution);
+    const professionalSnapshot = await this.getFinalizingProfessionalSnapshot(userId);
     const finalizedEvolution = await this.prisma.medicalEvolution.update({
       where: { id },
       data: {
         status: "FINALIZED",
         finalizedAt: new Date(),
         finalizedById: userId,
+        professionalName: professionalSnapshot.name,
+        finalizedProfessionalName: professionalSnapshot.name,
+        finalizedProfessionalCouncil: professionalSnapshot.professionalCouncil,
+        finalizedProfessionalRegistration: professionalSnapshot.professionalRegistration,
+        finalizedProfessionalCouncilState: professionalSnapshot.professionalCouncilState,
+        finalizedProfessionalSpecialty: professionalSnapshot.professionalSpecialty,
         updatedById: userId
       },
       include: this.userRelations()
@@ -316,9 +323,33 @@ export class MedicalEvolutionsService {
 
   private async nextDocumentCode() {
     const year = new Date().getFullYear();
-    const startOfYear = new Date(year, 0, 1);
-    const documentsThisYear = await this.prisma.clinicalDocument.count({ where: { emittedAt: { gte: startOfYear } } });
-    return `DOC-${year}-${String(documentsThisYear + 1).padStart(4, "0")}`;
+    const prefix = `DOC-${year}-`;
+    const latestDocument = await this.prisma.clinicalDocument.findFirst({
+      where: { code: { startsWith: prefix } },
+      orderBy: { code: "desc" },
+      select: { code: true }
+    });
+    const latestSequence = Number.parseInt(latestDocument?.code.replace(prefix, "") ?? "0", 10);
+    return `${prefix}${String((Number.isFinite(latestSequence) ? latestSequence : 0) + 1).padStart(4, "0")}`;
+  }
+
+  private async getFinalizingProfessionalSnapshot(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        name: true,
+        professionalCouncil: true,
+        professionalRegistration: true,
+        professionalCouncilState: true,
+        professionalSpecialty: true
+      }
+    });
+
+    if (!user) {
+      throw new NotFoundException("Usuário responsável pela finalização não encontrado.");
+    }
+
+    return user;
   }
 
   private userRelations() {
@@ -349,6 +380,11 @@ export class MedicalEvolutionsService {
       text: evolution.text,
       professionalArea: evolution.professionalArea,
       professionalName: evolution.professionalName,
+      finalizedProfessionalName: evolution.finalizedProfessionalName,
+      finalizedProfessionalCouncil: evolution.finalizedProfessionalCouncil,
+      finalizedProfessionalRegistration: evolution.finalizedProfessionalRegistration,
+      finalizedProfessionalCouncilState: evolution.finalizedProfessionalCouncilState,
+      finalizedProfessionalSpecialty: evolution.finalizedProfessionalSpecialty,
       finalizedAt: evolution.finalizedAt?.toISOString() ?? null,
       canceledAt: evolution.canceledAt?.toISOString() ?? null,
       cancelReason: evolution.cancelReason,

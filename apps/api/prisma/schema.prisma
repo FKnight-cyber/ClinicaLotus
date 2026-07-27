@@ -247,6 +247,11 @@ model MedicalEvolution {
   text                 String
   professionalArea     String?
   professionalName     String?
+  finalizedProfessionalName String?
+  finalizedProfessionalCouncil String?
+  finalizedProfessionalRegistration String?
+  finalizedProfessionalCouncilState String?
+  finalizedProfessionalSpecialty String?
   createdById          String?
   updatedById          String?
   finalizedById        String?

@@ -52,6 +52,20 @@ function getProfessionalInfoRows(professional: ProfessionalProfile | null | unde
   return rows.filter((row): row is { label: string; value: string } => Boolean(row.value));
 }
 
+function getEvolutionProfessionalProfile(evolution: MedicalEvolution): ProfessionalProfile | null {
+  if (evolution.finalizedProfessionalName || evolution.finalizedProfessionalCouncil || evolution.finalizedProfessionalRegistration || evolution.finalizedProfessionalCouncilState || evolution.finalizedProfessionalSpecialty) {
+    return {
+      name: evolution.finalizedProfessionalName,
+      professionalCouncil: evolution.finalizedProfessionalCouncil,
+      professionalRegistration: evolution.finalizedProfessionalRegistration,
+      professionalCouncilState: evolution.finalizedProfessionalCouncilState,
+      professionalSpecialty: evolution.finalizedProfessionalSpecialty
+    };
+  }
+
+  return evolution.finalizedBy ?? null;
+}
+
 function svgToPngDataUrl(svg: string, width: number, height: number) {
   return new Promise<string>((resolve, reject) => {
     const image = new Image();
@@ -154,14 +168,15 @@ function addFooters(doc: jsPDF, documentCode?: string) {
 export async function downloadMedicalEvolutionPdf(patient: PatientSummary, evolution: MedicalEvolution, documentCode?: string, professionalProfile?: ProfessionalProfile | null) {
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
   await drawHeader(doc);
-  const professionalInfoRows = getProfessionalInfoRows(professionalProfile);
+  const savedProfessionalProfile = getEvolutionProfessionalProfile(evolution) ?? professionalProfile;
+  const professionalInfoRows = getProfessionalInfoRows(savedProfessionalProfile);
 
   let y = margin + 44;
   const halfWidth = (contentWidth - 4) / 2;
   const thirdWidth = (contentWidth - 8) / 3;
 
   y = drawSectionTitle(doc, "Dados do profissional", y);
-  drawInfoRow(doc, "Profissional", evolution.professionalName || professionalProfile?.name || evolution.finalizedBy?.name || evolution.createdBy?.name || "-", margin, y, halfWidth);
+  drawInfoRow(doc, "Profissional", savedProfessionalProfile?.name || evolution.professionalName || evolution.finalizedBy?.name || evolution.createdBy?.name || "-", margin, y, halfWidth);
   drawInfoRow(doc, "Área profissional", evolution.professionalArea || "-", margin + halfWidth + 4, y, halfWidth);
   y += 23;
 
