@@ -9,7 +9,9 @@ import { anamneseTemplates as fallbackTemplates } from "./templates";
 import { filterAnamneseTemplatesByPermissions } from "./templatePermissions";
 import type { AnamneseRecord, FormTemplate } from "./types";
 
-const pageSize = 6;
+const DEFAULT_PAGE_SIZE = 40;
+const MAX_PAGE_SIZE = 100;
+const ANAMNESE_FILTERS_STORAGE_KEY = "clinica.anamnese.filters";
 
 type StatusFilter = "all" | "draft" | "finalized";
 type RequiredFilter = "all" | "complete" | "pending";
@@ -32,21 +34,71 @@ const emptyFilters: ListFilters = {
   updatedTo: ""
 };
 
+function normalizeStatusFilter(value: unknown): StatusFilter {
+  return value === "draft" || value === "finalized" ? value : "all";
+}
+
+function normalizeRequiredFilter(value: unknown): RequiredFilter {
+  return value === "complete" || value === "pending" ? value : "all";
+}
+
+function normalizePageSize(value: unknown) {
+  const parsedValue = Number(value);
+  if (!Number.isFinite(parsedValue)) return DEFAULT_PAGE_SIZE;
+  return Math.min(Math.max(Math.trunc(parsedValue), 1), MAX_PAGE_SIZE);
+}
+
+function readStoredAnamneseFilters() {
+  const defaultState = { filters: emptyFilters, pageSize: DEFAULT_PAGE_SIZE };
+  if (typeof window === "undefined") return defaultState;
+
+  try {
+    const storedFilters = window.localStorage.getItem(ANAMNESE_FILTERS_STORAGE_KEY);
+    if (!storedFilters) return defaultState;
+    const parsedFilters = JSON.parse(storedFilters) as Partial<Record<keyof ListFilters | "pageSize", unknown>>;
+
+    return {
+      filters: {
+        patient: typeof parsedFilters.patient === "string" ? parsedFilters.patient : "",
+        code: typeof parsedFilters.code === "string" ? parsedFilters.code : "",
+        status: normalizeStatusFilter(parsedFilters.status),
+        required: normalizeRequiredFilter(parsedFilters.required),
+        updatedFrom: typeof parsedFilters.updatedFrom === "string" ? parsedFilters.updatedFrom : "",
+        updatedTo: typeof parsedFilters.updatedTo === "string" ? parsedFilters.updatedTo : ""
+      },
+      pageSize: normalizePageSize(parsedFilters.pageSize)
+    };
+  } catch {
+    window.localStorage.removeItem(ANAMNESE_FILTERS_STORAGE_KEY);
+    return defaultState;
+  }
+}
+
+function writeStoredAnamneseFilters(filters: ListFilters, pageSize: number) {
+  window.localStorage.setItem(ANAMNESE_FILTERS_STORAGE_KEY, JSON.stringify({ ...filters, pageSize }));
+}
+
 export function AnamneseListPage() {
   const router = useRouter();
   const { hasPermission, token, user } = useAuth();
   const canReadAnamnese = hasPermission("anamnese.read");
   const canCreateAnamnese = hasPermission("anamnese.create");
   const canDeleteDraftAnamnese = hasPermission("admin.full_access");
+  const [initialFilters] = useState(readStoredAnamneseFilters);
   const [records, setRecords] = useState<AnamneseRecord[]>([]);
   const [templates, setTemplates] = useState<FormTemplate[]>(fallbackTemplates);
-  const [filters, setFilters] = useState<ListFilters>(emptyFilters);
+  const [filters, setFilters] = useState<ListFilters>(initialFilters.filters);
   const [recordPendingDeletion, setRecordPendingDeletion] = useState<AnamneseRecord | null>(null);
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
+  const [pageSize, setPageSize] = useState(initialFilters.pageSize);
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [message, setMessage] = useState("Registros disponíveis para consulta");
+
+  useEffect(() => {
+    writeStoredAnamneseFilters(filters, pageSize);
+  }, [filters, pageSize]);
 
   useEffect(() => {
     if (!token || !canReadAnamnese) return;
@@ -95,7 +147,7 @@ export function AnamneseListPage() {
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageRecords = filteredRecords.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const activeFilterCount = Object.entries(filters).filter(([key, value]) => key === "status" || key === "required" ? value !== "all" : Boolean(value)).length;
+  const activeFilterCount = Object.entries(filters).filter(([key, value]) => key === "status" || key === "required" ? value !== "all" : Boolean(value)).length + (pageSize !== DEFAULT_PAGE_SIZE ? 1 : 0);
 
   async function createRecord() {
     if (!token) return;
@@ -126,8 +178,14 @@ export function AnamneseListPage() {
     setPage(1);
   }
 
+  function updatePageSize(value: unknown) {
+    setPageSize(normalizePageSize(value));
+    setPage(1);
+  }
+
   function clearFilters() {
     setFilters(emptyFilters);
+    setPageSize(DEFAULT_PAGE_SIZE);
     setPage(1);
     setMessage("Filtros limpos");
   }
@@ -218,6 +276,16 @@ export function AnamneseListPage() {
               <label>
                 <span>Atualização final</span>
                 <input onChange={(event) => updateFilter("updatedTo", event.target.value)} type="date" value={filters.updatedTo} />
+              </label>
+              <label>
+                <span>Nº de itens exibidos por página</span>
+                <input
+                  max={MAX_PAGE_SIZE}
+                  min={1}
+                  onChange={(event) => updatePageSize(event.target.value)}
+                  type="number"
+                  value={pageSize}
+                />
               </label>
             </div>
 
