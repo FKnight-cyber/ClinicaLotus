@@ -4,6 +4,7 @@ import { AppCacheService } from "../../shared/cache/app-cache.service";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { LoginDto } from "./dto/login.dto";
 import { RegisterDto } from "./dto/register.dto";
+import { RequestPasswordChangeDto } from "./dto/request-password-change.dto";
 import { UpdateProfileDto } from "./dto/update-profile.dto";
 import { hashPassword, verifyPassword } from "./password";
 
@@ -27,11 +28,20 @@ export class AuthService {
               }
             }
           }
-        }
+        },
+        passwordChangeRequests: { where: { status: "PENDING" }, select: { id: true }, take: 1 }
       }
     });
 
-    if (!user || user.status !== "ACTIVE" || !verifyPassword(dto.password, user.passwordHash)) {
+    if (!user || user.status !== "ACTIVE") {
+      throw new UnauthorizedException("Login ou senha inválidos.");
+    }
+
+    if (user.passwordChangeRequests.length > 0) {
+      throw new UnauthorizedException("Seu pedido de alteração de senha ainda não foi aprovado.");
+    }
+
+    if (!verifyPassword(dto.password, user.passwordHash)) {
       throw new UnauthorizedException("Login ou senha inválidos.");
     }
 
@@ -55,6 +65,61 @@ export class AuthService {
         permissions
       }
     };
+  }
+
+  async requestPasswordChange(dto: RequestPasswordChangeDto) {
+    const login = dto.login.trim();
+    const password = dto.password.trim();
+
+    if (!login) {
+      throw new BadRequestException("Informe o usuário.");
+    }
+
+    if (!password) {
+      throw new BadRequestException("Informe a nova senha.");
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { login },
+      select: { id: true, login: true, name: true, status: true }
+    });
+
+    if (!user || user.status !== "ACTIVE") {
+      throw new BadRequestException("Usuário não encontrado ou inativo.");
+    }
+
+    const pendingRequest = await this.prisma.passwordChangeRequest.findFirst({
+      where: { userId: user.id, status: "PENDING" },
+      orderBy: { requestedAt: "desc" },
+      select: { id: true, requestedAt: true, status: true }
+    });
+    const requestedPasswordHash = hashPassword(password);
+    const passwordChangeRequest = pendingRequest
+      ? await this.prisma.passwordChangeRequest.update({
+        where: { id: pendingRequest.id },
+        data: { requestedPasswordHash, requestedAt: new Date() },
+        select: { id: true, requestedAt: true, status: true }
+      })
+      : await this.prisma.passwordChangeRequest.create({
+        data: { userId: user.id, requestedPasswordHash },
+        select: { id: true, requestedAt: true, status: true }
+      });
+
+    await this.prisma.auditLog.create({
+      data: {
+        entity: "access_user",
+        entityId: user.id,
+        action: "request_password_change",
+        beforeData: pendingRequest ? JSON.stringify(pendingRequest) : null,
+        afterData: JSON.stringify({ ...passwordChangeRequest, user: { id: user.id, login: user.login, name: user.name } }),
+        reason: `Pedido de alteração de senha: ${user.name}`,
+        userId: null
+      }
+    });
+    this.cache.deleteByPrefix("access:password-change-requests:");
+    this.cache.deleteByPrefix("access:audit-logs:");
+
+    return { message: "Pedido de alteração de senha enviado para aprovação." };
   }
 
   async register(dto: RegisterDto) {

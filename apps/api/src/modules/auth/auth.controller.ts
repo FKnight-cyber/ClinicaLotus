@@ -3,6 +3,7 @@ import { AuthGuard } from "./guards/auth.guard";
 import { AuthService } from "./auth.service";
 import { LoginDto } from "./dto/login.dto";
 import { RegisterDto } from "./dto/register.dto";
+import { RequestPasswordChangeDto } from "./dto/request-password-change.dto";
 import { UpdateProfileDto } from "./dto/update-profile.dto";
 import type { AuthenticatedUser } from "./auth.types";
 
@@ -18,6 +19,11 @@ export class AuthController {
   @Post("register")
   register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
+  }
+
+  @Post("password-change-requests")
+  requestPasswordChange(@Body() dto: RequestPasswordChangeDto) {
+    return this.authService.requestPasswordChange(dto);
   }
 
   @Get("me")

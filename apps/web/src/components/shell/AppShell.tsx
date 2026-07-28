@@ -13,6 +13,8 @@ type AppShellProps = {
   children: React.ReactNode;
 };
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
+
 const ShellTitleContext = createContext<((title: string | null) => void) | null>(null);
 
 export function useShellTitle(title: string | null) {
@@ -25,13 +27,46 @@ export function useShellTitle(title: string | null) {
 }
 
 export function AppShell({ activeSlug, children }: AppShellProps) {
-  const { hasPermission, logout, user } = useAuth();
+  const { hasPermission, logout, token, user } = useAuth();
   const pathname = usePathname();
   const [customTitle, setCustomTitle] = useState<string | null>(null);
+  const [pendingPasswordChangeRequests, setPendingPasswordChangeRequests] = useState<number | null>(null);
   const setShellTitle = useMemo(() => setCustomTitle, []);
   const visibleModules = moduleItems.filter((module) => hasPermission(module.visibilityPermission));
   const activeModule = moduleItems.find((module) => module.slug === activeSlug);
   const title = customTitle ?? activeModule?.label ?? "Sistema clínico";
+  const canReadPasswordChangeRequests = hasPermission("access.password_changes.read");
+  const passwordChangeRequestsBadgeCount = token && canReadPasswordChangeRequests ? pendingPasswordChangeRequests : null;
+
+  useEffect(() => {
+    if (!token || !canReadPasswordChangeRequests) {
+      return;
+    }
+
+    let isCurrent = true;
+
+    const loadPendingPasswordChangeRequests = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/access/password-change-requests?limit=1&status=PENDING`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (!response.ok) throw new Error("Não foi possível carregar os pedidos de alteração de senha.");
+        const payload = await response.json() as { total?: number };
+        if (isCurrent) setPendingPasswordChangeRequests(payload.total ?? 0);
+      } catch {
+        if (isCurrent) setPendingPasswordChangeRequests(null);
+      }
+    };
+
+    void loadPendingPasswordChangeRequests();
+    window.addEventListener("clinica:password-change-requests-updated", loadPendingPasswordChangeRequests);
+
+    return () => {
+      isCurrent = false;
+      window.removeEventListener("clinica:password-change-requests-updated", loadPendingPasswordChangeRequests);
+    };
+  }, [canReadPasswordChangeRequests, token]);
 
   return (
     <div className="app-shell">
@@ -75,7 +110,12 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
                   <div className="module-subnav" aria-label={`${module.label} submenu`}>
                     {visibleSubItems.map((subItem) => (
                       <Link className={`module-sublink ${pathname === subItem.href ? "is-active" : ""}`} href={subItem.href} key={subItem.slug}>
-                        {subItem.label}
+                        <span>{subItem.label}</span>
+                        {subItem.slug === "alteracao-senhas" && passwordChangeRequestsBadgeCount !== null ? (
+                          <span className="module-sublink-badge" title={`${passwordChangeRequestsBadgeCount} pedidos pendentes`}>
+                            {passwordChangeRequestsBadgeCount}
+                          </span>
+                        ) : null}
                       </Link>
                     ))}
                   </div>

@@ -285,6 +285,12 @@ button:disabled {
   min-height: 44px;
 }
 
+.login-form .secondary-button,
+.login-form .primary-button {
+  justify-content: center;
+  width: 100%;
+}
+
 .login-error {
   align-items: center;
   background: #fff4f4;
@@ -405,12 +411,36 @@ button:disabled {
 }
 
 .module-sublink {
+  align-items: center;
   border-radius: 8px;
   color: #bcd9d0;
+  display: flex;
   font-size: 0.9rem;
   font-weight: 700;
+  gap: 8px;
+  justify-content: space-between;
   padding: 8px 10px;
   text-decoration: none;
+}
+
+.module-sublink span:first-child {
+  min-width: 0;
+}
+
+.module-sublink-badge {
+  align-items: center;
+  background: #f4faf7;
+  border-radius: 999px;
+  color: #12362f;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.74rem;
+  font-weight: 900;
+  height: 20px;
+  justify-content: center;
+  line-height: 1;
+  min-width: 20px;
+  padding: 0 6px;
 }
 
 .module-sublink:hover,
@@ -2326,6 +2356,34 @@ td input {
 
 .user-status-toggle {
   color: var(--primary-strong);
+}
+
+.password-change-heading {
+  gap: 14px;
+}
+
+.password-change-table {
+  min-width: 980px;
+}
+
+.password-change-table-actions {
+  min-width: 220px;
+}
+
+.password-change-pagination {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+.password-change-pagination span {
+  color: var(--muted);
+  font-weight: 700;
 }
 
 .confirmation-modal-layer {

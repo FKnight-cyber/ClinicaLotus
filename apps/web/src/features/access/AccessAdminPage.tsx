@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Clock3, Eye, ShieldCheck, ToggleLeft, ToggleRight, UserX, UsersRound, X } from "lucide-react";
+import { CheckCircle2, Clock3, Eye, KeyRound, ShieldCheck, ToggleLeft, ToggleRight, UserX, UsersRound, X, XCircle } from "lucide-react";
 import Link from "next/link";
 import { ClearFiltersButton, FilterButton } from "@/components/filters/FilterActionButtons";
 import { useAuth } from "@/features/auth/AuthProvider";
@@ -48,13 +48,46 @@ type PaginatedAccessUsers = {
   total: number;
 };
 
+type PasswordChangeRequestStatus = "PENDING" | "APPROVED" | "CANCELED";
+
+type PasswordChangeRequest = {
+  id: string;
+  userId: string;
+  status: PasswordChangeRequestStatus;
+  requestedAt: string;
+  reviewedAt?: string | null;
+  user: {
+    id: string;
+    login: string;
+    name: string;
+    email?: string | null;
+    status: AccessUser["status"];
+  };
+  reviewedBy?: {
+    id: string;
+    login: string;
+    name: string;
+  } | null;
+};
+
+type PaginatedPasswordChangeRequests = {
+  items: PasswordChangeRequest[];
+  limit: number;
+  page: number;
+  total: number;
+  totalPages: number;
+};
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
 const DEFAULT_GROUP_LIMIT = 40;
 const DEFAULT_USER_LIMIT = 40;
+const DEFAULT_PASSWORD_CHANGE_LIMIT = 40;
 const MAX_GROUP_LIMIT = 100;
 const MAX_USER_LIMIT = 100;
+const MAX_PASSWORD_CHANGE_LIMIT = 100;
 const GROUP_SEARCH_DELAY_MS = 350;
 const USER_SEARCH_DELAY_MS = 350;
+const PASSWORD_CHANGE_SEARCH_DELAY_MS = 350;
 const USER_FILTERS_STORAGE_KEY = "clinica.access.users.filters";
 const permissionModuleLabels: Record<string, string> = {
   access: "Controle de acesso",
@@ -84,6 +117,14 @@ function normalizeGroupsPage(payload: PaginatedAccessGroups | AccessGroup[], fal
 function normalizeUsersPage(payload: PaginatedAccessUsers | AccessUser[], fallbackLimit: number): PaginatedAccessUsers {
   if (Array.isArray(payload)) {
     return { items: payload.slice(0, fallbackLimit), limit: fallbackLimit, total: payload.length };
+  }
+
+  return payload;
+}
+
+function normalizePasswordChangeRequestsPage(payload: PaginatedPasswordChangeRequests | PasswordChangeRequest[], fallbackLimit: number): PaginatedPasswordChangeRequests {
+  if (Array.isArray(payload)) {
+    return { items: payload.slice(0, fallbackLimit), limit: fallbackLimit, page: 1, total: payload.length, totalPages: 1 };
   }
 
   return payload;
@@ -148,10 +189,32 @@ function buildUsersCacheKey(limit: number, search: string, groupId: string, stat
   return `${limit}:${search.trim().toLowerCase()}:${groupId}:${status}`;
 }
 
+function buildPasswordChangeRequestsPath(limit: number, page: number, search: string, status: PasswordChangeRequestStatus | "ALL") {
+  const params = new URLSearchParams({ limit: String(limit), page: String(page), status });
+  const normalizedSearch = search.trim();
+  if (normalizedSearch) params.set("search", normalizedSearch);
+  return `/api/access/password-change-requests?${params.toString()}`;
+}
+
+function buildPasswordChangeRequestsCacheKey(limit: number, page: number, search: string, status: PasswordChangeRequestStatus | "ALL") {
+  return `${limit}:${page}:${search.trim().toLowerCase()}:${status}`;
+}
+
 function getUserStatusBadge(status: string) {
   if (status === "ACTIVE") return { className: "is-active", icon: CheckCircle2, label: "Ativo" };
   if (status === "INACTIVE") return { className: "is-inactive", icon: UserX, label: "Inativo" };
   return { className: "is-pending", icon: Clock3, label: "Pendente" };
+}
+
+function getPasswordChangeStatusBadge(status: PasswordChangeRequestStatus) {
+  if (status === "APPROVED") return { className: "is-finalized", label: "Aprovado" };
+  if (status === "CANCELED") return { className: "is-canceled", label: "Cancelado" };
+  return { className: "", label: "Pendente" };
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
 }
 
 function getUserStatusConfirmation(user: AccessUser, nextStatus: AccessUser["status"]) {
@@ -169,6 +232,24 @@ function getUserStatusConfirmation(user: AccessUser, nextStatus: AccessUser["sta
     actionLabel: "Ativar usuário",
     tone: "primary",
     message: "Ao ativar este usuário, ele voltará a aparecer nas telas e fluxos que exibem usuários ativos, incluindo anamnese e demais funcionalidades do sistema, e poderá acessar os recursos permitidos pelos grupos vinculados."
+  };
+}
+
+function getPasswordChangeConfirmation(request: PasswordChangeRequest, action: "approve" | "cancel") {
+  if (action === "approve") {
+    return {
+      title: `Aprovar alteração de senha de ${request.user.name}?`,
+      actionLabel: "Aprovar alteração",
+      tone: "primary" as const,
+      message: "Ao aprovar, a nova senha solicitada passa a valer imediatamente para o próximo login do usuário."
+    };
+  }
+
+  return {
+    title: `Cancelar alteração de senha de ${request.user.name}?`,
+    actionLabel: "Cancelar pedido",
+    tone: "danger" as const,
+    message: "Ao cancelar, a senha atual do usuário permanece inalterada."
   };
 }
 
@@ -737,6 +818,341 @@ export function AccessUsersAdminPage() {
         />
       ) : null}
     </section>
+  );
+}
+
+export function PasswordChangeRequestsPage() {
+  const { hasPermission, token } = useAuth();
+  const canManagePasswordChanges = hasPermission("access.password_changes.manage");
+  const requestsCacheRef = useRef(new Map<string, PaginatedPasswordChangeRequests>());
+  const [requests, setRequests] = useState<PasswordChangeRequest[]>([]);
+  const [requestTotal, setRequestTotal] = useState(0);
+  const [requestLimit, setRequestLimit] = useState(DEFAULT_PASSWORD_CHANGE_LIMIT);
+  const [requestPage, setRequestPage] = useState(1);
+  const [requestTotalPages, setRequestTotalPages] = useState(1);
+  const [requestSearch, setRequestSearch] = useState("");
+  const [debouncedRequestSearch, setDebouncedRequestSearch] = useState("");
+  const [requestStatus, setRequestStatus] = useState<PasswordChangeRequestStatus | "ALL">("PENDING");
+  const [draftRequestSearch, setDraftRequestSearch] = useState("");
+  const [draftRequestStatus, setDraftRequestStatus] = useState<PasswordChangeRequestStatus | "ALL">("PENDING");
+  const [draftRequestLimit, setDraftRequestLimit] = useState(DEFAULT_PASSWORD_CHANGE_LIMIT);
+  const [isRequestFiltersOpen, setIsRequestFiltersOpen] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRequestsLoading, setIsRequestsLoading] = useState(true);
+  const [reviewingRequestId, setReviewingRequestId] = useState<string | null>(null);
+  const [reviewConfirmation, setReviewConfirmation] = useState<{ request: PasswordChangeRequest; action: "approve" | "cancel" } | null>(null);
+
+  const pendingRequestsCount = requests.filter((request) => request.status === "PENDING").length;
+  const activeRequestFilterCount = [requestSearch.trim(), requestStatus !== "PENDING" ? requestStatus : "", requestLimit !== DEFAULT_PASSWORD_CHANGE_LIMIT ? String(requestLimit) : ""].filter(Boolean).length;
+  const hasActiveRequestFilters = activeRequestFilterCount > 0;
+
+  const applyRequestsPage = useCallback((nextRequestsPage: PaginatedPasswordChangeRequests) => {
+    setRequests(nextRequestsPage.items);
+    setRequestTotal(nextRequestsPage.total);
+    setRequestLimit(nextRequestsPage.limit);
+    setRequestPage(nextRequestsPage.page);
+    setRequestTotalPages(nextRequestsPage.totalPages);
+  }, []);
+
+  const fetchRequestsPage = useCallback(async (limit: number, page: number, search: string, status: PasswordChangeRequestStatus | "ALL", bypassCache = false) => {
+    if (!token) return { items: [], limit, page, total: 0, totalPages: 1 };
+
+    const cacheKey = buildPasswordChangeRequestsCacheKey(limit, page, search, status);
+    const cachedRequestsPage = requestsCacheRef.current.get(cacheKey);
+    if (!bypassCache && cachedRequestsPage) return cachedRequestsPage;
+
+    const nextRequestsPayload = await apiRequest<PaginatedPasswordChangeRequests | PasswordChangeRequest[]>(token, buildPasswordChangeRequestsPath(limit, page, search, status));
+    const nextRequestsPage = normalizePasswordChangeRequestsPage(nextRequestsPayload, limit);
+    requestsCacheRef.current.set(cacheKey, nextRequestsPage);
+    return nextRequestsPage;
+  }, [token]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedRequestSearch(requestSearch);
+      setRequestPage(1);
+    }, PASSWORD_CHANGE_SEARCH_DELAY_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [requestSearch]);
+
+  useEffect(() => {
+    if (!token) return;
+
+    let isCurrent = true;
+    const cacheKey = buildPasswordChangeRequestsCacheKey(requestLimit, requestPage, debouncedRequestSearch, requestStatus);
+    const cachedRequestsPage = requestsCacheRef.current.get(cacheKey);
+
+    Promise.resolve().then(() => {
+      if (!isCurrent) return;
+      setIsRequestsLoading(!cachedRequestsPage);
+      if (!cachedRequestsPage) setIsLoading(true);
+    });
+
+    fetchRequestsPage(requestLimit, requestPage, debouncedRequestSearch, requestStatus).then((nextRequestsPage) => {
+      if (!isCurrent) return;
+      applyRequestsPage(nextRequestsPage);
+      setIsRequestsLoading(false);
+      setIsLoading(false);
+    }).catch((error) => {
+      if (!isCurrent) return;
+      setStatusMessage(error instanceof Error ? error.message : "Não foi possível carregar os pedidos de alteração de senha.");
+      setIsLoading(false);
+    });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [token, requestLimit, requestPage, debouncedRequestSearch, requestStatus, applyRequestsPage, fetchRequestsPage]);
+
+  const handleClearRequestFilters = () => {
+    setRequestSearch("");
+    setDebouncedRequestSearch("");
+    setRequestStatus("PENDING");
+    setRequestLimit(DEFAULT_PASSWORD_CHANGE_LIMIT);
+    setRequestPage(1);
+    setDraftRequestSearch("");
+    setDraftRequestStatus("PENDING");
+    setDraftRequestLimit(DEFAULT_PASSWORD_CHANGE_LIMIT);
+  };
+
+  const handleOpenRequestFilters = () => {
+    setDraftRequestSearch(requestSearch);
+    setDraftRequestStatus(requestStatus);
+    setDraftRequestLimit(requestLimit);
+    setIsRequestFiltersOpen(true);
+  };
+
+  const handleApplyRequestFilters = () => {
+    setRequestSearch(draftRequestSearch);
+    setDebouncedRequestSearch(draftRequestSearch);
+    setRequestStatus(draftRequestStatus);
+    setRequestLimit(draftRequestLimit);
+    setRequestPage(1);
+    setIsRequestFiltersOpen(false);
+  };
+
+  const handleConfirmReview = async () => {
+    if (!token || !reviewConfirmation || !canManagePasswordChanges) return;
+
+    const { action, request } = reviewConfirmation;
+    setReviewingRequestId(request.id);
+    setIsRequestsLoading(true);
+
+    try {
+      await apiRequest<PasswordChangeRequest>(token, `/api/access/password-change-requests/${request.id}/${action}`, { method: "PATCH" });
+      requestsCacheRef.current.clear();
+      const nextRequestsPage = await fetchRequestsPage(requestLimit, requestPage, debouncedRequestSearch, requestStatus, true);
+      applyRequestsPage(nextRequestsPage);
+      setReviewConfirmation(null);
+      setStatusMessage(action === "approve" ? "Alteração de senha aprovada." : "Pedido de alteração de senha cancelado.");
+      window.dispatchEvent(new Event("clinica:password-change-requests-updated"));
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Não foi possível analisar o pedido de alteração de senha.");
+    } finally {
+      setReviewingRequestId(null);
+      setIsRequestsLoading(false);
+    }
+  };
+
+  if (!hasPermission("access.password_changes.read")) {
+    return (
+      <section className="placeholder-page">
+        <div className="page-intro">
+          <div className="intro-icon" aria-hidden="true"><KeyRound size={28} /></div>
+          <div>
+            <span className="eyebrow">Senhas</span>
+            <h2>Permissão necessária</h2>
+            <p>Seu usuário não possui permissão para visualizar pedidos de alteração de senha.</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="access-page">
+      <div className="list-header">
+        <div>
+          <span className="eyebrow">Administração</span>
+          <h2>Gerenciar alteração de senhas</h2>
+          <p>Acompanhe pedidos enviados pela tela de login e aprove ou cancele a troca solicitada.</p>
+        </div>
+        <div className="access-summary-badges">
+          <span className="status-badge"><KeyRound aria-hidden="true" size={17} />{requestTotal} pedidos</span>
+          {pendingRequestsCount > 0 ? <span className="status-badge">{pendingRequestsCount} pendentes na lista</span> : null}
+        </div>
+      </div>
+
+      {statusMessage ? <div className="access-message">{statusMessage}</div> : null}
+      {isLoading ? <div className="loading-panel">Carregando pedidos...</div> : null}
+
+      <div className="access-single-panel-layout">
+        <section className="plain-panel access-users-panel">
+          <div className="access-section-heading password-change-heading">
+            <div className="access-section-title-row">
+              <div>
+                <h3>Pedidos de alteração</h3>
+                <p>{requests.length} de {requestTotal} pedidos exibidos</p>
+              </div>
+              <div className="filter-actions-row">
+                <FilterButton activeCount={activeRequestFilterCount} onClick={handleOpenRequestFilters} />
+                <ClearFiltersButton disabled={!hasActiveRequestFilters} onClick={handleClearRequestFilters} />
+              </div>
+            </div>
+          </div>
+          {isRequestFiltersOpen ? (
+            <div className="filter-drawer-layer" role="presentation">
+              <button aria-label="Fechar filtros" className="filter-drawer-backdrop" onClick={() => setIsRequestFiltersOpen(false)} type="button" />
+              <aside aria-label="Filtros de pedidos de alteração de senha" className="filter-drawer-panel">
+                <div className="filter-drawer-heading">
+                  <div>
+                    <span className="eyebrow">Filtros</span>
+                  </div>
+                  <button className="icon-button" onClick={() => setIsRequestFiltersOpen(false)} title="Fechar filtros" type="button"><X aria-hidden="true" size={18} /></button>
+                </div>
+                <div className="filter-drawer-fields">
+                  <label>
+                    <span>Buscar pedido</span>
+                    <input aria-label="Buscar pedido" onChange={(event) => setDraftRequestSearch(event.target.value)} placeholder="Nome, login ou email" value={draftRequestSearch} />
+                  </label>
+                  <label>
+                    <span>Status</span>
+                    <select aria-label="Filtrar por status" onChange={(event) => setDraftRequestStatus(event.target.value as PasswordChangeRequestStatus | "ALL")} value={draftRequestStatus}>
+                      <option value="PENDING">Pendentes</option>
+                      <option value="APPROVED">Aprovados</option>
+                      <option value="CANCELED">Cancelados</option>
+                      <option value="ALL">Todos</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Nº de pedidos exibidos</span>
+                    <input
+                      max={MAX_PASSWORD_CHANGE_LIMIT}
+                      min={1}
+                      onChange={(event) => setDraftRequestLimit(Math.min(Math.max(Number(event.target.value) || DEFAULT_PASSWORD_CHANGE_LIMIT, 1), MAX_PASSWORD_CHANGE_LIMIT))}
+                      type="number"
+                      value={draftRequestLimit}
+                    />
+                  </label>
+                </div>
+                <div className="filter-drawer-actions">
+                  <ClearFiltersButton disabled={!hasActiveRequestFilters} onClick={handleClearRequestFilters} />
+                  <button className="primary-button" onClick={handleApplyRequestFilters} type="button">Aplicar filtros</button>
+                </div>
+              </aside>
+            </div>
+          ) : null}
+          {isRequestsLoading ? <div className="inline-loading">Atualizando pedidos...</div> : null}
+          <div className={`records-table-shell ${isRequestsLoading ? "is-loading" : ""}`}>
+            <table className="records-table password-change-table">
+              <thead>
+                <tr>
+                  <th>Usuário</th>
+                  <th>Login</th>
+                  <th>Status</th>
+                  <th>Solicitação</th>
+                  <th>Análise</th>
+                  <th>Ação</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requests.length === 0 ? (
+                  <tr>
+                    <td colSpan={6}>Nenhum pedido encontrado.</td>
+                  </tr>
+                ) : (
+                  requests.map((request) => {
+                    const statusBadge = getPasswordChangeStatusBadge(request.status);
+                    const isPending = request.status === "PENDING";
+
+                    return (
+                      <tr key={request.id}>
+                        <td><strong>{request.user.name}</strong></td>
+                        <td>{request.user.login}{request.user.email ? ` - ${request.user.email}` : ""}</td>
+                        <td><span className={`table-status ${statusBadge.className}`}>{statusBadge.label}</span></td>
+                        <td>{formatDateTime(request.requestedAt)}</td>
+                        <td>{request.reviewedAt ? `${formatDateTime(request.reviewedAt)} por ${request.reviewedBy?.name ?? "usuário removido"}` : "-"}</td>
+                        <td>
+                          {canManagePasswordChanges && isPending ? (
+                            <div className="records-table-actions password-change-table-actions">
+                              <button className="table-action is-primary" disabled={reviewingRequestId === request.id} onClick={() => setReviewConfirmation({ request, action: "approve" })} type="button">
+                                <CheckCircle2 aria-hidden="true" size={16} />
+                                {reviewingRequestId === request.id ? "Salvando..." : "Aprovar"}
+                              </button>
+                              <button className="table-action is-danger" disabled={reviewingRequestId === request.id} onClick={() => setReviewConfirmation({ request, action: "cancel" })} type="button">
+                                <XCircle aria-hidden="true" size={16} />
+                                Cancelar
+                              </button>
+                            </div>
+                          ) : "-"}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+          {requestTotalPages > 1 ? (
+            <div className="password-change-pagination">
+              <button className="secondary-button" disabled={requestPage <= 1 || isRequestsLoading} onClick={() => setRequestPage((current) => Math.max(1, current - 1))} type="button">Anterior</button>
+              <span>Página {requestPage} de {requestTotalPages}</span>
+              <button className="secondary-button" disabled={requestPage >= requestTotalPages || isRequestsLoading} onClick={() => setRequestPage((current) => Math.min(requestTotalPages, current + 1))} type="button">Próxima</button>
+            </div>
+          ) : null}
+        </section>
+      </div>
+      {reviewConfirmation ? (
+        <PasswordChangeReviewModal
+          action={reviewConfirmation.action}
+          isSaving={reviewingRequestId === reviewConfirmation.request.id}
+          onCancel={() => setReviewConfirmation(null)}
+          onConfirm={handleConfirmReview}
+          request={reviewConfirmation.request}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function PasswordChangeReviewModal({
+  action,
+  isSaving,
+  onCancel,
+  onConfirm,
+  request
+}: {
+  action: "approve" | "cancel";
+  isSaving: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  request: PasswordChangeRequest;
+}) {
+  const confirmation = getPasswordChangeConfirmation(request, action);
+  const ConfirmationIcon = action === "approve" ? CheckCircle2 : XCircle;
+
+  return (
+    <div className="confirmation-modal-layer" role="presentation">
+      <button aria-label="Cancelar análise de alteração de senha" className="confirmation-modal-backdrop" disabled={isSaving} onClick={onCancel} type="button" />
+      <section aria-labelledby="password-change-confirmation-title" aria-modal="true" className="confirmation-modal-panel" role="dialog">
+        <div className="confirmation-modal-heading">
+          <span className={`confirmation-modal-icon is-${confirmation.tone}`}><ConfirmationIcon aria-hidden="true" size={20} /></span>
+          <div>
+            <span className="eyebrow">Confirmação obrigatória</span>
+            <h3 id="password-change-confirmation-title">{confirmation.title}</h3>
+          </div>
+        </div>
+        <p>{confirmation.message}</p>
+        <div className="confirmation-modal-actions">
+          <button className="secondary-button" disabled={isSaving} onClick={onCancel} type="button">Voltar</button>
+          <button className={confirmation.tone === "danger" ? "danger-button" : "primary-button"} disabled={isSaving} onClick={onConfirm} type="button">
+            {isSaving ? "Salvando..." : confirmation.actionLabel}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 

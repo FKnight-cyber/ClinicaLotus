@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { AppCacheService } from "../../shared/cache/app-cache.service";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { hashPassword } from "../auth/password";
@@ -7,6 +7,7 @@ import { CreateUserDto } from "./dto/create-user.dto";
 import { ListAccessAuditLogsQueryDto } from "./dto/list-access-audit-logs-query.dto";
 import { ListAccessGroupsQueryDto } from "./dto/list-access-groups-query.dto";
 import { ListAccessUsersQueryDto } from "./dto/list-access-users-query.dto";
+import { ListPasswordChangeRequestsQueryDto } from "./dto/list-password-change-requests-query.dto";
 import { UpdateGroupPermissionsDto } from "./dto/update-group-permissions.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { UpdateUserGroupsDto } from "./dto/update-user-groups.dto";
@@ -104,6 +105,45 @@ export class AccessService {
 
       return { items, limit, total };
     });
+  }
+
+  listPasswordChangeRequests(query: ListPasswordChangeRequestsQueryDto = {}) {
+    const limit = this.normalizeListLimit(query.limit);
+    const page = this.normalizePage(query.page);
+    const skip = (page - 1) * limit;
+    const search = query.search?.trim();
+    const status = query.status === "ALL" ? undefined : query.status ?? "PENDING";
+    const where = {
+      ...(status ? { status } : {}),
+      ...(search ? { user: { is: { OR: [
+        { name: { contains: search, mode: "insensitive" as const } },
+        { login: { contains: search, mode: "insensitive" as const } },
+        { email: { contains: search, mode: "insensitive" as const } }
+      ] } } } : {})
+    };
+
+    return this.cache.getOrSet(`access:password-change-requests:${limit}:${page}:${search ?? ""}:${status ?? "ALL"}`, 30 * 1000, async () => {
+      const [items, total] = await this.prisma.$transaction([
+        this.prisma.passwordChangeRequest.findMany({
+          where,
+          orderBy: { requestedAt: "desc" },
+          skip,
+          take: limit,
+          select: this.passwordChangeRequestSelect()
+        }),
+        this.prisma.passwordChangeRequest.count({ where })
+      ]);
+
+      return { items, limit, page, total, totalPages: Math.max(1, Math.ceil(total / limit)) };
+    });
+  }
+
+  approvePasswordChangeRequest(requestId: string, actorUserId?: string) {
+    return this.reviewPasswordChangeRequest(requestId, "APPROVED", actorUserId);
+  }
+
+  cancelPasswordChangeRequest(requestId: string, actorUserId?: string) {
+    return this.reviewPasswordChangeRequest(requestId, "CANCELED", actorUserId);
   }
 
   async createGroup(dto: CreateAccessGroupDto, actorUserId?: string) {
@@ -252,9 +292,91 @@ export class AccessService {
     return user;
   }
 
+  private async reviewPasswordChangeRequest(requestId: string, nextStatus: "APPROVED" | "CANCELED", actorUserId?: string) {
+    const previousRequest = await this.prisma.passwordChangeRequest.findUnique({
+      where: { id: requestId },
+      include: {
+        user: { select: { id: true, login: true, name: true, email: true, status: true } },
+        reviewedBy: { select: { id: true, login: true, name: true } }
+      }
+    });
+
+    if (!previousRequest) throw new NotFoundException("Pedido de alteração de senha não encontrado.");
+    if (previousRequest.status !== "PENDING") throw new BadRequestException("Este pedido de alteração de senha já foi analisado.");
+    if (nextStatus === "APPROVED" && !previousRequest.requestedPasswordHash) throw new BadRequestException("Pedido de alteração de senha inválido.");
+
+    const reviewedAt = new Date();
+    if (nextStatus === "APPROVED") {
+      await this.prisma.$transaction([
+        this.prisma.user.update({
+          where: { id: previousRequest.userId },
+          data: { passwordHash: previousRequest.requestedPasswordHash!, mustChangePassword: false }
+        }),
+        this.prisma.passwordChangeRequest.update({
+          where: { id: requestId },
+          data: { status: nextStatus, requestedPasswordHash: null, reviewedAt, reviewedById: actorUserId }
+        })
+      ]);
+    } else {
+      await this.prisma.passwordChangeRequest.update({
+        where: { id: requestId },
+        data: { status: nextStatus, requestedPasswordHash: null, reviewedAt, reviewedById: actorUserId }
+      });
+    }
+
+    this.invalidateAccessCaches(previousRequest.userId);
+    this.cache.deleteByPrefix("access:password-change-requests:");
+    const nextRequest = await this.getPasswordChangeRequest(requestId);
+    await this.createAccessAuditLog(
+      "access_user",
+      previousRequest.userId,
+      nextStatus === "APPROVED" ? "approve_password_change_request" : "cancel_password_change_request",
+      actorUserId,
+      this.toPasswordChangeRequestResponse(previousRequest),
+      nextRequest,
+      `${nextStatus === "APPROVED" ? "Pedido de alteração de senha aprovado" : "Pedido de alteração de senha cancelado"}: ${previousRequest.user.name}`
+    );
+    return nextRequest;
+  }
+
+  private async getPasswordChangeRequest(requestId: string) {
+    const passwordChangeRequest = await this.prisma.passwordChangeRequest.findUnique({
+      where: { id: requestId },
+      select: this.passwordChangeRequestSelect()
+    });
+
+    if (!passwordChangeRequest) throw new NotFoundException("Pedido de alteração de senha não encontrado.");
+    return passwordChangeRequest;
+  }
+
+  private passwordChangeRequestSelect() {
+    return {
+      id: true,
+      userId: true,
+      status: true,
+      requestedAt: true,
+      reviewedAt: true,
+      user: { select: { id: true, login: true, name: true, email: true, status: true } },
+      reviewedBy: { select: { id: true, login: true, name: true } }
+    };
+  }
+
+  private toPasswordChangeRequestResponse(passwordChangeRequest: { id: string; userId: string; status: string; requestedAt: Date; reviewedAt: Date | null; user: unknown; reviewedBy: unknown }) {
+    return {
+      id: passwordChangeRequest.id,
+      userId: passwordChangeRequest.userId,
+      status: passwordChangeRequest.status,
+      requestedAt: passwordChangeRequest.requestedAt,
+      reviewedAt: passwordChangeRequest.reviewedAt,
+      user: passwordChangeRequest.user,
+      reviewedBy: passwordChangeRequest.reviewedBy
+    };
+  }
+
   private invalidateAccessCaches(userId?: string) {
     this.cache.deleteByPrefix("access:groups:");
     this.cache.deleteByPrefix("access:users:");
+    this.cache.deleteByPrefix("access:password-change-requests:");
     this.cache.deleteByPrefix("access:audit-logs:");
     this.cache.deleteByPrefix("auth:profile:");
     if (userId) this.cache.delete(`access:user:${userId}`);

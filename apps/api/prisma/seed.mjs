@@ -55,6 +55,8 @@ const basePermissions = [
   ["access.users.manage", "access", "manage_users", "Gerenciar usuários"],
   ["access.groups.read", "access", "read_groups", "Visualizar grupos de acesso"],
   ["access.groups.manage", "access", "manage_groups", "Gerenciar grupos e permissões"],
+  ["access.password_changes.read", "access", "read_password_changes", "Visualizar pedidos de alteração de senha"],
+  ["access.password_changes.manage", "access", "manage_password_changes", "Aprovar e cancelar pedidos de alteração de senha"],
   ["audit.access.read", "audit", "read_access_logs", "Visualizar logs do controle de acessos"],
   ["audit.anamnesis.read", "audit", "read_anamnesis_logs", "Visualizar logs de anamnese"],
   ["audit.medical_evolutions.read", "audit", "read_medical_evolution_logs", "Visualizar logs de evoluções finalizadas"],

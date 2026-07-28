@@ -9,6 +9,7 @@ import { CreateUserDto } from "./dto/create-user.dto";
 import { ListAccessAuditLogsQueryDto } from "./dto/list-access-audit-logs-query.dto";
 import { ListAccessGroupsQueryDto } from "./dto/list-access-groups-query.dto";
 import { ListAccessUsersQueryDto } from "./dto/list-access-users-query.dto";
+import { ListPasswordChangeRequestsQueryDto } from "./dto/list-password-change-requests-query.dto";
 import { UpdateGroupPermissionsDto } from "./dto/update-group-permissions.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { UpdateUserGroupsDto } from "./dto/update-user-groups.dto";
@@ -47,6 +48,24 @@ export class AccessController {
   @RequirePermissions("access.groups.read")
   listGroups(@Query() query: ListAccessGroupsQueryDto) {
     return this.accessService.listGroups(query);
+  }
+
+  @Get("password-change-requests")
+  @RequirePermissions("access.password_changes.read")
+  listPasswordChangeRequests(@Query() query: ListPasswordChangeRequestsQueryDto) {
+    return this.accessService.listPasswordChangeRequests(query);
+  }
+
+  @Patch("password-change-requests/:requestId/approve")
+  @RequirePermissions("access.password_changes.manage")
+  approvePasswordChangeRequest(@Param("requestId") requestId: string, @Req() request: { user?: AuthenticatedUser }) {
+    return this.accessService.approvePasswordChangeRequest(requestId, request.user?.id);
+  }
+
+  @Patch("password-change-requests/:requestId/cancel")
+  @RequirePermissions("access.password_changes.manage")
+  cancelPasswordChangeRequest(@Param("requestId") requestId: string, @Req() request: { user?: AuthenticatedUser }) {
+    return this.accessService.cancelPasswordChangeRequest(requestId, request.user?.id);
   }
 
   @Post("groups")

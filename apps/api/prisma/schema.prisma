@@ -12,6 +12,12 @@ enum UserStatus {
   INACTIVE
 }
 
+enum PasswordChangeRequestStatus {
+  PENDING
+  APPROVED
+  CANCELED
+}
+
 enum PatientStatus {
   ACTIVE
   INACTIVE
@@ -80,6 +86,24 @@ model User {
   canceledMedicalEvolutions MedicalEvolution[] @relation("MedicalEvolutionCanceledBy")
   emittedDocuments   ClinicalDocument[]
   auditLogs          AuditLog[]
+  passwordChangeRequests PasswordChangeRequest[] @relation("PasswordChangeRequestedBy")
+  reviewedPasswordChangeRequests PasswordChangeRequest[] @relation("PasswordChangeReviewedBy")
+}
+
+model PasswordChangeRequest {
+  id                    String                      @id @default(uuid())
+  userId                String
+  requestedPasswordHash String?
+  status                PasswordChangeRequestStatus @default(PENDING)
+  requestedAt           DateTime                    @default(now())
+  reviewedAt            DateTime?
+  reviewedById          String?
+  updatedAt             DateTime                    @updatedAt
+  user                  User                        @relation("PasswordChangeRequestedBy", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy            User?                       @relation("PasswordChangeReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([status, requestedAt])
+  @@index([userId, status])
 }
 
 model AccessGroup {

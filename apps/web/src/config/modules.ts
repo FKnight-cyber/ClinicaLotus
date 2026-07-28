@@ -115,6 +115,12 @@ export const moduleItems: ModuleItem[] = [
         label: "Gerenciar usuários",
         href: "/modulos/controle-acesso/gerenciar-usuarios",
         visibilityPermission: "access.users.read"
+      },
+      {
+        slug: "alteracao-senhas",
+        label: "Gerenciar alteração de senhas",
+        href: "/modulos/controle-acesso/alteracao-senhas",
+        visibilityPermission: "access.password_changes.read"
       }
     ]
   },
