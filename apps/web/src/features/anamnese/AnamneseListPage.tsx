@@ -93,6 +93,7 @@ export function AnamneseListPage() {
   const [pageSize, setPageSize] = useState(initialFilters.pageSize);
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
+  const [isCreatingRecord, setIsCreatingRecord] = useState(false);
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [message, setMessage] = useState("Registros disponíveis para consulta");
 
@@ -150,11 +151,18 @@ export function AnamneseListPage() {
   const activeFilterCount = Object.entries(filters).filter(([key, value]) => key === "status" || key === "required" ? value !== "all" : Boolean(value)).length + (pageSize !== DEFAULT_PAGE_SIZE ? 1 : 0);
 
   async function createRecord() {
-    if (!token) return;
+    if (!token || isCreatingRecord) return;
+    setIsCreatingRecord(true);
     setMessage("Criando rascunho no banco...");
-    const record = await createAnamneseRecord(token, { patientName: "Paciente sem nome" });
-    setRecords((currentRecords) => [record, ...currentRecords]);
-    router.push(`/anamnese/${record.id}`);
+    try {
+      const record = await createAnamneseRecord(token, { patientName: "Paciente sem nome" });
+      setRecords((currentRecords) => [record, ...currentRecords]);
+      router.push(`/anamnese/${record.id}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível criar o rascunho.");
+    } finally {
+      setIsCreatingRecord(false);
+    }
   }
 
   async function confirmDeleteDraft() {
@@ -208,9 +216,9 @@ export function AnamneseListPage() {
         </div>
         {canCreateAnamnese ? (
           <div className="list-actions">
-            <button className="primary-button" onClick={createRecord} type="button">
+            <button className="primary-button" disabled={isCreatingRecord} onClick={createRecord} type="button">
               <Plus size={17} />
-              Nova anamnese
+              {isCreatingRecord ? "Criando..." : "Nova anamnese"}
             </button>
           </div>
         ) : null}

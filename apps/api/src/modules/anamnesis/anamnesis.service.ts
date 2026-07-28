@@ -160,18 +160,32 @@ export class AnamnesisService {
   }
 
   async create(userId: string, dto: CreateAnamnesisDto) {
-    const record = await this.prisma.anamnesisRecord.create({
-      data: {
-        code: await this.nextCode(),
-        patientName: dto.patientName,
-        patientId: dto.patientId || null,
-        customFieldsJson: dto.customFields ? JSON.stringify(dto.customFields) : null,
-        templateConfigJson: dto.templateConfig ? JSON.stringify(dto.templateConfig) : null,
-        status: "DRAFT",
-        createdById: userId,
-        updatedById: userId
+    const maxCreateAttempts = 5;
+    let record: AnamnesisRecord | null = null;
+
+    for (let attempt = 1; attempt <= maxCreateAttempts; attempt += 1) {
+      try {
+        record = await this.prisma.anamnesisRecord.create({
+          data: {
+            code: await this.nextCode(),
+            patientName: dto.patientName,
+            patientId: dto.patientId || null,
+            customFieldsJson: dto.customFields ? JSON.stringify(dto.customFields) : null,
+            templateConfigJson: dto.templateConfig ? JSON.stringify(dto.templateConfig) : null,
+            status: "DRAFT",
+            createdById: userId,
+            updatedById: userId
+          }
+        });
+        break;
+      } catch (error) {
+        if (attempt === maxCreateAttempts || !this.isUniqueConstraintError(error)) throw error;
       }
-    });
+    }
+
+    if (!record) {
+      throw new BadRequestException("Não foi possível gerar um código único para a anamnese.");
+    }
 
     if (dto.answers) {
       await this.replaceAnswers(record.id, dto.answers);
@@ -682,9 +696,18 @@ export class AnamnesisService {
 
   private async nextCode() {
     const year = new Date().getFullYear();
-    const startOfYear = new Date(year, 0, 1);
-    const recordsThisYear = await this.prisma.anamnesisRecord.count({ where: { createdAt: { gte: startOfYear } } });
-    return `ANA-${year}-${String(recordsThisYear + 1).padStart(4, "0")}`;
+    const prefix = `ANA-${year}-`;
+    const latestRecord = await this.prisma.anamnesisRecord.findFirst({
+      where: { code: { startsWith: prefix } },
+      orderBy: { code: "desc" },
+      select: { code: true }
+    });
+    const latestSequence = Number.parseInt(latestRecord?.code.replace(prefix, "") ?? "0", 10);
+    return `${prefix}${String((Number.isFinite(latestSequence) ? latestSequence : 0) + 1).padStart(4, "0")}`;
+  }
+
+  private isUniqueConstraintError(error: unknown) {
+    return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
   }
 
   private async nextDocumentCode() {

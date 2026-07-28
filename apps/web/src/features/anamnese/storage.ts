@@ -88,18 +88,25 @@ function invalidatePatientCaches(token: string, patientId?: string | null) {
 }
 
 async function apiRequest<T>(token: string, path: string, options: RequestInit = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...options.headers
-    }
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        ...options.headers
+      }
+    });
+  } catch {
+    throw new Error("Não foi possível conectar à API. Verifique a URL da API em produção e tente novamente.");
+  }
 
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throw new Error(payload?.message ?? "Não foi possível salvar a anamnese.");
+    const message = Array.isArray(payload?.message) ? payload.message.join(" ") : payload?.message;
+    throw new Error(message ?? "Não foi possível salvar a anamnese.");
   }
 
   return response.json() as Promise<T>;

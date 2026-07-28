@@ -557,6 +557,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   const [activeSectionIndex, setActiveSectionIndex] = useState(0);
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [message, setMessage] = useState("Carregando anamnese do banco...");
+  const [isCreatingRecord, setIsCreatingRecord] = useState(false);
   const [newQuestionLabel, setNewQuestionLabel] = useState("");
   const [newQuestionType, setNewQuestionType] = useState<CustomQuestionType>("textarea");
   const [isMultiChoiceModalOpen, setIsMultiChoiceModalOpen] = useState(false);
@@ -845,15 +846,23 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   }
 
   async function startNewRecord() {
-    if (!token) return;
-    const record = await createAnamneseRecord(token, { patientName: "Paciente sem nome" });
-    lastSavedSnapshotRef.current = getRecordSnapshot(record);
-    setCurrentRecord(record);
-    setIssues([]);
-    setActiveTemplateId(effectiveTemplates[0]?.id ?? "nursing-admission");
-    setActiveSectionIndex(0);
-    setMessage("Novo rascunho criado no banco");
-    router.replace(`/anamnese/${record.id}`);
+    if (!token || isCreatingRecord) return;
+    setIsCreatingRecord(true);
+    setMessage("Criando rascunho no banco...");
+    try {
+      const record = await createAnamneseRecord(token, { patientName: "Paciente sem nome" });
+      lastSavedSnapshotRef.current = getRecordSnapshot(record);
+      setCurrentRecord(record);
+      setIssues([]);
+      setActiveTemplateId(effectiveTemplates[0]?.id ?? "nursing-admission");
+      setActiveSectionIndex(0);
+      setMessage("Novo rascunho criado no banco");
+      router.replace(`/anamnese/${record.id}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível criar o rascunho.");
+    } finally {
+      setIsCreatingRecord(false);
+    }
   }
 
   function linkPatient(patientId: string) {
@@ -1924,9 +1933,9 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
           <span>{message}</span>
           <div>
             {canCreateAnamnese ? (
-              <button className="secondary-button" onClick={startNewRecord} type="button">
+              <button className="secondary-button" disabled={isCreatingRecord} onClick={startNewRecord} type="button">
                 <Plus size={17} />
-                Nova
+                {isCreatingRecord ? "Criando..." : "Nova"}
               </button>
             ) : null}
             {canUpdateAnamnese && !isActiveTemplateCompleted ? (
