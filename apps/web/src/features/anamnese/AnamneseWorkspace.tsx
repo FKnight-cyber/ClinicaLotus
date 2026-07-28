@@ -798,6 +798,8 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
 
   async function saveRecord(status: "draft" | "finalized") {
     if (!token) return;
+    if (status === "draft" && !canUpdateAnamnese) return;
+    if (status === "finalized" && !canFinalizeAnamnese) return;
     if (autosaveTimerRef.current) {
       clearTimeout(autosaveTimerRef.current);
     }
@@ -823,7 +825,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   }
 
   async function completeActiveTemplate() {
-    if (!token || loadedRecord.status === "finalized") return;
+    if (!token || !canFinalizeAnamnese || loadedRecord.status === "finalized") return;
     setIsTemplateCompletionConfirmOpen(false);
     if (autosaveTimerRef.current) {
       clearTimeout(autosaveTimerRef.current);
@@ -846,7 +848,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   }
 
   async function startNewRecord() {
-    if (!token || isCreatingRecord) return;
+    if (!token || !canCreateAnamnese || isCreatingRecord) return;
     setIsCreatingRecord(true);
     setMessage("Criando rascunho no banco...");
     try {
@@ -866,6 +868,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   }
 
   function linkPatient(patientId: string) {
+    if (!canLinkPatient) return;
     const patient = patients.find((item) => item.id === patientId);
     setCurrentRecord((record) => record ? {
       ...record,
@@ -889,7 +892,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   }
 
   async function downloadEvolutionHistoryPdf(evolution: MedicalEvolution) {
-    if (!token || !loadedRecord.patientId) return;
+    if (!token || !loadedRecord.patientId || !canPrintEvolutionHistory) return;
 
     const patient = selectedPatient ?? {
       id: loadedRecord.patientId,
@@ -913,7 +916,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   }
 
   async function handleDownloadPdf() {
-    if (!token) return;
+    if (!token || !canPrintAnamnese) return;
     setMessage("Gerando PDF...");
     const document = await emitAnamnesePdfDocument(token, loadedRecord.id);
     await downloadAnamnesePdf(loadedRecord, effectiveTemplates);
@@ -921,7 +924,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
   }
 
   async function handleDownloadTemplatePdf() {
-    if (!token || !isActiveTemplateCompleted) return;
+    if (!token || !canPrintAnamnese || !isActiveTemplateCompleted) return;
     setMessage(`Gerando PDF da ficha ${activeTemplate.shortTitle}...`);
     const document = await emitAnamneseTemplatePdfDocument(token, loadedRecord.id, activeTemplate.id);
     await downloadAnamnesePdf(loadedRecord, effectiveTemplates, {
@@ -1375,7 +1378,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
             <p>{hasLinkedPatient ? "Paciente vinculado para registro no prontuário ao finalizar." : "Vincule um paciente para registrar a anamnese no prontuário ao finalizar."}</p>
           </div>
           <div className="patient-link-fields">
-            <div className="patient-link-selector">
+            {canLinkPatient ? <div className="patient-link-selector">
               <label className="patient-link-search">
                 <span>Paciente vinculado</span>
                 <div>
@@ -1413,7 +1416,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
                   {patients.length === 0 ? <div className="empty-state">Nenhum paciente encontrado.</div> : null}
                 </div>
               ) : null}
-            </div>
+            </div> : null}
           </div>
         </div> : null}
 
@@ -1709,7 +1712,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
             </div>
           ) : null}
 
-          {isMultiChoiceModalOpen ? (
+          {canManageCurrentQuestions && isMultiChoiceModalOpen ? (
             <div className="confirmation-modal-layer" role="presentation">
               <button aria-label="Cancelar criação de pergunta" className="confirmation-modal-backdrop" onClick={() => setIsMultiChoiceModalOpen(false)} type="button" />
               <section aria-labelledby="multi-choice-question-modal-title" aria-modal="true" className="confirmation-modal-panel multi-choice-question-modal" role="dialog">
@@ -1760,7 +1763,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
             </div>
           ) : null}
 
-          {isTableQuestionModalOpen ? (
+          {canManageCurrentQuestions && isTableQuestionModalOpen ? (
             <div className="confirmation-modal-layer" role="presentation">
               <button aria-label="Cancelar criação de tabela" className="confirmation-modal-backdrop" onClick={() => setIsTableQuestionModalOpen(false)} type="button" />
               <section aria-labelledby="table-question-modal-title" aria-modal="true" className="confirmation-modal-panel table-question-modal" role="dialog">
@@ -1839,7 +1842,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
             </div>
           ) : null}
 
-          {isTemplateCompletionConfirmOpen ? (
+          {canFinalizeAnamnese && isTemplateCompletionConfirmOpen ? (
             <div className="confirmation-modal-layer" role="presentation">
               <button aria-label="Cancelar conclusão da ficha" className="confirmation-modal-backdrop" onClick={() => setIsTemplateCompletionConfirmOpen(false)} type="button" />
               <section aria-labelledby="template-completion-confirm-title" aria-modal="true" className="confirmation-modal-panel" role="dialog">

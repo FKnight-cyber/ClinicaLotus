@@ -151,7 +151,7 @@ export function AnamneseListPage() {
   const activeFilterCount = Object.entries(filters).filter(([key, value]) => key === "status" || key === "required" ? value !== "all" : Boolean(value)).length + (pageSize !== DEFAULT_PAGE_SIZE ? 1 : 0);
 
   async function createRecord() {
-    if (!token || isCreatingRecord) return;
+    if (!token || !canCreateAnamnese || isCreatingRecord) return;
     setIsCreatingRecord(true);
     setMessage("Criando rascunho no banco...");
     try {
@@ -166,7 +166,7 @@ export function AnamneseListPage() {
   }
 
   async function confirmDeleteDraft() {
-    if (!token || !recordPendingDeletion || recordPendingDeletion.status !== "draft") return;
+    if (!token || !canDeleteDraftAnamnese || !recordPendingDeletion || recordPendingDeletion.status !== "draft") return;
 
     setDeletingRecordId(recordPendingDeletion.id);
     try {
@@ -379,7 +379,7 @@ export function AnamneseListPage() {
         </div>
       </div>
 
-      {recordPendingDeletion ? (
+      {canDeleteDraftAnamnese && recordPendingDeletion ? (
         <div className="confirmation-modal-layer" role="presentation">
           <button aria-label="Cancelar exclusão de rascunho" className="confirmation-modal-backdrop" disabled={deletingRecordId === recordPendingDeletion.id} onClick={() => setRecordPendingDeletion(null)} type="button" />
           <section aria-labelledby="delete-anamnese-draft-title" aria-modal="true" className="confirmation-modal-panel" role="dialog">

@@ -243,10 +243,11 @@ export function ProntuarioPage() {
 
   const activeEvolution = useMemo(() => form.id ? visibleEvolutions.find((evolution) => evolution.id === form.id) ?? null : null, [form.id, visibleEvolutions]);
   const isLockedEvolution = Boolean(activeEvolution && activeEvolution.status !== "draft");
-  const isEvolutionFormDisabled = !selectedPatient || savingEvolution || isLockedEvolution;
+  const canEditEvolutionForm = Boolean(!isLockedEvolution && (form.id ? canUpdateEvolutions : canCreateEvolutions));
+  const isEvolutionFormDisabled = !selectedPatient || savingEvolution || !canEditEvolutionForm;
   const hasEvolutionFormContent = Boolean(form.id || form.text.trim() || form.evolutionDate || form.professionalArea || form.professionalName.trim());
-  const canSaveEvolution = Boolean(selectedPatient && form.text.trim() && form.professionalArea && (form.id ? canUpdateEvolutions : canCreateEvolutions) && !savingEvolution && !isLockedEvolution);
-  const evolutionModalTitle = activeEvolution?.status === "draft" || !form.id ? form.id ? "Editar evolução" : "Nova evolução" : "Visualizar evolução";
+  const canSaveEvolution = Boolean(selectedPatient && form.text.trim() && form.professionalArea && canEditEvolutionForm && !savingEvolution);
+  const evolutionModalTitle = form.id && !canEditEvolutionForm ? "Visualizar evolução" : activeEvolution?.status === "draft" || !form.id ? form.id ? "Editar evolução" : "Nova evolução" : "Visualizar evolução";
 
   async function refreshSelectedPatientData(patientId = selectedPatientId) {
     if (!token || !patientId) return;
@@ -259,6 +260,7 @@ export function ProntuarioPage() {
   }
 
   function startNewEvolution() {
+    if (!canCreateEvolutions) return;
     const profileProfessionalArea = getProfileProfessionalArea(user?.professionalArea);
     setForm({
       ...emptyFormState,
@@ -283,7 +285,7 @@ export function ProntuarioPage() {
   }
 
   async function saveEvolution() {
-    if (!token || !selectedPatientId) return;
+    if (!token || !selectedPatientId || !canSaveEvolution) return;
     setSavingEvolution(true);
     try {
       const savedEvolution = form.id
@@ -308,7 +310,7 @@ export function ProntuarioPage() {
   }
 
   async function finalizeEvolution(evolution: MedicalEvolution) {
-    if (!token) return;
+    if (!token || !canFinalizeEvolutions) return;
     setFinalizingEvolutionId(evolution.id);
     try {
       await finalizeMedicalEvolution(token, evolution);
@@ -324,7 +326,7 @@ export function ProntuarioPage() {
   }
 
   async function cancelEvolution(evolution: MedicalEvolution) {
-    if (!token) return;
+    if (!token || !canCancelEvolutions) return;
     const reason = cancelReason.trim();
     if (!reason) return;
     setCancelingEvolutionId(evolution.id);
@@ -343,7 +345,7 @@ export function ProntuarioPage() {
   }
 
   async function downloadEvolutionPdf(evolution: MedicalEvolution) {
-    if (!token || !selectedPatient) return;
+    if (!token || !selectedPatient || !canPrintEvolutions) return;
     setPrintingEvolutionId(evolution.id);
     try {
       setEvolutionMessage("Gerando PDF...");
@@ -453,12 +455,12 @@ export function ProntuarioPage() {
                     <td>{getSimpleSignatureLabel(evolution) ?? "-"}</td>
                     <td>
                       <div className="evolution-table-actions">
-                        <button className="table-action" onClick={() => editEvolution(evolution)} type="button">{evolution.status === "draft" ? <FilePenLine aria-hidden="true" size={15} /> : <Eye aria-hidden="true" size={15} />}{evolution.status === "draft" ? "Editar" : "Visualizar"}</button>
+                        <button className="table-action" onClick={() => editEvolution(evolution)} type="button">{evolution.status === "draft" && canUpdateEvolutions ? <FilePenLine aria-hidden="true" size={15} /> : <Eye aria-hidden="true" size={15} />}{evolution.status === "draft" && canUpdateEvolutions ? "Editar" : "Visualizar"}</button>
                         {evolution.status === "draft" && canFinalizeEvolutions ? <button className="table-action is-primary" disabled={finalizingEvolutionId === evolution.id} onClick={() => void finalizeEvolution(evolution)} type="button"><CheckCircle2 aria-hidden="true" size={15} />Finalizar</button> : null}
                         {evolution.status === "finalized" && canPrintEvolutions ? <button className="table-action" disabled={printingEvolutionId === evolution.id} onClick={() => void downloadEvolutionPdf(evolution)} type="button"><Printer aria-hidden="true" size={15} />PDF</button> : null}
                         {evolution.status === "draft" && canCancelEvolutions ? <button className="table-action is-danger" disabled={cancelingEvolutionId === evolution.id} onClick={() => { setPendingCancelEvolutionId(evolution.id); setCancelReason(""); }} type="button"><XCircle aria-hidden="true" size={15} />Cancelar</button> : null}
                       </div>
-                      {pendingCancelEvolutionId === evolution.id ? (
+                      {canCancelEvolutions && pendingCancelEvolutionId === evolution.id ? (
                         <div className="evolution-cancel-reason">
                           <label>
                             <span>Motivo do cancelamento</span>
@@ -526,8 +528,8 @@ export function ProntuarioPage() {
               <div className="evolution-actions">
                 <span>{savingEvolution ? "Salvando evolução..." : evolutionMessage}</span>
                 <div>
-                  {!isLockedEvolution ? <button className="secondary-button" disabled={savingEvolution || !hasEvolutionFormContent} onClick={() => setForm(emptyFormState)} type="button">Limpar</button> : null}
-                  {!isLockedEvolution ? <button className="primary-button" disabled={!canSaveEvolution} type="submit"><Save aria-hidden="true" size={16} />{savingEvolution ? "Salvando..." : "Salvar rascunho"}</button> : null}
+                  {canEditEvolutionForm ? <button className="secondary-button" disabled={savingEvolution || !hasEvolutionFormContent} onClick={() => setForm(emptyFormState)} type="button">Limpar</button> : null}
+                  {canEditEvolutionForm ? <button className="primary-button" disabled={!canSaveEvolution} type="submit"><Save aria-hidden="true" size={16} />{savingEvolution ? "Salvando..." : "Salvar rascunho"}</button> : null}
                 </div>
               </div>
             </form>
