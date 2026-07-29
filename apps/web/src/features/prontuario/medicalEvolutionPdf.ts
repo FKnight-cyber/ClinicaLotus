@@ -120,17 +120,36 @@ async function drawHeader(doc: jsPDF) {
 }
 
 function drawInfoRow(doc: jsPDF, label: string, value: string, x: number, y: number, width: number) {
-  doc.setDrawColor(216, 226, 221);
-  doc.setFillColor(251, 253, 252);
-  doc.roundedRect(x, y, width, 18, 1.5, 1.5, "FD");
-  doc.setTextColor(87, 104, 97);
+  doc.setTextColor(23, 49, 43);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.5);
-  doc.text(label.toUpperCase(), x + 3, y + 5);
+  doc.setFontSize(7.4);
+  doc.text(label.toUpperCase(), x, y);
   doc.setTextColor(23, 49, 43);
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  doc.text(value || "-", x + 3, y + 12, { maxWidth: width - 6 });
+  doc.setFontSize(8.2);
+  doc.text(value || "-", x, y + 5.5, { maxWidth: width });
+}
+
+function drawProfessionalSignature(doc: jsPDF, evolution: MedicalEvolution, professional: ProfessionalProfile | null | undefined, y: number) {
+  const signatureCenterX = pageWidth - margin - 41;
+  const signatureLeftX = pageWidth - margin - 82;
+  const professionalName = professional?.name || evolution.professionalName || evolution.finalizedBy?.name || evolution.createdBy?.name || "-";
+
+  doc.setDrawColor(23, 49, 43);
+  doc.line(signatureLeftX, y, pageWidth - margin, y);
+  doc.setTextColor(23, 49, 43);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.text("Assinatura do profissional responsável", signatureCenterX, y + 5, { align: "center" });
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text(professionalName, signatureCenterX, y + 12, { align: "center", maxWidth: 78 });
+
+  doc.setTextColor(90, 104, 98);
+  doc.setFontSize(7.2);
+  doc.text(getSignatureText(evolution), signatureCenterX, y + 21, { align: "center", maxWidth: 82 });
+  doc.text("Assinatura simples interna. Não substitui assinatura digital certificada/ICP-Brasil.", signatureCenterX, y + 28, { align: "center", maxWidth: 82 });
 }
 
 function drawSectionTitle(doc: jsPDF, title: string, y: number) {
@@ -178,7 +197,7 @@ export async function downloadMedicalEvolutionPdf(patient: PatientSummary, evolu
   y = drawSectionTitle(doc, "Dados do profissional", y);
   drawInfoRow(doc, "Profissional", savedProfessionalProfile?.name || evolution.professionalName || evolution.finalizedBy?.name || evolution.createdBy?.name || "-", margin, y, halfWidth);
   drawInfoRow(doc, "Área profissional", evolution.professionalArea || "-", margin + halfWidth + 4, y, halfWidth);
-  y += 23;
+  y += 13;
 
   for (let index = 0; index < professionalInfoRows.length; index += 2) {
     const leftRow = professionalInfoRows[index];
@@ -187,15 +206,14 @@ export async function downloadMedicalEvolutionPdf(patient: PatientSummary, evolu
     if (rightRow) {
       drawInfoRow(doc, rightRow.label, rightRow.value, margin + halfWidth + 4, y, halfWidth);
     }
-    y += 23;
+    y += 13;
   }
 
-  y += 2;
   y = drawSectionTitle(doc, "Dados do paciente", y);
   drawInfoRow(doc, "Data da evolução", formatDateTime(evolution.evolutionDate), margin, y, thirdWidth);
   drawInfoRow(doc, "Nome do paciente", patient.name, margin + thirdWidth + 4, y, thirdWidth);
   drawInfoRow(doc, "Identificação", formatPatientDocuments(patient), margin + (thirdWidth + 4) * 2, y, thirdWidth);
-  y += 23;
+  y += 13;
 
   doc.setTextColor(23, 49, 43);
   doc.setFont("helvetica", "bold");
@@ -226,16 +244,7 @@ export async function downloadMedicalEvolutionPdf(patient: PatientSummary, evolu
   }
 
   y += 22;
-  doc.setDrawColor(23, 49, 43);
-  doc.line(pageWidth - margin - 82, y, pageWidth - margin, y);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
-  doc.text("Assinatura do profissional responsável", pageWidth - margin - 41, y + 5, { align: "center" });
-
-  doc.setTextColor(90, 104, 98);
-  doc.setFontSize(7.5);
-  doc.text(getSignatureText(evolution), margin, y + 17, { maxWidth: contentWidth });
-  doc.text("Assinatura simples interna. Não substitui assinatura digital certificada/ICP-Brasil.", margin, y + 22, { maxWidth: contentWidth });
+  drawProfessionalSignature(doc, evolution, savedProfessionalProfile, y);
 
   addFooters(doc, documentCode);
   doc.save(`evolucao-${documentCode ?? evolution.id.slice(0, 8)}.pdf`);
