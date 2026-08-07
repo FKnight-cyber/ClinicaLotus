@@ -19,6 +19,7 @@ type CacheEntry<T> = {
 type AnamnesePayload = {
   patientName: string;
   patientId?: string | null;
+  clinicId?: string;
   answers?: Record<string, TemplateAnswers>;
   customFields?: AnamneseRecord["customFields"];
   templateConfig?: AnamneseRecord["templateConfig"];
@@ -63,16 +64,29 @@ function setCached<T>(cache: Map<string, CacheEntry<T>>, key: string, value: T, 
 }
 
 function invalidateAnamneseRecordCaches(token: string, record?: AnamneseRecord) {
-  anamneseRecordsCache.delete(buildCacheKey(token, "records"));
+  for (const key of anamneseRecordsCache.keys()) {
+    if (key.startsWith(`${token}:records`)) anamneseRecordsCache.delete(key);
+  }
 
   if (record) {
-    setCached(anamneseRecordCache, buildCacheKey(token, "record", record.id), record, recordCacheTtlMs);
+    setCached(anamneseRecordCache, buildCacheKey(token, "record", record.clinicId ?? "active", record.id), record, recordCacheTtlMs);
   }
 }
 
 function removeAnamneseRecordFromCache(token: string, recordId: string) {
-  anamneseRecordsCache.delete(buildCacheKey(token, "records"));
-  anamneseRecordCache.delete(buildCacheKey(token, "record", recordId));
+  for (const key of anamneseRecordsCache.keys()) {
+    if (key.startsWith(`${token}:records`)) anamneseRecordsCache.delete(key);
+  }
+  for (const key of anamneseRecordCache.keys()) {
+    if (key.startsWith(`${token}:record:`) && key.endsWith(`:${recordId}`)) anamneseRecordCache.delete(key);
+  }
+}
+
+function buildClinicQuery(clinicId?: string) {
+  const params = new URLSearchParams();
+  if (clinicId) params.set("clinicId", clinicId);
+  const queryString = params.toString();
+  return queryString ? `?${queryString}` : "";
 }
 
 function invalidatePatientCaches(token: string, patientId?: string | null) {
@@ -126,9 +140,10 @@ export function normalizeAnamneseRecord(record: AnamneseRecord): AnamneseRecord 
   };
 }
 
-export async function fetchAnamneseRecords(token: string) {
-  return getCached(anamneseRecordsCache, buildCacheKey(token, "records"), recordCacheTtlMs, async () => {
-    const records = await apiRequest<AnamneseRecord[]>(token, "/api/anamneses");
+export async function fetchAnamneseRecords(token: string, clinicId?: string) {
+  const clinicCacheKey = clinicId || "active";
+  return getCached(anamneseRecordsCache, buildCacheKey(token, "records", clinicCacheKey), recordCacheTtlMs, async () => {
+    const records = await apiRequest<AnamneseRecord[]>(token, `/api/anamneses${buildClinicQuery(clinicId)}`);
     return records.map(normalizeAnamneseRecord);
   });
 }
@@ -137,9 +152,10 @@ export function fetchAnamneseTemplates(token: string) {
   return getCached(anamneseTemplatesCache, buildCacheKey(token, "templates"), templatesCacheTtlMs, () => apiRequest<FormTemplate[]>(token, "/api/anamneses/templates"));
 }
 
-export async function fetchAnamneseRecord(token: string, recordId: string) {
-  return getCached(anamneseRecordCache, buildCacheKey(token, "record", recordId), recordCacheTtlMs, async () => {
-    const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}`);
+export async function fetchAnamneseRecord(token: string, recordId: string, clinicId?: string) {
+  const clinicCacheKey = clinicId || "active";
+  return getCached(anamneseRecordCache, buildCacheKey(token, "record", clinicCacheKey, recordId), recordCacheTtlMs, async () => {
+    const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}${buildClinicQuery(clinicId)}`);
     return normalizeAnamneseRecord(record);
   });
 }
@@ -192,12 +208,14 @@ export async function completeAnamneseTemplate(token: string, recordId: string, 
   return normalizedRecord;
 }
 
-export function fetchPatients(token: string, search = "") {
+export function fetchPatients(token: string, search = "", clinicId?: string) {
   const normalizedSearch = search.trim();
+  const clinicCacheKey = clinicId || "active";
   const params = new URLSearchParams({ status: "ACTIVE" });
   if (normalizedSearch) params.set("search", normalizedSearch);
+  if (clinicId) params.set("clinicId", clinicId);
   const query = `?${params.toString()}`;
-  return getCached(patientsCache, buildCacheKey(token, "patients", normalizedSearch.toLowerCase()), patientsCacheTtlMs, () => apiRequest<PatientSummary[]>(token, `/api/patients${query}`));
+  return getCached(patientsCache, buildCacheKey(token, "patients", clinicCacheKey, normalizedSearch.toLowerCase()), patientsCacheTtlMs, () => apiRequest<PatientSummary[]>(token, `/api/patients${query}`));
 }
 
 export function fetchPatientMedicalRecord(token: string, patientId: string) {

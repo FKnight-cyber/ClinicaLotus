@@ -78,6 +78,7 @@ export type AnamneseRecord = {
   finalizedAt?: string;
   patientName: string;
   patientId?: string | null;
+  clinicId?: string | null;
   answers: Record<TemplateId, TemplateAnswers>;
   customFields?: Partial<Record<TemplateId, Record<string, FormField[]>>>;
   templateStatuses?: Partial<Record<TemplateId, AnamneseTemplateStatus>>;

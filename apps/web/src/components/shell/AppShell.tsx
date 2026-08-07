@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { LogOut, UserCircle } from "lucide-react";
+import { Building2, LogOut, UserCircle } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { ClinicLogo } from "@/components/brand/ClinicLogo";
 import { moduleItems } from "@/config/modules";
@@ -27,16 +27,32 @@ export function useShellTitle(title: string | null) {
 }
 
 export function AppShell({ activeSlug, children }: AppShellProps) {
-  const { hasPermission, logout, token, user } = useAuth();
+  const { activeClinic, clinics, hasPermission, logout, switchActiveClinic, token, user } = useAuth();
   const pathname = usePathname();
   const [customTitle, setCustomTitle] = useState<string | null>(null);
   const [pendingPasswordChangeRequests, setPendingPasswordChangeRequests] = useState<number | null>(null);
+  const [isSwitchingClinic, setIsSwitchingClinic] = useState(false);
   const setShellTitle = useMemo(() => setCustomTitle, []);
   const visibleModules = moduleItems.filter((module) => hasPermission(module.visibilityPermission));
   const activeModule = moduleItems.find((module) => module.slug === activeSlug);
   const title = customTitle ?? activeModule?.label ?? "Sistema clínico";
   const canReadPasswordChangeRequests = hasPermission("access.password_changes.read");
+  const canSwitchGlobalClinic = clinics.length > 1 && hasPermission("clinics.manage");
   const passwordChangeRequestsBadgeCount = token && canReadPasswordChangeRequests ? pendingPasswordChangeRequests : null;
+  const currentClinic = activeClinic ?? (clinics.length === 1 ? clinics[0] : null);
+  const activeClinicLabel = currentClinic ? `${currentClinic.name}${currentClinic.code ? ` (${currentClinic.code})` : ""}` : "Clínicas conforme permissões";
+
+  const handleClinicChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const clinicId = event.target.value;
+    if (!clinicId || clinicId === activeClinic?.id) return;
+
+    setIsSwitchingClinic(true);
+    try {
+      await switchActiveClinic(clinicId);
+    } finally {
+      setIsSwitchingClinic(false);
+    }
+  };
 
   useEffect(() => {
     if (!token || !canReadPasswordChangeRequests) {
@@ -133,6 +149,21 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
             <h1>{title}</h1>
           </div>
           <div className="operator-actions">
+            {canSwitchGlobalClinic ? (
+              <label className="clinic-switcher" title="Clínica ativa">
+                <Building2 aria-hidden="true" size={18} />
+                <select aria-label="Clínica ativa" disabled={isSwitchingClinic} onChange={handleClinicChange} value={activeClinic?.id ?? ""}>
+                  {clinics.map((clinic) => (
+                    <option key={clinic.id} value={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <span className="clinic-context" title="Escopo de clínicas">
+                <Building2 aria-hidden="true" size={18} />
+                <span>{activeClinicLabel}</span>
+              </span>
+            )}
             <Link className="operator-chip" href="/meu-perfil" title="Abrir meu perfil">
               {user?.name ?? "Profissional logado"}
             </Link>

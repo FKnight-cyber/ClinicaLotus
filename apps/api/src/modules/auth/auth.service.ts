@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { AppCacheService } from "../../shared/cache/app-cache.service";
 import { PrismaService } from "../../shared/prisma/prisma.service";
@@ -24,12 +24,18 @@ export class AuthService {
           include: {
             accessGroup: {
               include: {
-                permissions: { include: { permission: true } }
+                permissions: { include: { permission: true } },
+                clinics: { include: { clinic: true } }
               }
             }
           }
         },
-        passwordChangeRequests: { where: { status: "PENDING" }, select: { id: true }, take: 1 }
+        passwordChangeRequests: { where: { status: "PENDING" }, select: { id: true }, take: 1 },
+        clinics: {
+          where: { status: "ACTIVE", clinic: { status: "ACTIVE" } },
+          include: { clinic: true },
+          orderBy: [{ isDefault: "desc" }, { assignedAt: "asc" }]
+        }
       }
     });
 
@@ -46,10 +52,13 @@ export class AuthService {
     }
 
     const permissions = this.getEffectivePermissions(user.groups);
-    const accessToken = await this.jwtService.signAsync({ sub: user.id, login: user.login, permissions });
+    const clinicContext = this.resolveClinicContext(user.clinics, null, user.groups);
+    const accessToken = await this.signAccessToken(user.id, user.login, permissions, clinicContext.activeClinic?.id ?? null, clinicContext.clinics.map((clinic) => clinic.id));
 
     return {
       accessToken,
+      activeClinic: clinicContext.activeClinic,
+      clinics: clinicContext.clinics,
       user: {
         id: user.id,
         login: user.login,
@@ -62,7 +71,8 @@ export class AuthService {
         professionalCouncilState: user.professionalCouncilState,
         professionalSpecialty: user.professionalSpecialty,
         mustChangePassword: user.mustChangePassword,
-        permissions
+        permissions,
+        activeClinicId: clinicContext.activeClinic?.id ?? null
       }
     };
   }
@@ -155,20 +165,28 @@ export class AuthService {
     };
   }
 
-  async getProfile(userId: string) {
-    return this.cache.getOrSet(`auth:profile:${userId}`, 30 * 1000, () => this.loadProfile(userId));
+  async getProfile(userId: string, activeClinicId: string | null = null) {
+    return this.cache.getOrSet(`auth:profile:${userId}:${activeClinicId ?? "default"}`, 30 * 1000, () => this.loadProfile(userId, activeClinicId));
   }
 
-  private async loadProfile(userId: string) {
+  private async loadProfile(userId: string, requestedActiveClinicId: string | null) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
         groups: {
           include: {
             accessGroup: {
-              include: { permissions: { include: { permission: true } } }
+              include: {
+                permissions: { include: { permission: true } },
+                clinics: { include: { clinic: true } }
+              }
             }
           }
+        },
+        clinics: {
+          where: { status: "ACTIVE", clinic: { status: "ACTIVE" } },
+          include: { clinic: true },
+          orderBy: [{ isDefault: "desc" }, { assignedAt: "asc" }]
         }
       }
     });
@@ -176,6 +194,9 @@ export class AuthService {
     if (!user || user.status !== "ACTIVE") {
       throw new UnauthorizedException("Usuário inválido ou inativo.");
     }
+
+    const permissions = this.getEffectivePermissions(user.groups);
+    const clinicContext = this.resolveClinicContext(user.clinics, requestedActiveClinicId, user.groups);
 
     return {
       id: user.id,
@@ -188,7 +209,40 @@ export class AuthService {
       professionalRegistration: user.professionalRegistration,
       professionalCouncilState: user.professionalCouncilState,
       professionalSpecialty: user.professionalSpecialty,
-      permissions: this.getEffectivePermissions(user.groups)
+      permissions,
+      activeClinicId: clinicContext.activeClinic?.id ?? null,
+      activeClinic: clinicContext.activeClinic,
+      clinics: clinicContext.clinics
+    };
+  }
+
+  async switchActiveClinic(userId: string, clinicId: string) {
+    const profile = await this.loadProfile(userId, null);
+    const hasGlobalAccess = profile.permissions.includes("admin.full_access");
+    const linkedClinic = profile.clinics.find((clinic) => clinic.id === clinicId);
+    let activeClinic = linkedClinic ?? null;
+
+    if (!activeClinic && hasGlobalAccess) {
+      const globalClinic = await this.prisma.clinic.findFirst({
+        where: { id: clinicId, status: "ACTIVE" },
+        select: { id: true, name: true, code: true, status: true }
+      });
+      activeClinic = globalClinic ? { ...globalClinic, isDefault: false } : null;
+    }
+
+    if (!activeClinic) {
+      throw new ForbiddenException("Usuário sem acesso à clínica informada.");
+    }
+
+    const accessToken = await this.signAccessToken(profile.id, profile.login, profile.permissions, activeClinic.id, profile.clinics.map((clinic) => clinic.id));
+    const user = { ...profile, activeClinicId: activeClinic.id, activeClinic };
+    this.cache.deleteByPrefix(`auth:profile:${userId}:`);
+
+    return {
+      accessToken,
+      user,
+      activeClinic,
+      clinics: profile.clinics
     };
   }
 
@@ -249,7 +303,7 @@ export class AuthService {
       }
     });
 
-    this.cache.delete(`auth:profile:${userId}`);
+    this.cache.deleteByPrefix(`auth:profile:${userId}:`);
     this.cache.delete("access:users");
     this.cache.delete(`access:user:${userId}`);
     const updatedProfile = await this.getProfile(userId);
@@ -289,5 +343,50 @@ export class AuthService {
     }
 
     return [...permissions].sort();
+  }
+
+  private resolveClinicContext(
+    clinics: Array<{ isDefault: boolean; assignedAt: Date; clinic: { id: string; name: string; code: string | null; status: string } }>,
+    requestedActiveClinicId: string | null = null,
+    groups: Array<{ accessGroup: { active: boolean; clinics: Array<{ clinic: { id: string; name: string; code: string | null; status: string } }> } }> = []
+  ) {
+    const availableClinicsById = new Map<string, { id: string; name: string; code: string | null; status: string; isDefault: boolean }>();
+
+    for (const relation of clinics) {
+      if (relation.clinic.status !== "ACTIVE") continue;
+      availableClinicsById.set(relation.clinic.id, {
+      id: relation.clinic.id,
+      name: relation.clinic.name,
+      code: relation.clinic.code,
+      status: relation.clinic.status,
+      isDefault: relation.isDefault
+      });
+    }
+
+    for (const group of groups) {
+      if (!group.accessGroup.active) continue;
+      for (const relation of group.accessGroup.clinics) {
+        if (relation.clinic.status !== "ACTIVE" || availableClinicsById.has(relation.clinic.id)) continue;
+        availableClinicsById.set(relation.clinic.id, {
+          id: relation.clinic.id,
+          name: relation.clinic.name,
+          code: relation.clinic.code,
+          status: relation.clinic.status,
+          isDefault: false
+        });
+      }
+    }
+
+    const availableClinics = [...availableClinicsById.values()];
+    const activeClinic = availableClinics.find((clinic) => clinic.id === requestedActiveClinicId)
+      ?? availableClinics.find((clinic) => clinic.isDefault)
+      ?? availableClinics[0]
+      ?? null;
+
+    return { clinics: availableClinics, activeClinic };
+  }
+
+  private signAccessToken(userId: string, login: string, permissions: string[], activeClinicId: string | null, availableClinicIds: string[]) {
+    return this.jwtService.signAsync({ sub: userId, login, permissions, activeClinicId, availableClinicIds });
   }
 }

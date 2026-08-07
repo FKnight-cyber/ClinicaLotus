@@ -20,13 +20,15 @@ export class AuthGuard implements CanActivate {
     }
 
     try {
-      const payload = await this.jwtService.verifyAsync<{ sub: string; login: string; permissions?: string[] }>(token);
-      const profile = await this.authService.getProfile(payload.sub);
+      const payload = await this.jwtService.verifyAsync<{ sub: string; login: string; permissions?: string[]; activeClinicId?: string | null }>(token);
+      const profile = await this.authService.getProfile(payload.sub, payload.activeClinicId ?? null);
       request.user = {
         id: profile.id,
         login: profile.login,
         name: profile.name,
-        permissions: profile.permissions
+        permissions: profile.permissions,
+        activeClinicId: profile.activeClinicId,
+        availableClinicIds: profile.clinics.map((clinic) => clinic.id)
       };
       return true;
     } catch {

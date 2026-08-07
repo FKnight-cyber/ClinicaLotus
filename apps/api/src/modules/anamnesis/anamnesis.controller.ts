@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { AuthGuard } from "../auth/guards/auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { RequirePermissions } from "../auth/guards/permissions.decorator";
@@ -20,55 +20,55 @@ export class AnamnesisController {
 
   @Get()
   @RequirePermissions("anamnese.read")
-  list() {
-    return this.anamnesisService.list();
+  list(@Req() request: { user: AuthenticatedUser }, @Query("clinicId") clinicId?: string) {
+    return this.anamnesisService.list(request.user, clinicId);
   }
 
   @Get(":id")
   @RequirePermissions("anamnese.read")
-  getById(@Param("id") id: string) {
-    return this.anamnesisService.getById(id);
+  getById(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Query("clinicId") clinicId?: string) {
+    return this.anamnesisService.getById(request.user, id, clinicId);
   }
 
   @Post()
   @RequirePermissions("anamnese.create")
   create(@Req() request: { user: AuthenticatedUser }, @Body() dto: CreateAnamnesisDto) {
-    return this.anamnesisService.create(request.user.id, dto);
+    return this.anamnesisService.create(request.user, dto);
   }
 
   @Patch(":id")
   @RequirePermissions("anamnese.update")
   update(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Body() dto: UpdateAnamnesisDto) {
-    return this.anamnesisService.update(request.user.id, id, dto);
+    return this.anamnesisService.update(request.user, id, dto);
   }
 
   @Delete(":id")
   @RequirePermissions("admin.full_access")
   deleteDraft(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string) {
-    return this.anamnesisService.deleteDraft(request.user.id, id);
+    return this.anamnesisService.deleteDraft(request.user, id);
   }
 
   @Post(":id/finalize")
   @RequirePermissions("anamnese.finalize")
   finalize(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string) {
-    return this.anamnesisService.finalize(request.user.id, id, request.user.permissions);
+    return this.anamnesisService.finalize(request.user, id);
   }
 
   @Post(":id/templates/:templateId/complete")
   @RequirePermissions("anamnese.finalize")
   completeTemplate(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Param("templateId") templateId: string) {
-    return this.anamnesisService.completeTemplate(request.user.id, id, templateId, request.user.permissions);
+    return this.anamnesisService.completeTemplate(request.user, id, templateId);
   }
 
   @Post(":id/documents/pdf")
   @RequirePermissions("anamnese.print")
   emitPdfDocument(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string) {
-    return this.anamnesisService.emitPdfDocument(request.user.id, id);
+    return this.anamnesisService.emitPdfDocument(request.user, id);
   }
 
   @Post(":id/templates/:templateId/documents/pdf")
   @RequirePermissions("anamnese.print")
   emitTemplatePdfDocument(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Param("templateId") templateId: string) {
-    return this.anamnesisService.emitTemplatePdfDocument(request.user.id, id, templateId, request.user.permissions);
+    return this.anamnesisService.emitTemplatePdfDocument(request.user, id, templateId);
   }
 }

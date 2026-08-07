@@ -10,6 +10,10 @@ export class CreateAnamnesisDto {
   patientId?: string;
 
   @IsOptional()
+  @IsString()
+  clinicId?: string;
+
+  @IsOptional()
   @IsObject()
   answers?: Record<string, Record<string, unknown>>;
 

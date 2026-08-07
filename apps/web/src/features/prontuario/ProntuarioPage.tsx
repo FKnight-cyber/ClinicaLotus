@@ -14,17 +14,20 @@ type FormState = {
   evolutionDate: string;
   professionalArea: ProfessionalArea | "";
   professionalName: string;
+  clinicId: string;
 };
 
 const emptyFormState: FormState = {
   text: "",
   evolutionDate: "",
   professionalArea: "",
-  professionalName: ""
+  professionalName: "",
+  clinicId: ""
 };
 
 const patientSearchLimit = 5;
 const evolutionsPageSize = 10;
+const clinicFilterStorageKey = "clinica.prontuario.clinicFilter";
 const selectedPatientStorageKey = "clinica.prontuario.selectedPatient";
 
 function formatPageSummary(total: number, offset: number, count: number, label: string) {
@@ -57,7 +60,8 @@ function toPayload(form: FormState): MedicalEvolutionPayload {
     text: form.text,
     evolutionDate: form.evolutionDate ? new Date(form.evolutionDate).toISOString() : undefined,
     professionalArea: form.professionalArea,
-    professionalName: form.professionalName || undefined
+    professionalName: form.professionalName || undefined,
+    clinicId: form.clinicId || undefined
   };
 }
 
@@ -118,16 +122,35 @@ function writeStoredSelectedPatient(patient: PatientSummary | null) {
   window.localStorage.setItem(selectedPatientStorageKey, JSON.stringify(patient));
 }
 
+function readStoredClinicFilter() {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(clinicFilterStorageKey) ?? "";
+}
+
+function writeStoredClinicFilter(clinicId: string) {
+  if (typeof window === "undefined") return;
+  if (clinicId) {
+    window.localStorage.setItem(clinicFilterStorageKey, clinicId);
+  } else {
+    window.localStorage.removeItem(clinicFilterStorageKey);
+  }
+}
+
 export function ProntuarioPage() {
-  const { hasPermission, token, user } = useAuth();
+  const { activeClinic, clinics, hasPermission, token, user } = useAuth();
+  const availableEvolutionClinics = clinics.filter((clinic) => clinic.status === "ACTIVE");
   const canReadPatients = hasPermission("patients.read");
   const canReadProntuario = hasPermission("prontuario.read");
   const canReadEvolutions = hasPermission("medical_evolutions.read");
+  const [clinicFilterId, setClinicFilterId] = useState(() => readStoredClinicFilter());
+  const canFilterByClinic = hasPermission("patients.clinic_filter") && hasPermission("medical_evolutions.clinic_filter") && clinics.length > 1;
+  const effectiveProntuarioClinicId = canFilterByClinic && clinics.some((clinic) => clinic.id === clinicFilterId) ? clinicFilterId : "";
+  const isViewingFilteredClinic = Boolean(effectiveProntuarioClinicId && effectiveProntuarioClinicId !== activeClinic?.id);
   const canCreateEvolutions = hasPermission("medical_evolutions.create");
-  const canUpdateEvolutions = hasPermission("medical_evolutions.update");
-  const canFinalizeEvolutions = hasPermission("medical_evolutions.finalize");
-  const canCancelEvolutions = hasPermission("medical_evolutions.cancel");
-  const canPrintEvolutions = hasPermission("medical_evolutions.print");
+  const canUpdateEvolutions = hasPermission("medical_evolutions.update") && !isViewingFilteredClinic;
+  const canFinalizeEvolutions = hasPermission("medical_evolutions.finalize") && !isViewingFilteredClinic;
+  const canCancelEvolutions = hasPermission("medical_evolutions.cancel") && !isViewingFilteredClinic;
+  const canPrintEvolutions = hasPermission("medical_evolutions.print") && !isViewingFilteredClinic;
   const canAccessEvolutionHistory = canReadProntuario || canReadEvolutions;
   const [initialSelectedPatient] = useState(() => readStoredSelectedPatient());
   const [search, setSearch] = useState(initialSelectedPatient?.name ?? "");
@@ -179,6 +202,14 @@ export function ProntuarioPage() {
     writeStoredSelectedPatient(patient);
   }
 
+  function updateClinicFilter(nextClinicId: string) {
+    setClinicFilterId(nextClinicId);
+    writeStoredClinicFilter(nextClinicId);
+    setSearch("");
+    setPatients([]);
+    selectPatient(null);
+  }
+
   function setRecordsPage(nextPage: number | ((currentPage: number) => number)) {
     setEvolutionsPage((currentPage) => {
       const resolvedPage = typeof nextPage === "function" ? nextPage(currentPage) : nextPage;
@@ -195,7 +226,7 @@ export function ProntuarioPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPatientListLoading(true);
 
-    fetchProntuarioPatients(token, debouncedSearch, { limit: patientSearchLimit, offset: 0 })
+    fetchProntuarioPatients(token, debouncedSearch, { limit: patientSearchLimit, offset: 0, clinicId: effectiveProntuarioClinicId })
       .then((response) => {
         if (!isCurrent) return;
         setPatients(response.items);
@@ -210,7 +241,7 @@ export function ProntuarioPage() {
     return () => {
       isCurrent = false;
     };
-  }, [canReadPatients, debouncedSearch, token]);
+  }, [canReadPatients, debouncedSearch, effectiveProntuarioClinicId, token]);
 
   useEffect(() => {
     if (!token || !selectedPatientId || !canReadEvolutions) {
@@ -221,7 +252,7 @@ export function ProntuarioPage() {
     let isCurrent = true;
     setEvolutionsLoading(true);
 
-    fetchMedicalEvolutions(token, selectedPatientId, { limit: evolutionsPageSize, offset: evolutionsOffset })
+    fetchMedicalEvolutions(token, selectedPatientId, { limit: evolutionsPageSize, offset: evolutionsOffset, clinicId: effectiveProntuarioClinicId })
       .then((response) => {
         if (!isCurrent) return;
         setEvolutions(response.items);
@@ -230,7 +261,16 @@ export function ProntuarioPage() {
         setEvolutionMessage(response.total > 0 ? "Evoluções carregadas." : "Paciente sem evoluções registradas.");
       })
       .catch((error) => {
-        if (isCurrent) setEvolutionMessage(error instanceof Error ? error.message : "Não foi possível carregar evoluções.");
+        if (!isCurrent) return;
+        const errorMessage = error instanceof Error ? error.message : "Não foi possível carregar evoluções.";
+        setEvolutionMessage(errorMessage);
+        setEvolutions([]);
+        setEvolutionsPatientId(null);
+        setEvolutionsTotal(0);
+        if (errorMessage.includes("Paciente não encontrado")) {
+          setSearch("");
+          selectPatient(null);
+        }
       })
       .finally(() => {
         if (isCurrent) setEvolutionsLoading(false);
@@ -239,20 +279,21 @@ export function ProntuarioPage() {
     return () => {
       isCurrent = false;
     };
-  }, [canReadEvolutions, evolutionsOffset, selectedPatientId, token]);
+  }, [canReadEvolutions, effectiveProntuarioClinicId, evolutionsOffset, selectedPatientId, token]);
 
   const activeEvolution = useMemo(() => form.id ? visibleEvolutions.find((evolution) => evolution.id === form.id) ?? null : null, [form.id, visibleEvolutions]);
   const isLockedEvolution = Boolean(activeEvolution && activeEvolution.status !== "draft");
   const canEditEvolutionForm = Boolean(!isLockedEvolution && (form.id ? canUpdateEvolutions : canCreateEvolutions));
   const isEvolutionFormDisabled = !selectedPatient || savingEvolution || !canEditEvolutionForm;
   const hasEvolutionFormContent = Boolean(form.id || form.text.trim() || form.evolutionDate || form.professionalArea || form.professionalName.trim());
-  const canSaveEvolution = Boolean(selectedPatient && form.text.trim() && form.professionalArea && canEditEvolutionForm && !savingEvolution);
+  const mustChooseEvolutionClinic = !form.id && availableEvolutionClinics.length > 1;
+  const canSaveEvolution = Boolean(selectedPatient && form.text.trim() && form.professionalArea && (!mustChooseEvolutionClinic || form.clinicId) && canEditEvolutionForm && !savingEvolution);
   const evolutionModalTitle = form.id && !canEditEvolutionForm ? "Visualizar evolução" : activeEvolution?.status === "draft" || !form.id ? form.id ? "Editar evolução" : "Nova evolução" : "Visualizar evolução";
 
   async function refreshSelectedPatientData(patientId = selectedPatientId) {
     if (!token || !patientId) return;
     const nextEvolutions = canReadEvolutions
-      ? await fetchMedicalEvolutions(token, patientId, { limit: evolutionsPageSize, offset: evolutionsOffset })
+      ? await fetchMedicalEvolutions(token, patientId, { limit: evolutionsPageSize, offset: evolutionsOffset, clinicId: effectiveProntuarioClinicId })
       : { items: [], total: 0, limit: evolutionsPageSize, offset: evolutionsOffset };
     setEvolutions(nextEvolutions.items);
     setEvolutionsPatientId(patientId);
@@ -264,6 +305,7 @@ export function ProntuarioPage() {
     const profileProfessionalArea = getProfileProfessionalArea(user?.professionalArea);
     setForm({
       ...emptyFormState,
+      clinicId: effectiveProntuarioClinicId || (availableEvolutionClinics.length === 1 ? availableEvolutionClinics[0].id : ""),
       evolutionDate: toDateTimeLocalValue(new Date().toISOString()),
       professionalArea: profileProfessionalArea,
       professionalName: profileProfessionalArea || canUseProfileProfessionalName(user?.userType) ? user?.name ?? "" : ""
@@ -276,6 +318,7 @@ export function ProntuarioPage() {
     setForm({
       id: evolution.id,
       text: evolution.text,
+      clinicId: "",
       evolutionDate: toDateTimeLocalValue(evolution.evolutionDate),
       professionalArea: evolution.professionalArea ?? "",
       professionalName: evolution.professionalName ?? ""
@@ -294,6 +337,7 @@ export function ProntuarioPage() {
       setForm({
         id: savedEvolution.id,
         text: savedEvolution.text,
+        clinicId: "",
         evolutionDate: toDateTimeLocalValue(savedEvolution.evolutionDate),
         professionalArea: savedEvolution.professionalArea ?? "",
         professionalName: savedEvolution.professionalName ?? ""
@@ -387,6 +431,15 @@ export function ProntuarioPage() {
       </div>
 
       <section className="prontuario-patient-selector" aria-label="Seleção de paciente">
+        {canFilterByClinic ? (
+          <label className="prontuario-search">
+            <span>Clínica</span>
+            <select onChange={(event) => updateClinicFilter(event.target.value)} value={clinicFilterId}>
+              <option value="">Todas as clínicas permitidas</option>
+              {clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}
+            </select>
+          </label>
+        ) : null}
         <label className="prontuario-search">
           <span>Paciente</span>
           <div>
@@ -505,6 +558,15 @@ export function ProntuarioPage() {
 
             <form className="evolution-form" onSubmit={(event) => { event.preventDefault(); void saveEvolution(); }}>
               <div className="evolution-form-grid">
+                {!form.id && mustChooseEvolutionClinic ? (
+                  <label>
+                    <span>Clínica do cadastro</span>
+                    <select disabled={isEvolutionFormDisabled} onChange={(event) => setForm((currentForm) => ({ ...currentForm, clinicId: event.target.value }))} required value={form.clinicId}>
+                      <option value="">Selecione</option>
+                      {availableEvolutionClinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</option>)}
+                    </select>
+                  </label>
+                ) : null}
                 <label>
                   <span>Data e hora</span>
                   <input disabled={isEvolutionFormDisabled} onChange={(event) => setForm((currentForm) => ({ ...currentForm, evolutionDate: event.target.value }))} type="datetime-local" value={form.evolutionDate} />

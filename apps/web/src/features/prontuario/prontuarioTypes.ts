@@ -54,6 +54,7 @@ export type MedicalEvolutionPayload = {
   evolutionDate?: string;
   professionalArea: ProfessionalArea | "";
   professionalName?: string;
+  clinicId?: string;
 };
 
 export type ClinicalDocumentSummary = {

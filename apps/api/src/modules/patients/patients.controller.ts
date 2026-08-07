@@ -15,43 +15,43 @@ export class PatientsController {
 
   @Get()
   @RequirePermissions("patients.read")
-  list(@Query("search") search?: string, @Query("status") status?: string, @Query("limit") limit?: string, @Query("offset") offset?: string) {
-    return this.patientsService.list(search, { status, limit, offset });
+  list(@Req() request: { user: AuthenticatedUser }, @Query("search") search?: string, @Query("status") status?: string, @Query("limit") limit?: string, @Query("offset") offset?: string, @Query("clinicId") clinicId?: string) {
+    return this.patientsService.list(request.user, search, { status, limit, offset, clinicId });
   }
 
   @Post()
   @RequirePermissions("patients.create")
-  create(@Req() request: { user?: AuthenticatedUser }, @Body() dto: CreatePatientDto) {
-    return this.patientsService.create(request.user?.id, dto);
+  create(@Req() request: { user: AuthenticatedUser }, @Body() dto: CreatePatientDto) {
+    return this.patientsService.create(request.user, dto);
   }
 
   @Get(":patientId")
   @RequirePermissions("patients.read")
-  getById(@Param("patientId") patientId: string, @Req() request: { user: AuthenticatedUser }) {
-    return this.patientsService.getById(patientId, request.user.permissions);
+  getById(@Param("patientId") patientId: string, @Req() request: { user: AuthenticatedUser }, @Query("clinicId") clinicId?: string) {
+    return this.patientsService.getById(patientId, request.user, clinicId);
   }
 
   @Post(":patientId/report/pdf")
   @RequirePermissions("patients.read")
   emitSummaryReportDocument(@Req() request: { user: AuthenticatedUser }, @Param("patientId") patientId: string) {
-    return this.patientsService.emitSummaryReportDocument(request.user.id, patientId, request.user.permissions);
+    return this.patientsService.emitSummaryReportDocument(request.user, patientId);
   }
 
   @Patch(":patientId")
   @RequirePermissions("patients.update")
-  update(@Req() request: { user?: AuthenticatedUser }, @Param("patientId") patientId: string, @Body() dto: UpdatePatientDto) {
-    return this.patientsService.update(request.user?.id, patientId, dto);
+  update(@Req() request: { user: AuthenticatedUser }, @Param("patientId") patientId: string, @Body() dto: UpdatePatientDto) {
+    return this.patientsService.update(request.user, patientId, dto);
   }
 
   @Patch(":patientId/status")
   @RequirePermissions("patients.inactivate")
-  updateStatus(@Req() request: { user?: AuthenticatedUser }, @Param("patientId") patientId: string, @Body() dto: UpdatePatientStatusDto) {
-    return this.patientsService.updateStatus(request.user?.id, patientId, dto.status);
+  updateStatus(@Req() request: { user: AuthenticatedUser }, @Param("patientId") patientId: string, @Body() dto: UpdatePatientStatusDto) {
+    return this.patientsService.updateStatus(request.user, patientId, dto.status);
   }
 
   @Get(":patientId/prontuario")
   @RequirePermissions("prontuario.read")
-  getMedicalRecord(@Param("patientId") patientId: string, @Req() request: { user: AuthenticatedUser }, @Query("limit") limit?: string, @Query("offset") offset?: string) {
-    return this.patientsService.getMedicalRecord(patientId, request.user.permissions, { limit, offset });
+  getMedicalRecord(@Param("patientId") patientId: string, @Req() request: { user: AuthenticatedUser }, @Query("limit") limit?: string, @Query("offset") offset?: string, @Query("clinicId") clinicId?: string) {
+    return this.patientsService.getMedicalRecord(patientId, request.user, { limit, offset, clinicId });
   }
 }

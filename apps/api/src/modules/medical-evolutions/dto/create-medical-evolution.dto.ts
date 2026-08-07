@@ -17,4 +17,8 @@ export class CreateMedicalEvolutionDto {
   @IsOptional()
   @IsString()
   professionalName?: string;
+
+  @IsOptional()
+  @IsString()
+  clinicId?: string;
 }

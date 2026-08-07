@@ -7,16 +7,17 @@ const patientsCache = new Map<string, { expiresAt: number; promise?: Promise<Pag
 const evolutionsCache = new Map<string, { expiresAt: number; promise?: Promise<PaginatedResponse<MedicalEvolution>>; value?: PaginatedResponse<MedicalEvolution> }>();
 
 type ListQueryOptions = {
+  clinicId?: string;
   limit: number;
   offset: number;
 };
 
 function buildPatientsCacheKey(token: string, search: string, options: ListQueryOptions) {
-  return `${token}:prontuario-patients:${search.trim().toLowerCase()}:${options.limit}:${options.offset}`;
+  return `${token}:prontuario-patients:${options.clinicId || "active"}:${search.trim().toLowerCase()}:${options.limit}:${options.offset}`;
 }
 
 function buildEvolutionsCacheKey(token: string, patientId: string, options: ListQueryOptions) {
-  return `${token}:medical-evolutions:${patientId}:${options.limit}:${options.offset}`;
+  return `${token}:medical-evolutions:${options.clinicId || "active"}:${patientId}:${options.limit}:${options.offset}`;
 }
 
 function buildListQuery(options: ListQueryOptions, search?: string) {
@@ -27,6 +28,10 @@ function buildListQuery(options: ListQueryOptions, search?: string) {
 
   if (search?.trim()) {
     params.set("search", search.trim());
+  }
+
+  if (options.clinicId) {
+    params.set("clinicId", options.clinicId);
   }
 
   return params.toString();
@@ -74,9 +79,8 @@ function getCachedEvolutions(token: string, patientId: string, options: ListQuer
 }
 
 function invalidateEvolutions(token: string, patientId: string) {
-  const cachePrefix = `${token}:medical-evolutions:${patientId}:`;
   for (const key of evolutionsCache.keys()) {
-    if (key.startsWith(cachePrefix)) {
+    if (key.startsWith(`${token}:medical-evolutions:`) && key.includes(`:${patientId}:`)) {
       evolutionsCache.delete(key);
     }
   }

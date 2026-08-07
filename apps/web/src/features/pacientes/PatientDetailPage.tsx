@@ -124,12 +124,21 @@ function countByStatus(items: Array<{ status: ClinicalStatus }>, status: Clinica
   return items.filter((item) => item.status === status).length;
 }
 
-export function PatientDetailPage({ patientId }: { patientId: string }) {
-  const { hasPermission, token, user } = useAuth();
+function buildPatientDetailPath(patientId: string, clinicId?: string) {
+  const params = new URLSearchParams();
+  if (clinicId) params.set("clinicId", clinicId);
+  const queryString = params.toString();
+  return `/api/patients/${patientId}${queryString ? `?${queryString}` : ""}`;
+}
+
+export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; patientId: string }) {
+  const { activeClinic, hasPermission, token, user } = useAuth();
   const canReadPatients = hasPermission("patients.read");
   const canReadAnamnese = hasPermission("anamnese.read");
   const canReadEvolutions = hasPermission("medical_evolutions.read");
-  const canUpdatePatientStatus = hasPermission("patients.inactivate");
+  const isViewingFilteredClinic = Boolean(clinicId && clinicId !== activeClinic?.id);
+  const canUpdatePatientStatus = hasPermission("patients.inactivate") && !isViewingFilteredClinic;
+  const canGenerateReport = !isViewingFilteredClinic;
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -142,7 +151,7 @@ export function PatientDetailPage({ patientId }: { patientId: string }) {
     let isCurrent = true;
   // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true);
-    apiRequest<PatientDetail>(token, `/api/patients/${patientId}`)
+    apiRequest<PatientDetail>(token, buildPatientDetailPath(patientId, clinicId))
       .then((nextPatient) => {
         if (!isCurrent) return;
         setPatient(nextPatient);
@@ -157,7 +166,7 @@ export function PatientDetailPage({ patientId }: { patientId: string }) {
     return () => {
       isCurrent = false;
     };
-  }, [token, canReadPatients, patientId]);
+  }, [token, canReadPatients, clinicId, patientId]);
 
   const latestEvolution = canReadEvolutions ? patient?.evolutions.find((evolution) => evolution.status === "finalized") ?? patient?.evolutions[0] ?? null : null;
   const latestAnamnesis = patient?.anamneses.find((anamnesis) => anamnesis.status === "finalized") ?? patient?.anamneses[0] ?? null;
@@ -239,9 +248,11 @@ export function PatientDetailPage({ patientId }: { patientId: string }) {
             <ToggleIcon aria-hidden="true" size={17} />{isSavingStatus ? "Atualizando..." : patient.status === "ACTIVE" ? "Inativar" : "Ativar"}
           </button>
         ) : null}
-        <button className="secondary-button" disabled={isGeneratingReport} onClick={handleDownloadReport} type="button">
-          <FileDown aria-hidden="true" size={17} />{isGeneratingReport ? "Gerando..." : "Baixar relatório"}
-        </button>
+        {canGenerateReport ? (
+          <button className="secondary-button" disabled={isGeneratingReport} onClick={handleDownloadReport} type="button">
+            <FileDown aria-hidden="true" size={17} />{isGeneratingReport ? "Gerando..." : "Baixar relatório"}
+          </button>
+        ) : null}
       </div>
 
       {message ? <div className="access-message">{message}</div> : null}

@@ -19,6 +19,7 @@ type RequiredFilter = "all" | "complete" | "pending";
 type ListFilters = {
   patient: string;
   code: string;
+  clinicId: string;
   status: StatusFilter;
   required: RequiredFilter;
   updatedFrom: string;
@@ -28,6 +29,7 @@ type ListFilters = {
 const emptyFilters: ListFilters = {
   patient: "",
   code: "",
+  clinicId: "",
   status: "all",
   required: "all",
   updatedFrom: "",
@@ -61,6 +63,7 @@ function readStoredAnamneseFilters() {
       filters: {
         patient: typeof parsedFilters.patient === "string" ? parsedFilters.patient : "",
         code: typeof parsedFilters.code === "string" ? parsedFilters.code : "",
+        clinicId: typeof parsedFilters.clinicId === "string" ? parsedFilters.clinicId : "",
         status: normalizeStatusFilter(parsedFilters.status),
         required: normalizeRequiredFilter(parsedFilters.required),
         updatedFrom: typeof parsedFilters.updatedFrom === "string" ? parsedFilters.updatedFrom : "",
@@ -78,12 +81,20 @@ function writeStoredAnamneseFilters(filters: ListFilters, pageSize: number) {
   window.localStorage.setItem(ANAMNESE_FILTERS_STORAGE_KEY, JSON.stringify({ ...filters, pageSize }));
 }
 
+function buildAnamneseDetailHref(recordId: string, clinicId: string) {
+  const params = new URLSearchParams();
+  if (clinicId) params.set("clinicId", clinicId);
+  const queryString = params.toString();
+  return `/anamnese/${recordId}${queryString ? `?${queryString}` : ""}`;
+}
+
 export function AnamneseListPage() {
   const router = useRouter();
-  const { hasPermission, token, user } = useAuth();
+  const { activeClinic, clinics, hasPermission, token, user } = useAuth();
   const canReadAnamnese = hasPermission("anamnese.read");
   const canCreateAnamnese = hasPermission("anamnese.create");
   const canDeleteDraftAnamnese = hasPermission("admin.full_access");
+  const canFilterByClinic = hasPermission("anamnese.clinic_filter") && clinics.length > 1;
   const [initialFilters] = useState(readStoredAnamneseFilters);
   const [records, setRecords] = useState<AnamneseRecord[]>([]);
   const [templates, setTemplates] = useState<FormTemplate[]>(fallbackTemplates);
@@ -96,6 +107,10 @@ export function AnamneseListPage() {
   const [isCreatingRecord, setIsCreatingRecord] = useState(false);
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [message, setMessage] = useState("Registros disponíveis para consulta");
+  const effectiveAnamneseClinicId = canFilterByClinic && clinics.some((clinic) => clinic.id === filters.clinicId) ? filters.clinicId : "";
+  const isViewingFilteredClinic = Boolean(effectiveAnamneseClinicId && effectiveAnamneseClinicId !== activeClinic?.id);
+  const mustChooseAnamneseClinic = canFilterByClinic && !effectiveAnamneseClinicId;
+  const canCreateInCurrentContext = canCreateAnamnese && !mustChooseAnamneseClinic;
 
   useEffect(() => {
     writeStoredAnamneseFilters(filters, pageSize);
@@ -107,7 +122,7 @@ export function AnamneseListPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true);
 
-    Promise.all([fetchAnamneseRecords(token), fetchAnamneseTemplates(token)])
+    Promise.all([fetchAnamneseRecords(token, effectiveAnamneseClinicId), fetchAnamneseTemplates(token)])
       .then(([nextRecords, nextTemplates]) => {
         if (!isCurrent) return;
         setRecords(nextRecords);
@@ -125,7 +140,7 @@ export function AnamneseListPage() {
     return () => {
       isCurrent = false;
     };
-  }, [canReadAnamnese, token]);
+  }, [canReadAnamnese, effectiveAnamneseClinicId, token]);
 
   const userPermissions = useMemo(() => user?.permissions ?? [], [user?.permissions]);
   const visibleTemplates = useMemo(() => filterAnamneseTemplatesByPermissions(templates, userPermissions), [templates, userPermissions]);
@@ -148,16 +163,23 @@ export function AnamneseListPage() {
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageRecords = filteredRecords.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const activeFilterCount = Object.entries(filters).filter(([key, value]) => key === "status" || key === "required" ? value !== "all" : Boolean(value)).length + (pageSize !== DEFAULT_PAGE_SIZE ? 1 : 0);
+  const activeFilterCount = Object.entries(filters).filter(([key, value]) => {
+    if (key === "clinicId") return canFilterByClinic && Boolean(value);
+    return key === "status" || key === "required" ? value !== "all" : Boolean(value);
+  }).length + (pageSize !== DEFAULT_PAGE_SIZE ? 1 : 0);
 
   async function createRecord() {
-    if (!token || !canCreateAnamnese || isCreatingRecord) return;
+    if (!token || isCreatingRecord) return;
+    if (!canCreateInCurrentContext) {
+      setMessage(mustChooseAnamneseClinic ? "Selecione uma clínica para criar a anamnese." : "Não foi possível criar neste contexto.");
+      return;
+    }
     setIsCreatingRecord(true);
     setMessage("Criando rascunho no banco...");
     try {
-      const record = await createAnamneseRecord(token, { patientName: "Paciente sem nome" });
+      const record = await createAnamneseRecord(token, { patientName: "Paciente sem nome", clinicId: effectiveAnamneseClinicId || undefined });
       setRecords((currentRecords) => [record, ...currentRecords]);
-      router.push(`/anamnese/${record.id}`);
+      router.push(buildAnamneseDetailHref(record.id, record.clinicId || effectiveAnamneseClinicId));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível criar o rascunho.");
     } finally {
@@ -214,7 +236,7 @@ export function AnamneseListPage() {
           <h2>Registros de anamnese</h2>
           <p>Consulte rascunhos e anamneses finalizadas antes de abrir o preenchimento detalhado.</p>
         </div>
-        {canCreateAnamnese ? (
+        {canCreateInCurrentContext ? (
           <div className="list-actions">
             <button className="primary-button" disabled={isCreatingRecord} onClick={createRecord} type="button">
               <Plus size={17} />
@@ -261,6 +283,15 @@ export function AnamneseListPage() {
                 <span>Código</span>
                 <input onChange={(event) => updateFilter("code", event.target.value)} placeholder="Ex.: ANA-2026" value={filters.code} />
               </label>
+              {canFilterByClinic ? (
+                <label>
+                  <span>Clínica</span>
+                  <select onChange={(event) => updateFilter("clinicId", event.target.value)} value={filters.clinicId}>
+                    <option value="">Todas as clínicas permitidas</option>
+                    {clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}
+                  </select>
+                </label>
+              ) : null}
               <label>
                 <span>Status</span>
                 <select onChange={(event) => updateFilter("status", event.target.value as StatusFilter)} value={filters.status}>
@@ -345,7 +376,7 @@ export function AnamneseListPage() {
                     <td>{formatDateTime(record.updatedAt)}</td>
                     <td>
                       <div className="records-table-actions">
-                        <button className="table-action" onClick={() => router.push(`/anamnese/${record.id}`)} type="button">
+                        <button className="table-action" onClick={() => router.push(buildAnamneseDetailHref(record.id, effectiveAnamneseClinicId || record.clinicId || ""))} type="button">
                           <Eye size={16} />
                           Abrir
                         </button>

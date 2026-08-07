@@ -535,20 +535,22 @@ function FieldRenderer({ canEditRecord, canUpdateAnamneseOptions, field, value, 
 }
 
 type AnamneseWorkspaceProps = {
+  clinicId?: string;
   recordId: string;
 };
 
-export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
+export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps) {
   const router = useRouter();
-  const { hasPermission, token, user } = useAuth();
+  const { activeClinic, hasPermission, token, user } = useAuth();
+  const isViewingFilteredClinic = Boolean(clinicId && clinicId !== activeClinic?.id);
   const canReadAnamnese = hasPermission("anamnese.read");
   const canCreateAnamnese = hasPermission("anamnese.create");
-  const canUpdateAnamnese = hasPermission("anamnese.update");
-  const canFinalizeAnamnese = hasPermission("anamnese.finalize");
-  const canPrintAnamnese = hasPermission("anamnese.print");
+  const canUpdateAnamnese = hasPermission("anamnese.update") && !isViewingFilteredClinic;
+  const canFinalizeAnamnese = hasPermission("anamnese.finalize") && !isViewingFilteredClinic;
+  const canPrintAnamnese = hasPermission("anamnese.print") && !isViewingFilteredClinic;
   const canReadPatients = hasPermission("patients.read");
-  const canReadEvolutionHistory = hasPermission("medical_evolutions.read");
-  const canPrintEvolutionHistory = hasPermission("medical_evolutions.print");
+  const canReadEvolutionHistory = hasPermission("medical_evolutions.read") && !isViewingFilteredClinic;
+  const canPrintEvolutionHistory = hasPermission("medical_evolutions.print") && !isViewingFilteredClinic;
   const canUpdateAnamneseOptions = canUpdateAnamnese;
   const canUpdateAnamneseQuestions = canUpdateAnamnese;
   const [currentRecord, setCurrentRecord] = useState<AnamneseRecord | null>(null);
@@ -592,7 +594,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     if (!token || !canReadAnamnese) return;
     let isCurrent = true;
 
-    Promise.all([fetchAnamneseRecord(token, recordId), fetchAnamneseTemplates(token)])
+    Promise.all([fetchAnamneseRecord(token, recordId, clinicId), fetchAnamneseTemplates(token)])
       .then(([record, nextTemplates]) => {
         if (!isCurrent) return;
         lastSavedSnapshotRef.current = getRecordSnapshot(record);
@@ -608,7 +610,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     return () => {
       isCurrent = false;
     };
-  }, [canReadAnamnese, recordId, token]);
+  }, [canReadAnamnese, clinicId, recordId, token]);
 
   useEffect(() => {
     const timeout = setTimeout(() => setDebouncedPatientSearch(patientSearch), 350);
@@ -619,7 +621,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     if (!token || !canReadPatients) return;
     let isCurrent = true;
 
-    fetchPatients(token, debouncedPatientSearch)
+    fetchPatients(token, debouncedPatientSearch, clinicId)
       .then((nextPatients) => {
         if (isCurrent) setPatients(nextPatients);
       })
@@ -628,7 +630,7 @@ export function AnamneseWorkspace({ recordId }: AnamneseWorkspaceProps) {
     return () => {
       isCurrent = false;
     };
-  }, [canReadPatients, debouncedPatientSearch, token]);
+  }, [canReadPatients, clinicId, debouncedPatientSearch, token]);
 
   useEffect(() => {
     if (!token || !canReadEvolutionHistory || !isEvolutionHistoryOpen || !currentRecord?.patientId) return;

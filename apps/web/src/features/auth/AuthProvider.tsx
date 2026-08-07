@@ -17,20 +17,36 @@ type AuthUser = {
   professionalSpecialty?: string | null;
   mustChangePassword?: boolean;
   permissions: string[];
+  activeClinicId?: string | null;
+};
+
+type AuthClinic = {
+  id: string;
+  name: string;
+  code?: string | null;
+  status: "ACTIVE" | "INACTIVE";
+  isDefault?: boolean;
 };
 
 type LoginResponse = {
   accessToken: string;
   user: AuthUser;
+  clinics?: AuthClinic[];
+  activeClinic?: AuthClinic | null;
 };
+
+type StoredSession = LoginResponse;
 
 type AuthContextValue = {
   status: "loading" | "authenticated" | "anonymous";
   token: string | null;
   user: AuthUser | null;
+  clinics: AuthClinic[];
+  activeClinic: AuthClinic | null;
   login: (login: string, password: string) => Promise<void>;
   logout: () => void;
   refreshProfile: () => Promise<AuthUser | null>;
+  switchActiveClinic: (clinicId: string) => Promise<void>;
   hasPermission: (permission: string) => boolean;
 };
 
@@ -60,19 +76,25 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
   const [status, setStatus] = useState<AuthContextValue["status"]>("loading");
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [clinics, setClinics] = useState<AuthClinic[]>([]);
+  const [activeClinic, setActiveClinic] = useState<AuthClinic | null>(null);
   const router = useRouter();
 
   const clearSession = () => {
     localStorage.removeItem(AUTH_STORAGE_KEY);
     setToken(null);
     setUser(null);
+    setClinics([]);
+    setActiveClinic(null);
     setStatus("anonymous");
   };
 
-  const persistSession = (accessToken: string, nextUser: AuthUser) => {
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ accessToken, user: nextUser }));
+  const persistSession = (accessToken: string, nextUser: AuthUser, nextClinics: AuthClinic[] = [], nextActiveClinic: AuthClinic | null = null) => {
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ accessToken, user: nextUser, clinics: nextClinics, activeClinic: nextActiveClinic }));
     setToken(accessToken);
     setUser(nextUser);
+    setClinics(nextClinics);
+    setActiveClinic(nextActiveClinic);
     setStatus("authenticated");
   };
 
@@ -84,16 +106,17 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
       return;
     }
 
-    const parsedSession = JSON.parse(storedSession) as LoginResponse;
+    const parsedSession = JSON.parse(storedSession) as StoredSession;
     setToken(parsedSession.accessToken);
     setUser(parsedSession.user);
+    setClinics(parsedSession.clinics ?? []);
+    setActiveClinic(parsedSession.activeClinic ?? null);
 
-    requestJson<AuthUser>("/api/auth/me", {
+    requestJson<AuthUser & { clinics?: AuthClinic[]; activeClinic?: AuthClinic | null }>("/api/auth/me", {
       headers: { Authorization: `Bearer ${parsedSession.accessToken}` }
     })
       .then((profile) => {
-        setUser(profile);
-        setStatus("authenticated");
+        persistSession(parsedSession.accessToken, profile, profile.clinics ?? [], profile.activeClinic ?? null);
       })
       .catch(() => clearSession());
   }, []);
@@ -102,12 +125,14 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
     status,
     token,
     user,
+    clinics,
+    activeClinic,
     login: async (login, password) => {
       const session = await requestJson<LoginResponse>("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ login, password })
       });
-      persistSession(session.accessToken, session.user);
+      persistSession(session.accessToken, session.user, session.clinics ?? [], session.activeClinic ?? null);
       router.replace(getDefaultModuleHrefForPermissions(session.user.permissions));
     },
     logout: () => {
@@ -116,14 +141,25 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
     },
     refreshProfile: async () => {
       if (!token) return null;
-      const profile = await requestJson<AuthUser>("/api/auth/me", {
+      const profile = await requestJson<AuthUser & { clinics?: AuthClinic[]; activeClinic?: AuthClinic | null }>("/api/auth/me", {
         headers: { Authorization: `Bearer ${token}` }
       });
-      persistSession(token, profile);
+      persistSession(token, profile, profile.clinics ?? [], profile.activeClinic ?? null);
       return profile;
     },
+    switchActiveClinic: async (clinicId) => {
+      if (!token) return;
+      const session = await requestJson<LoginResponse>("/api/auth/active-clinic", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ clinicId })
+      });
+      persistSession(session.accessToken, session.user, session.clinics ?? [], session.activeClinic ?? null);
+      window.dispatchEvent(new CustomEvent("clinica:active-clinic-changed", { detail: { clinicId } }));
+      router.refresh();
+    },
     hasPermission: (permission) => user?.permissions.includes(permission) ?? false
-  }), [router, status, token, user]);
+  }), [activeClinic, clinics, router, status, token, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
