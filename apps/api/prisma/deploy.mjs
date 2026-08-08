@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { Client } from "pg";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgresql://clinica:clinica_dev@localhost:5432/clinica";
 const initMigrationName = "20260808223000_init";
+const bootstrapMigrationName = "20260808224500_bootstrap_default_clinic_once";
+const bootstrapEntity = "system_bootstrap";
+const bootstrapAction = "bootstrap_default_clinic_once";
 
 function runPrismaCommand(args) {
   const result = spawnSync(process.platform === "win32" ? "npx.cmd" : "npx", ["prisma", ...args], {
@@ -48,12 +50,89 @@ async function shouldBaselineExistingDatabase() {
   }
 }
 
+async function getFailedMigrationState(client, migrationName) {
+  const result = await client.query(
+    `
+      SELECT id, migration_name, started_at, finished_at, rolled_back_at, logs
+      FROM "_prisma_migrations"
+      WHERE migration_name = $1
+      ORDER BY started_at DESC
+      LIMIT 1
+    `,
+    [migrationName]
+  );
+
+  const migration = result.rows[0];
+  if (!migration) return null;
+  if (migration.finished_at || migration.rolled_back_at) return null;
+  return migration;
+}
+
+async function hasBootstrapMarker(client) {
+  const result = await client.query(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM "AuditLog"
+        WHERE "entity" = $1
+          AND "action" = $2
+      ) AS exists
+    `,
+    [bootstrapEntity, bootstrapAction]
+  );
+
+  return Boolean(result.rows[0]?.exists);
+}
+
+async function recoverFailedBootstrapMigrationIfNeeded() {
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+
+  try {
+    const migrationsTableResult = await client.query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = '_prisma_migrations'
+      ) AS exists
+    `);
+
+    if (!migrationsTableResult.rows[0]?.exists) {
+      return;
+    }
+
+    const failedMigration = await getFailedMigrationState(client, bootstrapMigrationName);
+    if (!failedMigration) {
+      return;
+    }
+
+    const bootstrapApplied = await hasBootstrapMarker(client);
+
+    if (bootstrapApplied) {
+      console.log(`Migration ${bootstrapMigrationName} falhou anteriormente, mas o marcador de bootstrap já existe. Marcando como aplicada.`);
+      runPrismaCommand(["migrate", "resolve", "--applied", bootstrapMigrationName]);
+      return;
+    }
+
+    if (failedMigration.logs) {
+      console.log(`Migration ${bootstrapMigrationName} falhou anteriormente. Logs do Prisma:\n${failedMigration.logs}`);
+    }
+
+    console.log(`Migration ${bootstrapMigrationName} falhou anteriormente sem concluir o bootstrap. Marcando como rollback para nova tentativa.`);
+    runPrismaCommand(["migrate", "resolve", "--rolled-back", bootstrapMigrationName]);
+  } finally {
+    await client.end();
+  }
+}
+
 async function main() {
   if (await shouldBaselineExistingDatabase()) {
     console.log(`Banco existente sem histórico Prisma detectado. Marcando ${initMigrationName} como aplicado.`);
     runPrismaCommand(["migrate", "resolve", "--applied", initMigrationName]);
   }
 
+  await recoverFailedBootstrapMigrationIfNeeded();
   runPrismaCommand(["migrate", "deploy"]);
 }
 
