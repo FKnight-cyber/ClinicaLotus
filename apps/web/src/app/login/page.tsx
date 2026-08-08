@@ -102,7 +102,7 @@ export default function LoginPage() {
         {isRecoveringPassword ? (
           <form className="login-form" onSubmit={handleRecoverySubmit}>
             <label>
-              <span>Usuário</span>
+              <span>Login</span>
               <input
                 autoComplete="username"
                 onChange={(event) => setRecoveryLogin(event.target.value)}
@@ -148,7 +148,7 @@ export default function LoginPage() {
         ) : (
           <form className="login-form" onSubmit={handleSubmit}>
           <label>
-            <span>Usuário</span>
+            <span>Login</span>
             <input
               autoComplete="username"
               onChange={(event) => setLoginValue(event.target.value)}

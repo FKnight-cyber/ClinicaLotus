@@ -16,6 +16,10 @@ export class ListAccessUsersQueryDto {
   groupId?: string;
 
   @IsOptional()
+  @IsString()
+  clinicId?: string;
+
+  @IsOptional()
   @IsIn(["PENDING", "ACTIVE", "INACTIVE"])
   status?: "PENDING" | "ACTIVE" | "INACTIVE";
 }

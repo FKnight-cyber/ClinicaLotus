@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { AppCacheService } from "../../shared/cache/app-cache.service";
 import { PrismaService } from "../../shared/prisma/prisma.service";
+import type { AuthenticatedUser } from "../auth/auth.types";
 import { hashPassword } from "../auth/password";
 import { CreateAccessGroupDto } from "./dto/create-access-group.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
@@ -8,7 +10,9 @@ import { ListAccessAuditLogsQueryDto } from "./dto/list-access-audit-logs-query.
 import { ListAccessGroupsQueryDto } from "./dto/list-access-groups-query.dto";
 import { ListAccessUsersQueryDto } from "./dto/list-access-users-query.dto";
 import { ListPasswordChangeRequestsQueryDto } from "./dto/list-password-change-requests-query.dto";
+import { UpdateGroupClinicsDto } from "./dto/update-group-clinics.dto";
 import { UpdateGroupPermissionsDto } from "./dto/update-group-permissions.dto";
+import { UpdateUserClinicsDto } from "./dto/update-user-clinics.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { UpdateUserGroupsDto } from "./dto/update-user-groups.dto";
 import { UpdateUserStatusDto } from "./dto/update-user-status.dto";
@@ -24,11 +28,11 @@ export class AccessService {
     return this.cache.getOrSet("access:permissions", 5 * 60 * 1000, () => this.prisma.permission.findMany({ orderBy: [{ module: "asc" }, { action: "asc" }] }));
   }
 
-  listAuditLogs(query: ListAccessAuditLogsQueryDto = {}) {
-    return this.listAuditLogsByScope(query, ["access_group", "access_user"], "access:audit-logs");
+  listAuditLogs(query: ListAccessAuditLogsQueryDto = {}, user?: AuthenticatedUser) {
+    return this.listAuditLogsByScope(query, ["access_group", "access_user"], "access:audit-logs", undefined, user);
   }
 
-  listAnamnesisAuditLogs(query: ListAccessAuditLogsQueryDto = {}) {
+  listAnamnesisAuditLogs(query: ListAccessAuditLogsQueryDto = {}, user?: AuthenticatedUser) {
     return this.listAuditLogsByScope(query, ["anamnesis_record", "AnamnesisRecord"], "access:audit-logs:anamnesis", [
       "create_anamnesis_template",
       "complete_anamnesis_template",
@@ -39,14 +43,25 @@ export class AccessService {
       "FINALIZE",
       "EMIT_PDF",
       "EMIT_TEMPLATE_PDF"
-    ]);
+    ], user);
   }
 
-  listMedicalEvolutionAuditLogs(query: ListAccessAuditLogsQueryDto = {}) {
-    return this.listAuditLogsByScope(query, ["medical_evolution"], "access:audit-logs:medical-evolutions", ["finalize_medical_evolution"]);
+  listMedicalEvolutionAuditLogs(query: ListAccessAuditLogsQueryDto = {}, user?: AuthenticatedUser) {
+    return this.listAuditLogsByScope(query, ["medical_evolution"], "access:audit-logs:medical-evolutions", ["finalize_medical_evolution"], user);
   }
 
-  private listAuditLogsByScope(query: ListAccessAuditLogsQueryDto = {}, allowedEntities: string[], cachePrefix: string, allowedActions?: string[]) {
+  listPatientAuditLogs(query: ListAccessAuditLogsQueryDto = {}, user?: AuthenticatedUser) {
+    return this.listAuditLogsByScope(query, ["patient"], "access:audit-logs:patients", [
+      "create_patient",
+      "update_patient",
+      "activate_patient",
+      "inactivate_patient",
+      "emit_patient_summary_report_pdf",
+      "link_existing_patient"
+    ], user);
+  }
+
+  private listAuditLogsByScope(query: ListAccessAuditLogsQueryDto = {}, allowedEntities: string[], cachePrefix: string, allowedActions?: string[], user?: AuthenticatedUser) {
     const limit = this.normalizeListLimit(query.limit);
     const page = this.normalizePage(query.page);
     const skip = (page - 1) * limit;
@@ -55,8 +70,10 @@ export class AccessService {
     const entity = requestedEntity && allowedEntities.includes(requestedEntity) ? requestedEntity : undefined;
     const requestedAction = query.action?.trim();
     const action = requestedAction && (!allowedActions || allowedActions.includes(requestedAction)) ? requestedAction : undefined;
+    const clinicId = this.resolveAuditClinicId(query.clinicId, user);
     const where = {
       entity: requestedEntity && !entity ? "__invalid_entity__" : entity ?? { in: allowedEntities },
+      ...(clinicId ? { clinicId } : {}),
       ...(action ? { action } : allowedActions ? { action: { in: allowedActions } } : {}),
       ...(search ? { OR: [
         { action: { contains: search, mode: "insensitive" as const } },
@@ -66,14 +83,14 @@ export class AccessService {
       ] } : {})
     };
 
-    return this.cache.getOrSet(`${cachePrefix}:${limit}:${page}:${search ?? ""}:${entity ?? ""}:${action ?? ""}`, 30 * 1000, async () => {
+    return this.cache.getOrSet(`${cachePrefix}:${limit}:${page}:${search ?? ""}:${entity ?? ""}:${action ?? ""}:${clinicId ?? "all"}`, 30 * 1000, async () => {
       const [items, total] = await this.prisma.$transaction([
         this.prisma.auditLog.findMany({
           where,
           orderBy: { createdAt: "desc" },
           skip,
           take: limit,
-          include: { user: { select: { id: true, name: true, login: true, email: true } } }
+          include: { user: { select: { id: true, name: true, login: true, email: true } }, clinic: { select: { id: true, name: true, code: true } } }
         }),
         this.prisma.auditLog.count({ where })
       ]);
@@ -98,7 +115,7 @@ export class AccessService {
           where,
           orderBy: { name: "asc" },
           take: limit,
-          include: { permissions: { include: { permission: true } }, users: true }
+          include: { permissions: { include: { permission: true } }, users: true, clinics: { include: { clinic: true } } }
         }),
         this.prisma.accessGroup.count({ where })
       ]);
@@ -155,9 +172,22 @@ export class AccessService {
       await this.setGroupPermissions(group.id, dto.permissionKeys);
     }
 
+    if (dto.clinicIds?.length) {
+      await this.setGroupClinics(group.id, dto.clinicIds);
+    }
+
     this.invalidateAccessCaches();
     const nextGroup = await this.getGroup(group.id);
     await this.createAccessAuditLog("access_group", group.id, "create_group", actorUserId, null, nextGroup, `Grupo criado: ${nextGroup.name}`);
+    return nextGroup;
+  }
+
+  async updateGroupClinics(groupId: string, dto: UpdateGroupClinicsDto, actorUserId?: string) {
+    const previousGroup = await this.getGroup(groupId);
+    await this.setGroupClinics(groupId, dto.clinicIds);
+    this.invalidateAccessCaches();
+    const nextGroup = await this.getGroup(groupId);
+    await this.createAccessAuditLog("access_group", groupId, "update_group_clinics", actorUserId, previousGroup, nextGroup, `Clínicas atualizadas: ${nextGroup.name}`);
     return nextGroup;
   }
 
@@ -174,18 +204,32 @@ export class AccessService {
     const limit = this.normalizeListLimit(query.limit);
     const search = query.search?.trim();
     const groupId = query.groupId?.trim();
+    const clinicId = query.clinicId?.trim();
     const status = query.status;
-    const where = {
-      ...(search ? { OR: [
+    const filters: Prisma.UserWhereInput[] = [];
+
+    if (search) {
+      filters.push({ OR: [
         { name: { contains: search, mode: "insensitive" as const } },
         { login: { contains: search, mode: "insensitive" as const } },
         { email: { contains: search, mode: "insensitive" as const } }
-      ] } : {}),
-      ...(groupId ? { groups: { some: { accessGroupId: groupId } } } : {}),
+      ] });
+    }
+
+    if (groupId) {
+      filters.push({ groups: { some: { accessGroupId: groupId } } });
+    }
+
+    if (clinicId) {
+      filters.push({ groups: { some: { accessGroup: { clinics: { some: { clinicId } } } } } });
+    }
+
+    const where: Prisma.UserWhereInput = {
+      ...(filters.length > 0 ? { AND: filters } : {}),
       ...(status ? { status } : {})
     };
 
-    return this.cache.getOrSet(`access:users:${limit}:${search ?? ""}:${groupId ?? ""}:${status ?? ""}`, 30 * 1000, async () => {
+    return this.cache.getOrSet(`access:users:${limit}:${search ?? ""}:${groupId ?? ""}:${clinicId ?? ""}:${status ?? ""}`, 30 * 1000, async () => {
       const [items, total] = await this.prisma.$transaction([
         this.prisma.user.findMany({
           where,
@@ -200,7 +244,8 @@ export class AccessService {
             professionalArea: true,
             status: true,
             mustChangePassword: true,
-            groups: { include: { accessGroup: true } }
+            groups: { include: { accessGroup: true } },
+            clinics: { include: { clinic: true } }
           }
         }),
         this.prisma.user.count({ where })
@@ -211,11 +256,25 @@ export class AccessService {
   }
 
   async createUser(dto: CreateUserDto, actorUserId?: string) {
+    const login = dto.login.trim();
+    const name = dto.name.trim();
+    const email = dto.email?.trim() || undefined;
+
+    if (!login) {
+      throw new BadRequestException("Informe o usuário.");
+    }
+
+    if (!name) {
+      throw new BadRequestException("Informe o nome.");
+    }
+
+    await this.ensureUniqueUserIdentity({ login, name, email });
+
     const user = await this.prisma.user.create({
       data: {
-        login: dto.login,
-        name: dto.name,
-        email: dto.email,
+        login,
+        name,
+        email,
         passwordHash: hashPassword(dto.password),
         status: "ACTIVE",
         mustChangePassword: true
@@ -241,11 +300,27 @@ export class AccessService {
     return nextUser;
   }
 
+  async updateUserClinics(userId: string, dto: UpdateUserClinicsDto, actorUserId?: string) {
+    void userId;
+    void dto;
+    void actorUserId;
+    throw new BadRequestException("O acesso a clínicas do usuário é definido exclusivamente pelos grupos de acesso.");
+  }
+
   async updateUser(userId: string, dto: UpdateUserDto, actorUserId?: string) {
     const previousUser = await this.getUser(userId);
+    const name = dto.name.trim();
+    const email = dto.email?.trim() || null;
+
+    if (!name) {
+      throw new BadRequestException("Informe o nome.");
+    }
+
+    await this.ensureUniqueUserIdentity({ name, email: email ?? undefined, excludeUserId: userId });
+
     await this.prisma.user.update({
       where: { id: userId },
-      data: { name: dto.name, email: dto.email || null, userType: dto.userType ?? previousUser.userType }
+      data: { name, email, userType: dto.userType ?? previousUser.userType }
     });
     this.invalidateAccessCaches(userId);
     const nextUser = await this.getUser(userId);
@@ -253,8 +328,39 @@ export class AccessService {
     return nextUser;
   }
 
+  async deleteUser(userId: string, actorUserId?: string) {
+    if (actorUserId && actorUserId === userId) {
+      throw new BadRequestException("Não é permitido excluir o próprio usuário.");
+    }
+
+    const previousUser = await this.getUser(userId);
+
+    await this.prisma.$transaction(async (tx) => {
+      await Promise.all([
+        tx.anamnesisRecord.updateMany({ where: { createdById: userId }, data: { createdById: null } }),
+        tx.anamnesisRecord.updateMany({ where: { updatedById: userId }, data: { updatedById: null } }),
+        tx.medicalRecordEntry.updateMany({ where: { createdById: userId }, data: { createdById: null } }),
+        tx.medicalEvolution.updateMany({ where: { createdById: userId }, data: { createdById: null } }),
+        tx.medicalEvolution.updateMany({ where: { updatedById: userId }, data: { updatedById: null } }),
+        tx.medicalEvolution.updateMany({ where: { finalizedById: userId }, data: { finalizedById: null } }),
+        tx.medicalEvolution.updateMany({ where: { canceledById: userId }, data: { canceledById: null } }),
+        tx.clinicalDocument.updateMany({ where: { emittedById: userId }, data: { emittedById: null } }),
+        tx.auditLog.updateMany({ where: { userId }, data: { userId: null } })
+      ]);
+
+      await tx.user.delete({ where: { id: userId } });
+    });
+
+    this.invalidateAccessCaches(userId);
+    await this.createAccessAuditLog("access_user", userId, "delete_user", actorUserId, previousUser, null, `Usuário excluído: ${previousUser.name}`);
+    return { id: userId };
+  }
+
   async updateUserStatus(userId: string, dto: UpdateUserStatusDto, actorUserId?: string) {
     const previousUser = await this.getUser(userId);
+    if (dto.status === "ACTIVE") {
+      await this.ensureUserHasClinicScope(userId);
+    }
     await this.prisma.user.update({ where: { id: userId }, data: { status: dto.status } });
     this.invalidateAccessCaches(userId);
     const nextUser = await this.getUser(userId);
@@ -265,7 +371,7 @@ export class AccessService {
   private async getGroup(groupId: string) {
     const group = await this.prisma.accessGroup.findUnique({
       where: { id: groupId },
-      include: { permissions: { include: { permission: true } }, users: true }
+      include: { permissions: { include: { permission: true } }, users: true, clinics: { include: { clinic: true } } }
     });
 
     if (!group) throw new NotFoundException("Grupo de acesso não encontrado.");
@@ -284,7 +390,8 @@ export class AccessService {
         professionalArea: true,
         status: true,
         mustChangePassword: true,
-        groups: { include: { accessGroup: true } }
+        groups: { include: { accessGroup: true } },
+        clinics: { include: { clinic: true } }
       }
     }));
 
@@ -386,6 +493,13 @@ export class AccessService {
     return this.normalizeListLimit(limit);
   }
 
+  private resolveAuditClinicId(requestedClinicId?: string, user?: AuthenticatedUser) {
+    const clinicId = requestedClinicId?.trim();
+    if (!clinicId) return undefined;
+    if (!user?.availableClinicIds.includes(clinicId)) throw new BadRequestException("Clínica fora do escopo do usuário.");
+    return clinicId;
+  }
+
   private normalizeListLimit(limit?: number) {
     if (typeof limit !== "number" || !Number.isFinite(limit)) return 5;
     return Math.min(Math.max(Math.trunc(limit), 1), 100);
@@ -394,6 +508,46 @@ export class AccessService {
   private normalizePage(page?: number) {
     if (typeof page !== "number" || !Number.isFinite(page)) return 1;
     return Math.max(Math.trunc(page), 1);
+  }
+
+  private async ensureUniqueUserIdentity({
+    login,
+    name,
+    email,
+    excludeUserId
+  }: {
+    login?: string;
+    name?: string;
+    email?: string;
+    excludeUserId?: string;
+  }) {
+    const whereFilters: Prisma.UserWhereInput[] = [];
+
+    if (login) whereFilters.push({ login });
+    if (name) whereFilters.push({ name });
+    if (email) whereFilters.push({ email });
+
+    if (whereFilters.length === 0) return;
+
+    const existingUsers = await this.prisma.user.findMany({
+      where: {
+        ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
+        OR: whereFilters
+      },
+      select: { id: true, login: true, name: true, email: true }
+    });
+
+    if (login && existingUsers.some((user) => user.login === login)) {
+      throw new BadRequestException("Já existe um usuário com este login.");
+    }
+
+    if (name && existingUsers.some((user) => user.name === name)) {
+      throw new BadRequestException("Já existe um usuário com este nome.");
+    }
+
+    if (email && existingUsers.some((user) => user.email === email)) {
+      throw new BadRequestException("Já existe um usuário com este email.");
+    }
   }
 
   private async createAccessAuditLog(entity: "access_group" | "access_user", entityId: string, action: string, actorUserId: string | undefined, beforeData: unknown, afterData: unknown, reason: string) {
@@ -419,10 +573,46 @@ export class AccessService {
     ]);
   }
 
+  private async setGroupClinics(groupId: string, clinicIds: string[]) {
+    const uniqueClinicIds = [...new Set(clinicIds.filter((clinicId) => clinicId.trim().length > 0))];
+    const clinics = await this.prisma.clinic.findMany({ where: { id: { in: uniqueClinicIds }, status: "ACTIVE" }, select: { id: true } });
+
+    if (clinics.length !== uniqueClinicIds.length) {
+      throw new BadRequestException("Uma ou mais clínicas informadas não foram encontradas ou estão inativas.");
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.accessGroupClinic.deleteMany({ where: { accessGroupId: groupId } }),
+      ...uniqueClinicIds.map((clinicId) => this.prisma.accessGroupClinic.create({ data: { accessGroupId: groupId, clinicId } }))
+    ]);
+  }
+
   private async setUserGroups(userId: string, groupIds: string[]) {
     await this.prisma.$transaction([
       this.prisma.userAccessGroup.deleteMany({ where: { userId } }),
       ...groupIds.map((accessGroupId) => this.prisma.userAccessGroup.create({ data: { userId, accessGroupId } }))
     ]);
+  }
+
+  private async ensureUserHasClinicScope(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        groups: {
+          where: { accessGroup: { active: true } },
+          select: {
+            accessGroup: {
+              select: { clinics: { where: { clinic: { status: "ACTIVE" } }, select: { clinicId: true }, take: 1 } }
+            }
+          }
+        }
+      }
+    });
+
+    const hasGroupClinic = user?.groups.some((group) => group.accessGroup.clinics.length > 0) ?? false;
+
+    if (!hasGroupClinic) {
+      throw new BadRequestException("Vincule ao menos uma clínica a um dos grupos do usuário antes de ativar o cadastro.");
+    }
   }
 }

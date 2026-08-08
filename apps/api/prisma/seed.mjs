@@ -36,20 +36,24 @@ const basePermissions = [
   ["anamnese.update", "anamnese", "update", "Editar anamneses e customizar perguntas/opções"],
   ["anamnese.finalize", "anamnese", "finalize", "Finalizar anamneses"],
   ["anamnese.print", "anamnese", "print", "Imprimir/exportar anamneses"],
+  ["anamnese.clinic_filter", "anamnese", "clinic_filter", "Filtrar anamneses por clínica"],
   ["anamnese.templates.nursing.read", "anamnese", "read_template_nursing", "Visualizar ficha de Enfermagem"],
   ["anamnese.templates.psychological.read", "anamnese", "read_template_psychological", "Visualizar ficha Psicológica"],
   ["anamnese.templates.therapeutic.read", "anamnese", "read_template_therapeutic", "Visualizar ficha Terapêutica"],
   ["patients.read", "patients", "read", "Visualizar pacientes"],
+  ["patients.clinic_filter", "patients", "clinic_filter", "Filtrar pacientes por clínica"],
   ["patients.create", "patients", "create", "Cadastrar pacientes"],
   ["patients.update", "patients", "update", "Editar pacientes"],
   ["patients.inactivate", "patients", "inactivate", "Ativar e inativar pacientes"],
   ["prontuario.read", "prontuario", "read", "Visualizar prontuário"],
+  ["prontuario.read_network", "prontuario", "read_network", "Visualizar prontuário consolidado da rede"],
   ["medical_evolutions.read", "medical_evolutions", "read", "Visualizar evoluções"],
   ["medical_evolutions.create", "medical_evolutions", "create", "Criar evoluções"],
   ["medical_evolutions.update", "medical_evolutions", "update", "Editar rascunhos de evoluções"],
   ["medical_evolutions.finalize", "medical_evolutions", "finalize", "Finalizar evoluções"],
   ["medical_evolutions.cancel", "medical_evolutions", "cancel", "Cancelar evoluções"],
   ["medical_evolutions.print", "medical_evolutions", "print", "Imprimir/exportar evoluções"],
+  ["medical_evolutions.clinic_filter", "medical_evolutions", "clinic_filter", "Filtrar evoluções por clínica"],
   ["profile.medical_info.read", "profile", "read_medical_info", "Adicionar campos de registro profissional ( Médicos )"],
   ["access.users.read", "access", "read_users", "Visualizar usuários"],
   ["access.users.manage", "access", "manage_users", "Gerenciar usuários"],
@@ -60,6 +64,9 @@ const basePermissions = [
   ["audit.access.read", "audit", "read_access_logs", "Visualizar logs do controle de acessos"],
   ["audit.anamnesis.read", "audit", "read_anamnesis_logs", "Visualizar logs de anamnese"],
   ["audit.medical_evolutions.read", "audit", "read_medical_evolution_logs", "Visualizar logs de evoluções finalizadas"],
+  ["audit.patients.read", "audit", "read_patient_logs", "Visualizar logs de pacientes"],
+  ["clinics.read", "clinics", "read", "Visualizar clínicas"],
+  ["clinics.manage", "clinics", "manage", "Gerenciar clínicas"],
   ["admin.full_access", "admin", "full_access", "Acesso administrativo total"]
 ];
 
@@ -206,6 +213,25 @@ async function seedAnamnesisTemplates() {
   });
 }
 
+async function seedDefaultClinic() {
+  const defaultClinic = await prisma.clinic.upsert({
+    where: { code: "CLINICA-1" },
+    update: { name: "Clínica 1", document: "00.000.000/0001-00", status: "ACTIVE" },
+    create: { name: "Clínica 1", code: "CLINICA-1", document: "00.000.000/0001-00", status: "ACTIVE" }
+  });
+
+  const accessGroups = await prisma.accessGroup.findMany({ select: { id: true } });
+  for (const accessGroup of accessGroups) {
+    await prisma.accessGroupClinic.upsert({
+      where: { accessGroupId_clinicId: { accessGroupId: accessGroup.id, clinicId: defaultClinic.id } },
+      update: {},
+      create: { accessGroupId: accessGroup.id, clinicId: defaultClinic.id }
+    });
+  }
+
+  return defaultClinic;
+}
+
 async function main() {
   for (const [key, module, action, description] of permissions) {
     await prisma.permission.upsert({
@@ -257,6 +283,7 @@ async function main() {
     create: { userId: admin.id, accessGroupId: developerGroup.id }
   });
 
+  await seedDefaultClinic();
   await seedAnamnesisTemplates();
 
   console.log(`Seed concluído. Login inicial: admin / ${adminPassword}`);

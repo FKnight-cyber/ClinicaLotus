@@ -8,16 +8,25 @@ import { useAuth } from "@/features/auth/AuthProvider";
 
 type PatientStatus = "ACTIVE" | "INACTIVE";
 
+type PatientClinicFilter = {
+  id: string;
+  name: string;
+  code?: string | null;
+};
+
 type Patient = {
   id: string;
   name: string;
   status: PatientStatus;
+  clinics?: Array<{ clinicId: string; status: PatientStatus; clinic: PatientClinicFilter }>;
   birthDate?: string | null;
   document?: string | null;
   cpf?: string | null;
   rg?: string | null;
   createdAt: string;
   updatedAt: string;
+  linkedExisting?: boolean;
+  existingInClinic?: boolean;
 };
 
 type PatientFormState = {
@@ -26,6 +35,7 @@ type PatientFormState = {
   document: string;
   cpf: string;
   rg: string;
+  clinicId: string;
 };
 
 type PaginatedPatients = {
@@ -46,8 +56,22 @@ const emptyPatientForm: PatientFormState = {
   birthDate: "",
   document: "",
   cpf: "",
-  rg: ""
+  rg: "",
+  clinicId: ""
 };
+
+function getEditablePatientClinicId(patient: Patient, fallbackClinicId = "") {
+  if (fallbackClinicId && patient.clinics?.some((clinic) => clinic.clinicId === fallbackClinicId)) return fallbackClinicId;
+  return patient.clinics?.find((clinic) => clinic.status === "ACTIVE")?.clinicId ?? patient.clinics?.[0]?.clinicId ?? fallbackClinicId;
+}
+
+function getPatientClinicLabel(patient: Patient, selectedClinicId = "") {
+  const clinicLink = (selectedClinicId ? patient.clinics?.find((clinic) => clinic.clinicId === selectedClinicId) : null)
+    ?? patient.clinics?.find((clinic) => clinic.status === "ACTIVE")
+    ?? patient.clinics?.[0];
+  if (!clinicLink) return "Sem clínica vinculada";
+  return clinicLink.clinic.code ? `${clinicLink.clinic.name} (${clinicLink.clinic.code})` : clinicLink.clinic.name;
+}
 
 function normalizePatientsPage(payload: PaginatedPatients | Patient[], fallbackLimit: number, fallbackOffset: number): PaginatedPatients {
   if (Array.isArray(payload)) {
@@ -67,16 +91,21 @@ function normalizePatientStatus(value: unknown): PatientStatus | "" {
   return value === "ACTIVE" || value === "INACTIVE" ? value : "";
 }
 
+function normalizePatientClinicId(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
 function readStoredPatientFilters() {
-  const defaultFilters = { search: "", status: "ACTIVE" as PatientStatus | "", limit: DEFAULT_PATIENT_LIMIT };
+  const defaultFilters = { clinicId: "", search: "", status: "ACTIVE" as PatientStatus | "", limit: DEFAULT_PATIENT_LIMIT };
   if (typeof window === "undefined") return defaultFilters;
 
   try {
     const storedFilters = window.localStorage.getItem(PATIENT_FILTERS_STORAGE_KEY);
     if (!storedFilters) return defaultFilters;
-    const parsedFilters = JSON.parse(storedFilters) as { search?: unknown; status?: unknown; limit?: unknown };
+    const parsedFilters = JSON.parse(storedFilters) as { clinicId?: unknown; search?: unknown; status?: unknown; limit?: unknown };
 
     return {
+      clinicId: normalizePatientClinicId(parsedFilters.clinicId),
       search: typeof parsedFilters.search === "string" ? parsedFilters.search : "",
       status: normalizePatientStatus(parsedFilters.status || "ACTIVE"),
       limit: normalizePatientLimit(parsedFilters.limit)
@@ -87,20 +116,28 @@ function readStoredPatientFilters() {
   }
 }
 
-function writeStoredPatientFilters(search: string, status: PatientStatus | "", limit: number) {
-  window.localStorage.setItem(PATIENT_FILTERS_STORAGE_KEY, JSON.stringify({ search, status, limit }));
+function writeStoredPatientFilters(search: string, status: PatientStatus | "", limit: number, clinicId: string) {
+  window.localStorage.setItem(PATIENT_FILTERS_STORAGE_KEY, JSON.stringify({ clinicId, search, status, limit }));
 }
 
-function buildPatientsPath(limit: number, offset: number, search: string, status: string) {
+function buildPatientsPath(limit: number, offset: number, search: string, status: string, clinicId: string) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   const normalizedSearch = search.trim();
   if (normalizedSearch) params.set("search", normalizedSearch);
+  if (clinicId) params.set("clinicId", clinicId);
   params.set("status", status || "ALL");
   return `/api/patients?${params.toString()}`;
 }
 
-function buildPatientsCacheKey(limit: number, offset: number, search: string, status: string) {
-  return `${limit}:${offset}:${search.trim().toLowerCase()}:${status}`;
+function buildPatientsCacheKey(limit: number, offset: number, search: string, status: string, clinicId: string) {
+  return `${limit}:${offset}:${search.trim().toLowerCase()}:${status}:${clinicId}`;
+}
+
+function buildPatientDetailHref(patientId: string, clinicId: string) {
+  const params = new URLSearchParams();
+  if (clinicId) params.set("clinicId", clinicId);
+  const queryString = params.toString();
+  return `/modulos/pacientes/${patientId}${queryString ? `?${queryString}` : ""}`;
 }
 
 function toPatientPayload(form: PatientFormState) {
@@ -109,7 +146,8 @@ function toPatientPayload(form: PatientFormState) {
     birthDate: form.birthDate || undefined,
     document: form.document.trim() || undefined,
     cpf: form.cpf.trim() || undefined,
-    rg: form.rg.trim() || undefined
+    rg: form.rg.trim() || undefined,
+    clinicId: form.clinicId || undefined
   };
 }
 
@@ -119,7 +157,8 @@ function getPatientForm(patient: Patient): PatientFormState {
     birthDate: patient.birthDate ? patient.birthDate.slice(0, 10) : "",
     document: patient.document ?? "",
     cpf: patient.cpf ?? "",
-    rg: patient.rg ?? ""
+    rg: patient.rg ?? "",
+    clinicId: ""
   };
 }
 
@@ -166,37 +205,45 @@ async function apiRequest<T>(token: string, path: string, options: RequestInit =
 }
 
 export function PacientesPage() {
-  const { hasPermission, token } = useAuth();
+  const { clinics, hasPermission, token } = useAuth();
   const router = useRouter();
   const canReadPatients = hasPermission("patients.read");
   const canCreatePatients = hasPermission("patients.create");
+  const canFilterPatientsByClinic = hasPermission("patients.clinic_filter") && clinics.length > 1;
   const canUpdatePatients = hasPermission("patients.update");
   const canInactivatePatients = hasPermission("patients.inactivate");
+  const availablePatientClinics: PatientClinicFilter[] = clinics.filter((clinic) => clinic.status === "ACTIVE");
+  const mustChoosePatientClinic = availablePatientClinics.length > 1;
   const patientsCacheRef = useRef(new Map<string, PaginatedPatients>());
+  const [initialPatientFilters] = useState(readStoredPatientFilters);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [patientTotal, setPatientTotal] = useState(0);
-  const [patientLimit, setPatientLimit] = useState(DEFAULT_PATIENT_LIMIT);
+  const [patientLimit, setPatientLimit] = useState(initialPatientFilters.limit);
   const [patientPage, setPatientPage] = useState(1);
-  const [patientSearch, setPatientSearch] = useState("");
-  const [debouncedPatientSearch, setDebouncedPatientSearch] = useState("");
-  const [selectedPatientStatus, setSelectedPatientStatus] = useState<PatientStatus | "">("ACTIVE");
-  const [draftPatientSearch, setDraftPatientSearch] = useState("");
-  const [draftSelectedPatientStatus, setDraftSelectedPatientStatus] = useState<PatientStatus | "">("ACTIVE");
-  const [draftPatientLimit, setDraftPatientLimit] = useState(DEFAULT_PATIENT_LIMIT);
+  const [patientSearch, setPatientSearch] = useState(initialPatientFilters.search);
+  const [debouncedPatientSearch, setDebouncedPatientSearch] = useState(initialPatientFilters.search);
+  const [selectedPatientClinicId, setSelectedPatientClinicId] = useState(initialPatientFilters.clinicId);
+  const [selectedPatientStatus, setSelectedPatientStatus] = useState<PatientStatus | "">(initialPatientFilters.status);
+  const [draftPatientSearch, setDraftPatientSearch] = useState(initialPatientFilters.search);
+  const [draftSelectedPatientClinicId, setDraftSelectedPatientClinicId] = useState(initialPatientFilters.clinicId);
+  const [draftSelectedPatientStatus, setDraftSelectedPatientStatus] = useState<PatientStatus | "">(initialPatientFilters.status);
+  const [draftPatientLimit, setDraftPatientLimit] = useState(initialPatientFilters.limit);
   const [isPatientFiltersOpen, setIsPatientFiltersOpen] = useState(false);
   const [isPatientModalOpen, setIsPatientModalOpen] = useState(false);
   const [editingPatient, setEditingPatient] = useState<Patient | null>(null);
   const [statusConfirmation, setStatusConfirmation] = useState<{ patient: Patient; nextStatus: PatientStatus } | null>(null);
   const [patientForm, setPatientForm] = useState<PatientFormState>(emptyPatientForm);
+  const [editingPatientClinicId, setEditingPatientClinicId] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isPatientsLoading, setIsPatientsLoading] = useState(true);
   const [isSavingPatient, setIsSavingPatient] = useState(false);
   const [savingStatusPatientId, setSavingStatusPatientId] = useState<string | null>(null);
-  const [hasLoadedStoredFilters, setHasLoadedStoredFilters] = useState(false);
 
   const patientOffset = (patientPage - 1) * patientLimit;
-  const activePatientFilterCount = [patientSearch.trim(), selectedPatientStatus !== "ACTIVE" ? "status" : "", patientLimit !== DEFAULT_PATIENT_LIMIT ? String(patientLimit) : ""].filter(Boolean).length;
+  const selectedPatientClinicIsAvailable = availablePatientClinics.some((clinic) => clinic.id === selectedPatientClinicId);
+  const effectivePatientClinicId = canFilterPatientsByClinic && selectedPatientClinicIsAvailable ? selectedPatientClinicId : "";
+  const activePatientFilterCount = [patientSearch.trim(), effectivePatientClinicId, selectedPatientStatus !== "ACTIVE" ? "status" : "", patientLimit !== DEFAULT_PATIENT_LIMIT ? String(patientLimit) : ""].filter(Boolean).length;
   const hasActivePatientFilters = activePatientFilterCount > 0;
 
   const applyPatientsPage = useCallback((nextPatientsPage: PaginatedPatients) => {
@@ -205,52 +252,37 @@ export function PacientesPage() {
     setPatientLimit(nextPatientsPage.limit);
   }, []);
 
-  const fetchPatientsPage = useCallback(async (limit: number, offset: number, search: string, status: string, bypassCache = false) => {
+  const fetchPatientsPage = useCallback(async (limit: number, offset: number, search: string, status: string, clinicId: string, bypassCache = false) => {
     if (!token) return { items: [], limit, offset, total: 0 };
 
-    const cacheKey = buildPatientsCacheKey(limit, offset, search, status);
+    const cacheKey = buildPatientsCacheKey(limit, offset, search, status, clinicId);
     const cachedPatientsPage = patientsCacheRef.current.get(cacheKey);
     if (!bypassCache && cachedPatientsPage) return cachedPatientsPage;
 
-    const nextPatientsPayload = await apiRequest<PaginatedPatients | Patient[]>(token, buildPatientsPath(limit, offset, search, status));
+    const nextPatientsPayload = await apiRequest<PaginatedPatients | Patient[]>(token, buildPatientsPath(limit, offset, search, status, clinicId));
     const nextPatientsPage = normalizePatientsPage(nextPatientsPayload, limit, offset);
     patientsCacheRef.current.set(cacheKey, nextPatientsPage);
     return nextPatientsPage;
   }, [token]);
 
   useEffect(() => {
-    const storedFilters = readStoredPatientFilters();
-    setPatientSearch(storedFilters.search);
-    setDebouncedPatientSearch(storedFilters.search);
-    setSelectedPatientStatus(storedFilters.status);
-    setPatientLimit(storedFilters.limit);
-    setDraftPatientSearch(storedFilters.search);
-    setDraftSelectedPatientStatus(storedFilters.status);
-    setDraftPatientLimit(storedFilters.limit);
-    setHasLoadedStoredFilters(true);
-  }, []);
-
-  useEffect(() => {
-    if (!hasLoadedStoredFilters) return;
-
     const timeoutId = window.setTimeout(() => {
       setDebouncedPatientSearch(patientSearch);
       setPatientPage(1);
     }, PATIENT_SEARCH_DELAY_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [hasLoadedStoredFilters, patientSearch]);
+  }, [patientSearch]);
 
   useEffect(() => {
-    if (!hasLoadedStoredFilters) return;
-    writeStoredPatientFilters(patientSearch, selectedPatientStatus, patientLimit);
-  }, [hasLoadedStoredFilters, patientLimit, patientSearch, selectedPatientStatus]);
+    writeStoredPatientFilters(patientSearch, selectedPatientStatus, patientLimit, effectivePatientClinicId);
+  }, [effectivePatientClinicId, patientLimit, patientSearch, selectedPatientStatus]);
 
   useEffect(() => {
-    if (!token || !canReadPatients || !hasLoadedStoredFilters) return;
+    if (!token || !canReadPatients) return;
 
     let isCurrent = true;
-    const cacheKey = buildPatientsCacheKey(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus);
+    const cacheKey = buildPatientsCacheKey(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId);
     const cachedPatientsPage = patientsCacheRef.current.get(cacheKey);
 
     Promise.resolve().then(() => {
@@ -259,7 +291,7 @@ export function PacientesPage() {
       if (!cachedPatientsPage) setIsLoading(true);
     });
 
-    fetchPatientsPage(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus).then((nextPatientsPage) => {
+    fetchPatientsPage(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId).then((nextPatientsPage) => {
       if (!isCurrent) return;
       applyPatientsPage(nextPatientsPage);
       setIsPatientsLoading(false);
@@ -274,28 +306,31 @@ export function PacientesPage() {
     return () => {
       isCurrent = false;
     };
-  }, [token, canReadPatients, hasLoadedStoredFilters, patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, applyPatientsPage, fetchPatientsPage]);
+  }, [token, canReadPatients, patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, applyPatientsPage, fetchPatientsPage]);
 
   const refreshCurrentPage = async () => {
     if (!token) return;
     patientsCacheRef.current.clear();
-    const nextPatientsPage = await fetchPatientsPage(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, true);
+    const nextPatientsPage = await fetchPatientsPage(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, true);
     applyPatientsPage(nextPatientsPage);
   };
 
   const handleClearPatientFilters = () => {
     setPatientSearch("");
     setDebouncedPatientSearch("");
+    setSelectedPatientClinicId("");
     setSelectedPatientStatus("ACTIVE");
     setPatientLimit(DEFAULT_PATIENT_LIMIT);
     setPatientPage(1);
     setDraftPatientSearch("");
+    setDraftSelectedPatientClinicId("");
     setDraftSelectedPatientStatus("ACTIVE");
     setDraftPatientLimit(DEFAULT_PATIENT_LIMIT);
   };
 
   const handleOpenPatientFilters = () => {
     setDraftPatientSearch(patientSearch);
+    setDraftSelectedPatientClinicId(effectivePatientClinicId);
     setDraftSelectedPatientStatus(selectedPatientStatus);
     setDraftPatientLimit(patientLimit);
     setIsPatientFiltersOpen(true);
@@ -304,6 +339,7 @@ export function PacientesPage() {
   const handleApplyPatientFilters = () => {
     setPatientSearch(draftPatientSearch);
     setDebouncedPatientSearch(draftPatientSearch);
+    setSelectedPatientClinicId(canFilterPatientsByClinic ? draftSelectedPatientClinicId : "");
     setSelectedPatientStatus(draftSelectedPatientStatus);
     setPatientLimit(normalizePatientLimit(draftPatientLimit));
     setPatientPage(1);
@@ -312,37 +348,42 @@ export function PacientesPage() {
 
   const openCreatePatientModal = () => {
     setEditingPatient(null);
-    setPatientForm(emptyPatientForm);
+    setEditingPatientClinicId("");
+    setPatientForm({ ...emptyPatientForm, clinicId: effectivePatientClinicId || (availablePatientClinics.length === 1 ? availablePatientClinics[0].id : "") });
     setIsPatientModalOpen(true);
   };
 
   const openEditPatientModal = (patient: Patient) => {
+    const currentClinicId = getEditablePatientClinicId(patient, effectivePatientClinicId);
     setEditingPatient(patient);
-    setPatientForm(getPatientForm(patient));
+    setEditingPatientClinicId(currentClinicId);
+    setPatientForm({ ...getPatientForm(patient), clinicId: currentClinicId });
     setIsPatientModalOpen(true);
   };
 
   const handleSavePatient = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!token || !patientForm.name.trim()) return;
+    if (!token || !patientForm.name.trim() || (!editingPatient && mustChoosePatientClinic && !patientForm.clinicId)) return;
     setIsSavingPatient(true);
 
     try {
       if (editingPatient) {
-        await apiRequest<Patient>(token, `/api/patients/${editingPatient.id}`, {
+        const clinicQuery = editingPatientClinicId ? `?clinicId=${encodeURIComponent(editingPatientClinicId)}` : "";
+        await apiRequest<Patient>(token, `/api/patients/${editingPatient.id}${clinicQuery}`, {
           method: "PATCH",
           body: JSON.stringify(toPatientPayload(patientForm))
         });
         setMessage("Paciente atualizado.");
       } else {
-        await apiRequest<Patient>(token, "/api/patients", {
+        const patient = await apiRequest<Patient>(token, "/api/patients", {
           method: "POST",
           body: JSON.stringify(toPatientPayload(patientForm))
         });
-        setMessage("Paciente criado.");
+        setMessage(patient.linkedExisting ? "Paciente existente vinculado à clínica selecionada." : patient.existingInClinic ? "Paciente já estava cadastrado nesta clínica." : "Paciente criado.");
       }
 
       setIsPatientModalOpen(false);
+      setEditingPatientClinicId("");
       setPatientForm(emptyPatientForm);
       await refreshCurrentPage();
     } catch (error) {
@@ -429,6 +470,17 @@ export function PacientesPage() {
                 <span>Buscar paciente</span>
                 <input aria-label="Buscar paciente" onChange={(event) => setDraftPatientSearch(event.target.value)} placeholder="Nome, CPF, RG ou documento" value={draftPatientSearch} />
               </label>
+              {canFilterPatientsByClinic ? (
+                <label>
+                  <span>Clínica</span>
+                  <select aria-label="Filtrar por clínica" onChange={(event) => setDraftSelectedPatientClinicId(event.target.value)} value={draftSelectedPatientClinicId}>
+                    <option value="">Todas as clínicas permitidas</option>
+                    {availablePatientClinics.map((clinic) => (
+                      <option key={clinic.id} value={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <label>
                 <span>Status</span>
                 <select aria-label="Filtrar por status" onChange={(event) => setDraftSelectedPatientStatus(event.target.value as PatientStatus | "")} value={draftSelectedPatientStatus}>
@@ -463,6 +515,7 @@ export function PacientesPage() {
           <thead>
             <tr>
               <th>Paciente</th>
+              <th>Clínica</th>
               <th>Documentos</th>
               <th>Nascimento</th>
               <th>Status</th>
@@ -473,7 +526,7 @@ export function PacientesPage() {
           <tbody>
             {patients.length === 0 ? (
               <tr>
-                <td colSpan={6}>Nenhum paciente encontrado.</td>
+                <td colSpan={7}>Nenhum paciente encontrado.</td>
               </tr>
             ) : (
               patients.map((patient) => {
@@ -484,6 +537,7 @@ export function PacientesPage() {
                 return (
                   <tr key={patient.id}>
                     <td><strong>{patient.name}</strong></td>
+                    <td>{getPatientClinicLabel(patient, effectivePatientClinicId)}</td>
                     <td>{formatPatientDocuments(patient)}</td>
                     <td>{formatBirthDate(patient.birthDate)}</td>
                     <td>
@@ -500,7 +554,7 @@ export function PacientesPage() {
                             <ToggleIcon aria-hidden="true" size={16} />{savingStatusPatientId === patient.id ? "Atualizando..." : nextStatus === "ACTIVE" ? "Ativar" : "Inativar"}
                           </button>
                         ) : null}
-                        <button className="table-action" onClick={() => router.push(`/modulos/pacientes/${patient.id}`)} type="button"><Eye aria-hidden="true" size={16} />Informações adicionais</button>
+                        <button className="table-action" onClick={() => router.push(buildPatientDetailHref(patient.id, effectivePatientClinicId))} type="button"><Eye aria-hidden="true" size={16} />Informações adicionais</button>
                       </div>
                     </td>
                   </tr>
@@ -532,14 +586,32 @@ export function PacientesPage() {
               <button className="icon-button" onClick={() => setIsPatientModalOpen(false)} title="Fechar" type="button"><X aria-hidden="true" size={18} /></button>
             </div>
             <form className="access-form patient-form-grid" onSubmit={handleSavePatient}>
+              {!editingPatient && mustChoosePatientClinic ? (
+                <label className="patient-form-full">
+                  <span>Clínica do cadastro</span>
+                  <select onChange={(event) => setPatientForm((form) => ({ ...form, clinicId: event.target.value }))} required value={patientForm.clinicId}>
+                    <option value="">Selecione a clínica</option>
+                    {availablePatientClinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</option>)}
+                  </select>
+                </label>
+              ) : null}
+              {editingPatient ? (
+                <label className="patient-form-full">
+                  <span>Clínica do paciente</span>
+                  <select onChange={(event) => setPatientForm((form) => ({ ...form, clinicId: event.target.value }))} required value={patientForm.clinicId}>
+                    <option value="">Selecione a clínica</option>
+                    {availablePatientClinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</option>)}
+                  </select>
+                </label>
+              ) : null}
               <label><span>Nome completo</span><input autoFocus onChange={(event) => setPatientForm((form) => ({ ...form, name: event.target.value }))} required value={patientForm.name} /></label>
               <label><span>Nascimento</span><input onChange={(event) => setPatientForm((form) => ({ ...form, birthDate: event.target.value }))} type="date" value={patientForm.birthDate} /></label>
               <label><span>CPF</span><input onChange={(event) => setPatientForm((form) => ({ ...form, cpf: event.target.value }))} placeholder="CPF" value={patientForm.cpf} /></label>
               <label><span>RG</span><input onChange={(event) => setPatientForm((form) => ({ ...form, rg: event.target.value }))} placeholder="RG" value={patientForm.rg} /></label>
               <label className="patient-form-full"><span>Documento complementar</span><input onChange={(event) => setPatientForm((form) => ({ ...form, document: event.target.value }))} placeholder="Outro documento" value={patientForm.document} /></label>
               <div className="confirmation-modal-actions patient-form-full">
-                <button className="secondary-button" disabled={isSavingPatient} onClick={() => setIsPatientModalOpen(false)} type="button">Cancelar</button>
-                <button className="primary-button" disabled={isSavingPatient || !patientForm.name.trim()} type="submit">{isSavingPatient ? "Salvando..." : "Salvar paciente"}</button>
+                <button className="secondary-button" disabled={isSavingPatient} onClick={() => { setIsPatientModalOpen(false); setEditingPatientClinicId(""); }} type="button">Cancelar</button>
+                <button className="primary-button" disabled={isSavingPatient || !patientForm.name.trim() || !patientForm.clinicId} type="submit">{isSavingPatient ? "Salvando..." : "Salvar paciente"}</button>
               </div>
             </form>
           </section>

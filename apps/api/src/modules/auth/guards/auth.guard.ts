@@ -26,7 +26,8 @@ export class AuthGuard implements CanActivate {
         id: profile.id,
         login: profile.login,
         name: profile.name,
-        permissions: profile.permissions
+        permissions: profile.permissions,
+        availableClinicIds: profile.clinics.map((clinic) => clinic.id)
       };
       return true;
     } catch {

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import type { AuthenticatedUser } from "../auth/auth.types";
 import { AuthGuard } from "../auth/guards/auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
@@ -11,6 +11,8 @@ import { ListAccessGroupsQueryDto } from "./dto/list-access-groups-query.dto";
 import { ListAccessUsersQueryDto } from "./dto/list-access-users-query.dto";
 import { ListPasswordChangeRequestsQueryDto } from "./dto/list-password-change-requests-query.dto";
 import { UpdateGroupPermissionsDto } from "./dto/update-group-permissions.dto";
+import { UpdateGroupClinicsDto } from "./dto/update-group-clinics.dto";
+import { UpdateUserClinicsDto } from "./dto/update-user-clinics.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { UpdateUserGroupsDto } from "./dto/update-user-groups.dto";
 import { UpdateUserStatusDto } from "./dto/update-user-status.dto";
@@ -22,20 +24,26 @@ export class AccessController {
 
   @Get("audit-logs")
   @RequirePermissions("audit.access.read")
-  listAuditLogs(@Query() query: ListAccessAuditLogsQueryDto) {
-    return this.accessService.listAuditLogs(query);
+  listAuditLogs(@Query() query: ListAccessAuditLogsQueryDto, @Req() request: { user: AuthenticatedUser }) {
+    return this.accessService.listAuditLogs(query, request.user);
   }
 
   @Get("audit-logs/anamnesis")
   @RequirePermissions("audit.anamnesis.read")
-  listAnamnesisAuditLogs(@Query() query: ListAccessAuditLogsQueryDto) {
-    return this.accessService.listAnamnesisAuditLogs(query);
+  listAnamnesisAuditLogs(@Query() query: ListAccessAuditLogsQueryDto, @Req() request: { user: AuthenticatedUser }) {
+    return this.accessService.listAnamnesisAuditLogs(query, request.user);
   }
 
   @Get("audit-logs/medical-evolutions")
   @RequirePermissions("audit.medical_evolutions.read")
-  listMedicalEvolutionAuditLogs(@Query() query: ListAccessAuditLogsQueryDto) {
-    return this.accessService.listMedicalEvolutionAuditLogs(query);
+  listMedicalEvolutionAuditLogs(@Query() query: ListAccessAuditLogsQueryDto, @Req() request: { user: AuthenticatedUser }) {
+    return this.accessService.listMedicalEvolutionAuditLogs(query, request.user);
+  }
+
+  @Get("audit-logs/patients")
+  @RequirePermissions("audit.patients.read")
+  listPatientAuditLogs(@Query() query: ListAccessAuditLogsQueryDto, @Req() request: { user: AuthenticatedUser }) {
+    return this.accessService.listPatientAuditLogs(query, request.user);
   }
 
   @Get("permissions")
@@ -80,6 +88,12 @@ export class AccessController {
     return this.accessService.updateGroupPermissions(groupId, dto, request.user?.id);
   }
 
+  @Patch("groups/:groupId/clinics")
+  @RequirePermissions("access.groups.manage")
+  updateGroupClinics(@Param("groupId") groupId: string, @Body() dto: UpdateGroupClinicsDto, @Req() request: { user?: AuthenticatedUser }) {
+    return this.accessService.updateGroupClinics(groupId, dto, request.user?.id);
+  }
+
   @Get("users")
   @RequirePermissions("access.users.read")
   listUsers(@Query() query: ListAccessUsersQueryDto) {
@@ -114,5 +128,17 @@ export class AccessController {
   @RequirePermissions("access.users.manage")
   updateUserGroups(@Param("userId") userId: string, @Body() dto: UpdateUserGroupsDto, @Req() request: { user?: AuthenticatedUser }) {
     return this.accessService.updateUserGroups(userId, dto, request.user?.id);
+  }
+
+  @Patch("users/:userId/clinics")
+  @RequirePermissions("access.users.manage")
+  updateUserClinics(@Param("userId") userId: string, @Body() dto: UpdateUserClinicsDto, @Req() request: { user?: AuthenticatedUser }) {
+    return this.accessService.updateUserClinics(userId, dto, request.user?.id);
+  }
+
+  @Delete("users/:userId")
+  @RequirePermissions("access.users.manage")
+  deleteUser(@Param("userId") userId: string, @Req() request: { user?: AuthenticatedUser }) {
+    return this.accessService.deleteUser(userId, request.user?.id);
   }
 }

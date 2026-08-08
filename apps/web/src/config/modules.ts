@@ -151,6 +151,12 @@ export const moduleItems: ModuleItem[] = [
         label: "Logs de Evoluções",
         href: "/modulos/auditoria/logs-evolucoes",
         visibilityPermission: "audit.medical_evolutions.read"
+      },
+      {
+        slug: "logs-pacientes",
+        label: "Logs de Pacientes",
+        href: "/modulos/auditoria/logs-pacientes",
+        visibilityPermission: "audit.patients.read"
       }
     ]
   },
@@ -191,8 +197,8 @@ export const moduleItems: ModuleItem[] = [
     href: "/modulos/institucional",
     icon: Hospital,
     visibilityPermission: "menu.institucional.view",
-    status: "locked",
-    actions: ["Abrir painel", "Editar unidade", "Gerenciar documentos"]
+    status: "active",
+    actions: ["Nova clínica", "Editar unidade", "Ativar ou inativar"]
   }
 ];
 

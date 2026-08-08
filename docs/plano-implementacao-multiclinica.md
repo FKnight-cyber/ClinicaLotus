@@ -1,8 +1,70 @@
 # Plano de implementacao - Multi-clinica
 
 **Criado em:** 28/07/2026  
+**Atualizado em:** 08/08/2026
 **Modulo:** Cadastros gerais / Autenticacao / Prontuario / Atendimento clinico  
 **Objetivo:** detalhar as mudancas necessarias para transformar o sistema atual, hoje orientado a uma unica clinica, em um modelo multi-clinica funcional para clinicas da mesma rede.
+
+---
+
+## 0. Status atual da implementacao
+
+Esta secao resume o que ja foi implementado ate 03/08/2026 e o que ainda falta para completar a entrega multi-clinica.
+
+### 0.1 Implementado
+
+- Modelagem Prisma multi-clinica criada com `Clinic`, `UserClinic`, `PatientClinic`, `AccessGroupClinic` e `clinicId` em registros clinicos, documentos, prontuario e auditoria.
+- Seed cria `Clinica principal`, vincula usuarios, grupos e pacientes existentes e preenche registros clinicos existentes com a clinica padrao.
+- Autenticacao retorna `clinics`, `activeClinic`, `activeClinicId` e `availableClinicIds`.
+- JWT e `AuthGuard` carregam `activeClinicId` e escopo de clinicas disponiveis.
+- Endpoint `POST /api/auth/active-clinic` troca a clinica ativa e emite novo token.
+- Backend de pacientes, anamnese e evolucoes clinicas foi isolado pelo escopo de clinicas do usuario nas operacoes principais.
+- `PatientClinic` e usado para listar e criar pacientes vinculados a uma clinica.
+- Anamneses, evolucoes, documentos clinicos, entradas de prontuario e auditorias clinicas gravam `clinicId` nas escritas migradas.
+- Modulo backend `clinics` criado com listagem, criacao, edicao e ativacao/inativacao.
+- Permissoes `clinics.read` e `clinics.manage` criadas.
+- Tela web do modulo **Clinica** criada para administrar clinicas.
+- Grupos de acesso podem receber escopo de clinicas por `AccessGroupClinic` via backend e tela **Grupos e acessos**.
+- Usuarios/profissionais podem receber vinculo direto com clinicas por `UserClinic` via backend e tela **Gerenciar usuarios**.
+- Frontend `AuthProvider` guarda `clinics` e `activeClinic`; o `AppShell` mostra contexto de clinica e restringe troca global a perfis administrativos.
+- O escopo principal de leitura passou a ser `availableClinicIds`: sem `clinicId` explicito, listas operacionais consultam todas as clinicas permitidas ao usuario; com apenas uma clinica, o usuario ve e escreve automaticamente nessa clinica.
+- O seletor global de clinica no topo fica restrito a perfis com gestao de clinicas; profissionais usam filtros locais somente quando possuem mais de uma clinica no escopo.
+- Formularios de criacao que dependem de clinica aceitam/enviam `clinicId` explicito quando o usuario possui mais de uma clinica: novo paciente, novo rascunho de anamnese e nova evolucao clinica.
+- Permissao `patients.clinic_filter` criada.
+- Listagem de pacientes aceita `clinicId` opcional como filtro local, validando permissao e escopo do usuario.
+- Tela **Pacientes** mostra filtro de clinica quando o usuario tem `patients.clinic_filter` e mais de uma clinica disponivel.
+- Detalhe do paciente e endpoint de prontuario aceitam `clinicId` opcional, validando permissao e escopo do usuario.
+- Navegacao da lista de pacientes para o detalhe preserva o `clinicId` filtrado.
+- Permissao `anamnese.clinic_filter` criada.
+- Listagem e detalhe de anamnese aceitam `clinicId` opcional para leitura, validando permissao e escopo do usuario.
+- Tela **Anamnese** mostra filtro local de clinica e preserva o `clinicId` ao abrir o registro.
+- Busca/seletor de pacientes na edicao de anamnese usa o `clinicId` local para listar apenas pacientes ativos da clinica filtrada.
+- Permissao `medical_evolutions.clinic_filter` criada.
+- Listagem de evolucoes do paciente aceita `clinicId` opcional, validando permissao e escopo do usuario.
+- Tela **Prontuario** mostra filtro local de clinica, busca pacientes ativos no escopo filtrado e carrega evolucoes da clinica selecionada.
+- Endpoints de auditoria aceitam `clinicId` opcional, validando escopo do usuario.
+- Telas de auditoria exibem a clinica de origem do evento e permitem filtro local de clinica.
+- Auditoria de pacientes esta exposta em endpoint e tela proprios, incluindo criacao, edicao, status, emissao de relatorio e vinculo de cadastro existente entre clinicas.
+- Cadastro de paciente reutiliza pessoa existente por CPF/RG/documento e cria ou reativa `PatientClinic` na clinica selecionada, evitando duplicidade entre clinicas.
+
+### 0.2 Parcialmente implementado
+
+- A clinica ativa global fica como fallback tecnico/administrativo quando o usuario possui mais de uma clinica; para usuarios com uma unica clinica disponivel, leituras e escritas resolvem a clinica automaticamente pelo escopo.
+- A listagem de pacientes, o endpoint de prontuario, a listagem de anamnese e a listagem de evolucoes no Prontuario usam o escopo completo do usuario quando `clinicId` nao e informado; o filtro local apenas refina para uma clinica especifica.
+- O isolamento backend esta aplicado nos modulos principais, mas `clinicId` ainda esta nullable em parte do schema para permitir migracao incremental.
+- Auditoria grava e exibe `clinicId` em varias acoes clinicas, mas registros antigos podem aparecer como sem clinica.
+- Caches backend foram ajustados nos fluxos ja migrados, mas ainda e necessario revisar todos os caches e estados frontend dependentes de clinica.
+
+### 0.3 Ainda falta
+
+- Validar em ambiente de homologacao os fluxos migrados apos `clinicId` se tornar obrigatorio no schema.
+- Criar testes automatizados ou roteiro manual completo para acesso cruzado entre clinicas.
+
+### 0.4 Duvidas abertas
+
+- Avaliar se a busca ampliada da rede deve ficar restrita ao prontuario consolidado ou tambem aparecer no cadastro operacional de pacientes.
+- Cadastro publico/pendente passou a listar clinicas ativas; convite/link por clinica permanece como possivel refinamento futuro.
+- Administrador global continua sendo `admin.full_access` ou deve existir uma permissao especifica alem de `prontuario.read_network` para outras visoes globais?
 
 ---
 
@@ -42,12 +104,22 @@ Seguir com o modelo **multi-clinica completo**, com:
 
 - cadastro de clinicas;
 - usuarios vinculados a uma ou mais clinicas;
-- seletor de clinica ativa no frontend;
+- escopo de clinicas disponiveis (`availableClinicIds`) como regra primaria de leitura e autorizacao;
+- clinica ativa como fallback tecnico/administrativo, nao como dependencia da experiencia dos profissionais;
+- filtros locais por clinica nas telas operacionais quando o usuario tiver permissao e escopo para mais de uma clinica;
 - `activeClinicId` na sessao/JWT ou no contexto autenticado;
-- isolamento de dados clinicos pela clinica ativa;
+- isolamento de dados clinicos pelo escopo permitido do usuario e pelo `clinicId` local validado pelo backend quando informado;
 - grupos de acesso e permissoes globais;
 - auditoria registrando a clinica da acao;
 - administrador com visao global e filtros por clinica.
+
+Decisao atualizada em 02/08/2026:
+
+- manter `activeClinicId` no JWT para compatibilidade, fallback e criacao operacional padrao;
+- permitir `clinicId` em query como filtro local em telas operacionais, desde que haja permissao especifica e a clinica esteja em `availableClinicIds`;
+- comecar por pacientes com a permissao `patients.clinic_filter`;
+- expandir o mesmo padrao para detalhe do paciente, prontuario, anamnese e evolucoes;
+- avaliar se o seletor global do topo deve continuar visivel para medicos ou ficar restrito a perfis administrativos.
 
 ### 2.2 Rede de clinicas
 
@@ -71,6 +143,26 @@ Isso significa:
 - um grupo como `Administrador`, `Recepcao`, `Enfermagem` ou `Medico` pode ser usado por qualquer clinica;
 - a permissao define o que o usuario pode fazer;
 - o vinculo com clinica define onde ele pode fazer.
+
+O cadastro e a liberacao de funcionalidades devem seguir o padrao atual do sistema:
+
+- criar uma `Permission` para cada funcionalidade ou acao protegida;
+- associar permissoes aos grupos em `AccessGroupPermission`;
+- usar `RequirePermissions` no backend e controle visual por permissoes no frontend;
+- auditar mudancas de permissoes, grupos, vinculos e acessos administrativos.
+
+Para operacao multi-clinica, alem da permissao funcional, o sistema deve controlar o **escopo de clinicas** disponivel ao usuario. Esse escopo pode vir de dois lugares:
+
+- vinculo direto do usuario com clinicas em `UserClinic`, para excecoes ou configuracoes individuais;
+- vinculo do grupo profissional/de acesso com clinicas em `AccessGroupClinic`, para permitir que um grupo veja uma ou mais clinicas.
+
+Exemplo esperado:
+
+- grupo `Medico rede 1 e 2` possui `patients.read`, `prontuario.read` e vinculo com as clinicas 1 e 2;
+- grupo `Medico rede 1` possui as mesmas permissoes, mas vinculo apenas com a clinica 1;
+- ao fazer login, o usuario recebe como clinicas disponiveis a uniao das clinicas vinculadas diretamente a ele e das clinicas vinculadas aos seus grupos ativos;
+- a clinica ativa escolhida limita pacientes, anamneses, evolucoes, documentos, prontuario e auditoria operacional por padrao;
+- filtros locais de clinica podem substituir esse contexto em telas autorizadas, desde que o backend valide permissao e escopo.
 
 ### 2.4 Administrador
 
@@ -154,6 +246,7 @@ model Clinic {
 
   users     UserClinic[]
   patients  PatientClinic[]
+  groups    AccessGroupClinic[]
 }
 ```
 
@@ -187,10 +280,36 @@ Observacoes:
 
 - um usuario pode atuar em varias clinicas;
 - um usuario pode ter uma clinica padrao;
-- o papel/perfil pode continuar vindo dos grupos globais;
-- se no futuro for necessario permissao diferente por clinica, o modelo pode evoluir para vincular grupos em `UserClinic`.
+- o papel/perfil continua vindo dos grupos globais;
+- o vinculo direto pode ser usado para excecoes individuais;
+- o escopo padrao por perfil/profissional deve ser preferencialmente configurado no grupo, por meio de `AccessGroupClinic`.
 
-### 4.4 Novo modelo `PatientClinic`
+### 4.4 Novo modelo `AccessGroupClinic`
+
+Campos sugeridos:
+
+```prisma
+model AccessGroupClinic {
+  accessGroupId String
+  clinicId      String
+  assignedAt    DateTime @default(now())
+
+  accessGroup   AccessGroup @relation(fields: [accessGroupId], references: [id], onDelete: Cascade)
+  clinic        Clinic      @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@id([accessGroupId, clinicId])
+  @@index([clinicId])
+}
+```
+
+Observacoes:
+
+- permite definir que um grupo profissional ou operacional acessa apenas clinicas especificas;
+- complementa as permissoes globais, sem duplicar permissoes por clinica;
+- o backend deve calcular as clinicas disponiveis do usuario como a uniao entre `UserClinic` e `AccessGroupClinic` dos grupos ativos;
+- alteracoes nesses vinculos devem invalidar cache de autenticacao e ser auditadas.
+
+### 4.5 Novo modelo `PatientClinic`
 
 Campos sugeridos:
 
@@ -217,7 +336,7 @@ Observacoes:
 - permite saber em quais clinicas aquele paciente ja teve passagem;
 - `lastSeenAt` pode ser atualizado ao criar atendimento, anamnese ou evolucao.
 
-### 4.5 Ajustes em `User`
+### 4.6 Ajustes em `User`
 
 Adicionar relacao:
 
@@ -233,7 +352,7 @@ Decisao recomendada:
 - `email` globalmente unico quando informado;
 - vinculos de clinica controlam acesso operacional.
 
-### 4.6 Ajustes em `Patient`
+### 4.7 Ajustes em `Patient`
 
 Adicionar relacao:
 
@@ -249,7 +368,7 @@ Decisao recomendada:
 - quando CPF existir, avaliar unicidade global para reduzir duplicidade;
 - se houver risco de cadastro sem documento, manter busca por nome/data de nascimento e permitir revisao manual.
 
-### 4.7 Ajustes em entidades clinicas
+### 4.8 Ajustes em entidades clinicas
 
 Adicionar `clinicId` nas entidades que representam acao, documento ou historico produzido em uma clinica:
 
@@ -270,7 +389,7 @@ clinic   Clinic @relation(fields: [clinicId], references: [id])
 
 Para `AnamnesisRecord`, o campo deve ser obrigatorio mesmo quando `patientId` for nulo, porque hoje a anamnese pode existir sem paciente vinculado.
 
-### 4.8 Ajustes em `AuditLog`
+### 4.9 Ajustes em `AuditLog`
 
 Adicionar:
 
@@ -288,16 +407,17 @@ Regras:
 - acoes administrativas filtradas por clinica devem registrar `clinicId` quando houver contexto;
 - o payload de auditoria deve continuar registrando antes/depois, usuario e motivo.
 
-### 4.9 Migracao inicial
+### 4.10 Migracao inicial
 
 Como nao ha migracao de sistema legado prevista, a migracao inicial pode ser simples:
 
 1. Criar uma clinica padrao, por exemplo `Clinica principal`.
 2. Vincular todos os usuarios existentes a essa clinica.
 3. Vincular todos os pacientes existentes a essa clinica.
-4. Preencher `clinicId` dos registros clinicos existentes com a clinica padrao.
-5. Preencher `clinicId` dos documentos e entradas de prontuario existentes com a clinica padrao.
-6. Manter `clinicId` nulo em auditorias antigas ou preencher com a clinica padrao quando a entidade auditada for claramente clinica.
+4. Vincular grupos administrativos/iniciais a essa clinica em `AccessGroupClinic`.
+5. Preencher `clinicId` dos registros clinicos existentes com a clinica padrao.
+6. Preencher `clinicId` dos documentos e entradas de prontuario existentes com a clinica padrao.
+7. Manter `clinicId` nulo em auditorias antigas ou preencher com a clinica padrao quando a entidade auditada for claramente clinica.
 
 ---
 
@@ -404,7 +524,7 @@ Exemplo:
 
 ### 6.2 Consultas por lista
 
-Toda listagem operacional deve filtrar por clinica ativa:
+Toda listagem operacional deve filtrar por clinica ativa por padrao, ou por `clinicId` local quando o endpoint aceitar filtro de clinica validado por permissao e escopo:
 
 - pacientes;
 - anamneses;
@@ -413,6 +533,12 @@ Toda listagem operacional deve filtrar por clinica ativa:
 - documentos clinicos;
 - auditoria clinica;
 - futuros atendimentos e agendamentos.
+
+Regra atual aplicada em pacientes:
+
+- sem `clinicId` na query, usar `activeClinicId`;
+- com `clinicId` na query, exigir permissao `patients.clinic_filter`;
+- rejeitar `clinicId` fora de `availableClinicIds`.
 
 ### 6.3 Consultas por ID
 
@@ -429,12 +555,12 @@ Sem essa validacao, um usuario poderia acessar dados de outra clinica apenas con
 
 ### 6.4 Escritas
 
-Toda criacao operacional deve gravar `clinicId` a partir da clinica ativa do usuario, nao do payload livre do frontend.
+Toda criacao operacional deve gravar `clinicId` a partir de um contexto validado pelo backend, nao de payload livre do frontend.
 
 Regras:
 
-- frontend pode exibir a clinica ativa;
-- backend decide o `clinicId` com base no contexto autenticado;
+- frontend pode exibir a clinica ativa ou um filtro local de clinica;
+- backend decide o `clinicId` com base no contexto autenticado e, quando permitido, no `clinicId` local validado;
 - payload pode aceitar `clinicId` apenas em fluxos administrativos globais;
 - para usuarios comuns, ignorar ou rejeitar `clinicId` enviado no corpo da requisicao.
 
@@ -541,11 +667,17 @@ Recomendacao:
 
 ### 7.5 Modulo `anamnesis`
 
+Implementado:
+
+- listagem e detalhe filtram por clinica ativa por padrao;
+- listagem e detalhe aceitam `clinicId` local quando o usuario tem `anamnese.clinic_filter` e escopo na clinica solicitada;
+- tela de listagem de anamnese permite filtro local de clinica e preserva esse contexto ao abrir o registro;
+- registros abertos por clinica filtrada diferente da ativa ficam em modo leitura para evitar escritas na clinica errada.
+
 Alteracoes necessarias:
 
 - `AnamnesisRecord` deve receber `clinicId` obrigatorio;
 - criacao usa clinica ativa;
-- listagem filtra por clinica ativa;
 - detalhe/update/finalizacao/documentos validam clinica;
 - ao vincular paciente, validar se paciente pertence ou pode ser vinculado a clinica ativa;
 - anamnese sem paciente ainda deve pertencer a clinica ativa;
@@ -553,11 +685,17 @@ Alteracoes necessarias:
 
 ### 7.6 Modulo `medical-evolutions`
 
+Implementado:
+
+- listagem de evolucoes por paciente filtra por clinica ativa por padrao;
+- listagem de evolucoes por paciente aceita `clinicId` local quando o usuario tem `medical_evolutions.clinic_filter` e escopo na clinica solicitada;
+- tela **Prontuario** usa o filtro local de clinica para buscar pacientes ativos e carregar evolucoes do paciente;
+- acoes de criacao, edicao, finalizacao, cancelamento e PDF continuam vinculadas a clinica ativa para evitar escrita em contexto ambíguo.
+
 Alteracoes necessarias:
 
 - `MedicalEvolution` deve receber `clinicId` obrigatorio;
 - criar evolucao com clinica ativa;
-- listar evolucoes por paciente e clinica;
 - detalhe/update/finalizacao/cancelamento/PDF validam clinica;
 - entrada de prontuario criada ao finalizar deve receber o mesmo `clinicId`;
 - documento emitido deve receber o mesmo `clinicId`;
@@ -569,9 +707,14 @@ Regra importante:
 
 ### 7.7 Prontuario
 
+Implementado:
+
+- endpoint de prontuario por paciente aceita `clinicId` opcional e valida permissao/escopo antes de consultar os eventos;
+- sem `clinicId` local, a timeline segue usando a clinica ativa como padrao.
+- tela **Prontuario** oferece filtro local de clinica para usuarios autorizados e limpa paciente selecionado quando ele sai do escopo filtrado.
+
 Alteracoes necessarias:
 
-- timeline deve filtrar por clinica ativa por padrao;
 - avaliar se administradores podem ver timeline consolidada da rede;
 - cada evento deve exibir ou carregar a clinica de origem;
 - documentos e eventos antigos devem apontar para a clinica padrao apos migracao.
@@ -584,11 +727,16 @@ Decisao recomendada:
 
 ### 7.8 Auditoria
 
+Implementado:
+
+- `AuditLog` ja possui `clinicId` e relacao com `Clinic`;
+- endpoints de logs aceitam `clinicId` opcional e validam se a clinica pertence ao escopo do usuario;
+- telas de auditoria exibem coluna de clinica e oferecem filtro local de clinica;
+- logs sem `clinicId` continuam visiveis como registros antigos sem clinica.
+
 Alteracoes necessarias:
 
-- adicionar `clinicId` em `AuditLog`;
 - todos os metodos de escrita de auditoria devem aceitar clinica;
-- telas de auditoria devem filtrar por clinica;
 - administrador pode consultar todas;
 - payload deve manter rastreabilidade de entidade, acao, antes/depois, usuario e motivo.
 
@@ -672,12 +820,13 @@ Alteracoes necessarias:
 
 ### 8.5 Tela de pacientes
 
+Implementado:
+
+- listagem por clinica ativa e filtro local de clinica para usuarios autorizados;
+- cadastro reutiliza paciente existente por CPF/RG/documento e vincula a pessoa a clinica ativa sem duplicar cadastro.
+
 Alteracoes necessarias:
 
-- listagem por clinica ativa;
-- filtro por clinica para administrador;
-- ao criar paciente, buscar possiveis pacientes existentes na rede;
-- permitir vincular paciente existente a clinica ativa;
 - detalhe deve mostrar passagens/clinicas vinculadas, conforme permissao;
 - status deve deixar claro se e status global da pessoa ou status na clinica.
 
@@ -753,13 +902,25 @@ Ou, se a rede nao quiser expor todas as clinicas no cadastro publico, usar convi
 
 ### 9.4 Pacientes
 
-Criacao operacional nao precisa aceitar `clinicId` para usuario comum. O backend usa clinica ativa.
+Criacao operacional de paciente aceita `clinicId` explicito. Quando o usuario possui apenas uma clinica disponivel, o backend usa essa clinica automaticamente. Quando possui mais de uma, o formulario exige a clinica do cadastro e o backend bloqueia criacao sem `clinicId`.
 
-Para administradores globais, endpoints podem aceitar filtro/query:
+Listagem ja aceita filtro local de clinica quando o usuario possui permissao `patients.clinic_filter` e a clinica esta dentro de `availableClinicIds`. Sem `clinicId`, retorna pacientes das clinicas permitidas ao usuario:
 
 ```txt
 GET /api/patients?clinicId=...&search=...
-GET /api/patients?clinicScope=all&search=...
+```
+
+Detalhe e prontuario aceitam `clinicId` local e tambem usam o escopo permitido quando `clinicId` nao e informado:
+
+```txt
+GET /api/patients/:patientId?clinicId=...
+GET /api/patients/:patientId/prontuario?clinicId=...
+```
+
+Para administradores globais, endpoints futuros podem aceitar escopo consolidado alem de `availableClinicIds`, se a visao global entrar no escopo:
+
+```txt
+GET /api/patients?clinicScope=network&search=...
 ```
 
 ### 9.5 Auditoria
@@ -802,7 +963,7 @@ Opcoes:
 Recomendacao inicial:
 
 - implementar visao por clinica como padrao;
-- criar permissao futura `prontuario.read_network` para visao consolidada;
+- usar permissao `prontuario.read_network` para visao consolidada;
 - em qualquer visao consolidada, mostrar a clinica de origem de cada evento.
 
 ### 10.3 Novo atendimento na rede 3
@@ -824,64 +985,75 @@ Quando um paciente previamente cadastrado na rede 1 for atendido na rede 3:
 
 ### Fase 1 - Fundacao de banco e seed
 
-- [ ] Criar `Clinic`.
-- [ ] Criar `UserClinic`.
-- [ ] Criar `PatientClinic`.
-- [ ] Adicionar `clinicId` em entidades clinicas.
-- [ ] Adicionar `clinicId` em `AuditLog`.
-- [ ] Criar clinica padrao no seed/migracao.
-- [ ] Vincular dados existentes a clinica padrao.
-- [ ] Gerar Prisma Client.
+- [x] Criar `Clinic`.
+- [x] Criar `UserClinic`.
+- [x] Criar `PatientClinic`.
+- [x] Criar `AccessGroupClinic`.
+- [x] Adicionar `clinicId` em entidades clinicas.
+- [x] Adicionar `clinicId` em `AuditLog`.
+- [x] Criar clinica padrao no seed/migracao.
+- [x] Vincular dados existentes a clinica padrao.
+- [x] Gerar Prisma Client.
+- [x] Tornar `clinicId` obrigatorio apos concluir todos os escritores.
 
 ### Fase 2 - Autenticacao e contexto de clinica
 
-- [ ] Ajustar login para carregar clinicas do usuario.
-- [ ] Ajustar `/api/auth/me`.
-- [ ] Ajustar JWT com `activeClinicId`.
-- [ ] Ajustar `AuthGuard` e `AuthenticatedUser`.
-- [ ] Criar endpoint de troca de clinica ativa.
-- [ ] Validar usuario sem clinica ativa.
+- [x] Ajustar login para carregar clinicas do usuario.
+- [x] Ajustar `/api/auth/me`.
+- [x] Ajustar JWT com `activeClinicId`.
+- [x] Ajustar `AuthGuard` e `AuthenticatedUser`.
+- [x] Criar endpoint de troca de clinica ativa.
+- [x] Validar UX para usuario com uma unica clinica: leitura e criacao usam o escopo automaticamente.
+- [x] Melhorar UX para usuario sem nenhuma clinica disponivel.
 
 ### Fase 3 - Isolamento backend operacional
 
-- [ ] Filtrar pacientes por clinica ativa.
-- [ ] Validar pacientes por ID contra clinica ativa.
-- [ ] Filtrar anamneses por clinica ativa.
-- [ ] Validar anamneses por ID contra clinica ativa.
-- [ ] Filtrar prontuario por clinica ativa.
-- [ ] Filtrar evolucoes por clinica ativa.
-- [ ] Validar evolucoes por ID contra clinica ativa.
-- [ ] Gravar `clinicId` em documentos.
-- [ ] Gravar `clinicId` em auditoria.
-- [ ] Ajustar chaves e invalidacoes de cache.
+- [x] Filtrar pacientes por escopo de clinicas do usuario.
+- [x] Permitir filtro local `clinicId` na listagem de pacientes com `patients.clinic_filter`.
+- [x] Validar pacientes por ID contra escopo permitido ou `clinicId` local.
+- [x] Filtrar anamneses por escopo de clinicas do usuario.
+- [x] Validar anamneses por ID contra escopo permitido ou `clinicId` local.
+- [x] Filtrar prontuario por escopo de clinicas do usuario.
+- [x] Filtrar evolucoes por escopo de clinicas do usuario.
+- [x] Validar evolucoes por ID contra escopo permitido sem depender da clinica ativa.
+- [x] Gravar `clinicId` em documentos nos fluxos migrados.
+- [x] Gravar `clinicId` em auditoria nos fluxos migrados.
+- [x] Ajustar chaves e invalidacoes de cache nos fluxos migrados.
+- [x] Propagar `clinicId` local para detalhe do paciente e prontuario.
+- [x] Propagar `clinicId` local para anamnese e listagem de evolucoes.
+- [ ] Revisar todos os endpoints por ID e caches antes de tornar `clinicId` obrigatorio.
 
 ### Fase 4 - Administracao de clinicas e usuarios
 
-- [ ] Criar modulo/tela de clinicas.
-- [ ] Permitir criar/editar/inativar clinicas.
-- [ ] Ajustar tela de usuarios para vincular clinicas.
-- [ ] Ajustar aprovacao de cadastro pendente.
-- [ ] Adicionar filtro por clinica na listagem de usuarios.
-- [ ] Manter grupos e permissoes globais.
+- [x] Criar modulo/tela de clinicas.
+- [x] Permitir criar/editar/inativar clinicas.
+- [x] Ajustar grupos para vincular escopo de clinicas.
+- [x] Ajustar tela de usuarios para vincular clinicas diretamente.
+- [x] Ajustar aprovacao de cadastro pendente.
+- [x] Adicionar filtro por clinica na listagem de usuarios.
+- [x] Manter grupos e permissoes globais.
 
 ### Fase 5 - Frontend operacional
 
-- [ ] Ajustar `AuthProvider` para clinicas.
-- [ ] Criar seletor de clinica ativa.
-- [ ] Resetar caches/estado ao trocar clinica.
-- [ ] Ajustar pacientes.
-- [ ] Ajustar anamnese.
-- [ ] Ajustar prontuario.
-- [ ] Ajustar evolucoes.
-- [ ] Ajustar auditoria.
+- [x] Ajustar `AuthProvider` para clinicas.
+- [x] Criar contexto/seletor de clinica, restringindo troca global a perfis administrativos.
+- [x] Limpar estados principais ao trocar filtro local de clinica nas telas migradas.
+- [x] Ajustar listagem de pacientes por escopo permitido.
+- [x] Adicionar filtro local de clinica na listagem de pacientes.
+- [x] Preservar filtro de clinica ao abrir detalhe/prontuario do paciente.
+- [x] Ajustar anamnese para filtro local, seletor de pacientes e criacao com `clinicId` explicito.
+- [x] Ajustar prontuario para filtro local e escopo permitido.
+- [x] Ajustar evolucoes para listagem por escopo/filtro e criacao com `clinicId` explicito.
+- [x] Ajustar auditoria para filtro local, coluna de clinica e logs de pacientes.
+- [x] Rever exibicao do seletor global para medicos/profissionais.
 
 ### Fase 6 - Regras de rede e refinamento
 
-- [ ] Definir busca ampliada de pacientes na rede.
-- [ ] Implementar vinculo de paciente existente a nova clinica.
-- [ ] Decidir e implementar visao consolidada do prontuario, se entrar no escopo.
-- [ ] Exibir clinica de origem nos eventos.
-- [ ] Revisar mensagens, filtros e estados vazios.
+- [x] Definir busca ampliada de pacientes fora de `availableClinicIds`, caso entre no escopo.
+- [x] Implementar vinculo de paciente existente a nova clinica por CPF/RG/documento.
+- [x] Decidir e implementar visao consolidada do prontuario, se entrar no escopo.
+- [x] Exibir clinica de origem nos eventos de auditoria e registros ja migrados.
+- [x] Revisar mensagens, filtros e estados vazios.
 
 ---
 
@@ -986,10 +1158,10 @@ Sem identificador obrigatorio, o mesmo paciente pode ser cadastrado mais de uma 
 
 Mitigacao:
 
-- busca por CPF/RG/documento quando disponivel;
+- cadastro reutiliza paciente existente por CPF/RG/documento quando disponivel;
 - busca por nome e data de nascimento;
 - alerta de possivel duplicidade;
-- fluxo manual para vincular paciente existente a nova clinica.
+- fluxo manual para vincular paciente existente a nova clinica, caso nao haja documento confiavel.
 
 ---
 
@@ -1008,19 +1180,22 @@ Prazo estimado para uma entrega bem validada: **3 a 5 semanas**, considerando:
 - revisao de caches;
 - testes manuais e/ou automatizados.
 
-Se a visao consolidada de prontuario da rede entrar no primeiro pacote, a estimativa tende a ficar mais perto de 5 semanas. Se a primeira entrega limitar a operacao a clinica ativa e deixar a visao consolidada como fase posterior, a entrega fica mais controlada.
+Se a visao consolidada de prontuario da rede entrar no primeiro pacote, a estimativa tende a ficar mais perto de 5 semanas. Se a primeira entrega limitar a operacao a clinica ativa/filtros locais validados e deixar a visao consolidada como fase posterior, a entrega fica mais controlada.
 
 ---
 
 ## 15. Decisoes pendentes
 
-- [ ] Paciente pode ser visto por qualquer clinica da rede ou apenas apos vinculo `PatientClinic`?
-- [ ] Usuario comum pode buscar paciente na rede inteira para evitar duplicidade?
-- [ ] Prontuario deve ter visao consolidada da rede na primeira entrega?
-- [ ] Qual permissao libera visao consolidada da rede?
-- [ ] Cadastro publico deve listar clinicas ou usar convite/link por clinica?
-- [ ] Inativacao de paciente sera global (`Patient.status`) ou por clinica (`PatientClinic.status`)?
+- [x] Paciente operacional aparece apenas dentro do escopo permitido e/ou apos vinculo `PatientClinic` com a clinica.
+- [x] Usuario comum pode buscar paciente fora de `availableClinicIds` para evitar duplicidade?
+- [x] Prontuario deve ter visao consolidada da rede na primeira entrega?
+- [x] Qual permissao libera visao consolidada da rede?
+- [x] Cadastro publico deve listar clinicas ou usar convite/link por clinica?
+- [x] Inativacao de paciente sera global (`Patient.status`) ou por clinica (`PatientClinic.status`)?
 - [ ] Administrador global sera identificado por `admin.full_access` ou por nova permissao especifica?
+- [x] Criacao operacional com multiplas clinicas deve informar a clinica no formulario; com uma unica clinica, o backend resolve automaticamente.
+- [x] Edicao/finalizacao/cancelamento/emissao de PDF deve sempre usar a clinica gravada no registro existente?
+- [x] O seletor global de clinica fica restrito a administradores/gestao; profissionais usam filtros locais por tela.
 
 ---
 
@@ -1030,11 +1205,13 @@ Para reduzir risco, a primeira entrega deve focar em:
 
 - cadastro de clinicas;
 - vinculo usuario x clinica;
-- clinica ativa no login/sessao;
-- seletor de clinica ativa;
+- escopo de clinicas disponiveis no login/sessao (`availableClinicIds`);
+- leituras operacionais limitadas ao escopo permitido por padrao;
+- filtro local de clinica nas telas operacionais quando o usuario puder atuar em mais de uma clinica;
+- campo de clinica nos formularios de criacao quando houver mais de uma clinica disponivel;
 - pacientes vinculados por clinica;
 - registros clinicos gravando `clinicId`;
-- isolamento backend por clinica ativa;
+- isolamento backend por escopo de clinicas do usuario;
 - auditoria com `clinicId`;
 - filtros administrativos por clinica;
 - grupos e permissoes globais preservados.

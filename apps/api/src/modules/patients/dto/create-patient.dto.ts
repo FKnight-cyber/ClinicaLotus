@@ -20,4 +20,8 @@ export class CreatePatientDto {
   @IsOptional()
   @IsString()
   rg?: string;
+
+  @IsOptional()
+  @IsString()
+  clinicId?: string;
 }

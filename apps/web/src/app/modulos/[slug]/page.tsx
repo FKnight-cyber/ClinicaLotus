@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/shell/AppShell";
 import { PlaceholderModule } from "@/components/placeholder/PlaceholderModule";
 import { getModuleBySlug } from "@/config/modules";
+import { ClinicsAdminPage } from "@/features/clinics/ClinicsAdminPage";
 import { PacientesPage } from "@/features/pacientes/PacientesPage";
 import { ProntuarioPage } from "@/features/prontuario/ProntuarioPage";
 
@@ -37,6 +38,14 @@ export default async function PlaceholderPage({ params }: PlaceholderPageProps) 
     return (
       <AppShell activeSlug={moduleItem.slug}>
         <PacientesPage />
+      </AppShell>
+    );
+  }
+
+  if (moduleItem.slug === "institucional") {
+    return (
+      <AppShell activeSlug={moduleItem.slug}>
+        <ClinicsAdminPage />
       </AppShell>
     );
   }

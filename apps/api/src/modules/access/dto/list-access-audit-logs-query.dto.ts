@@ -17,10 +17,14 @@ export class ListAccessAuditLogsQueryDto {
   search?: string;
 
   @IsOptional()
-  @IsIn(["access_group", "access_user", "anamnesis_record", "AnamnesisRecord", "medical_evolution"])
-  entity?: "access_group" | "access_user" | "anamnesis_record" | "AnamnesisRecord" | "medical_evolution";
+  @IsIn(["access_group", "access_user", "anamnesis_record", "AnamnesisRecord", "medical_evolution", "patient"])
+  entity?: "access_group" | "access_user" | "anamnesis_record" | "AnamnesisRecord" | "medical_evolution" | "patient";
 
   @IsOptional()
   @IsString()
   action?: string;
+
+  @IsOptional()
+  @IsString()
+  clinicId?: string;
 }

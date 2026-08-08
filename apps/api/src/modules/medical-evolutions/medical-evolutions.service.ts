@@ -3,6 +3,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import type { MedicalEvolution, MedicalEvolutionStatus } from "@prisma/client";
 import { AppCacheService } from "../../shared/cache/app-cache.service";
 import { PrismaService } from "../../shared/prisma/prisma.service";
+import type { AuthenticatedUser } from "../auth/auth.types";
 import { CancelMedicalEvolutionDto } from "./dto/cancel-medical-evolution.dto";
 import { CreateMedicalEvolutionDto } from "./dto/create-medical-evolution.dto";
 import { UpdateMedicalEvolutionDto } from "./dto/update-medical-evolution.dto";
@@ -25,6 +26,8 @@ type MedicalEvolutionUserRelation = {
 };
 
 type ListQueryOptions = {
+  clinicScope?: string;
+  clinicId?: string;
   limit?: string;
   offset?: string;
 };
@@ -49,33 +52,35 @@ export class MedicalEvolutionsService {
     private readonly cache: AppCacheService
   ) {}
 
-  async listByPatient(patientId: string, options?: ListQueryOptions) {
-    await this.ensurePatientExists(patientId);
+  async listByPatient(user: AuthenticatedUser, patientId: string, options?: ListQueryOptions) {
+    const clinicIds = await this.resolveScopedClinicIds(user, options?.clinicId, options?.clinicScope);
+    const clinicScopeKey = this.buildClinicScopeKey(clinicIds);
+    await this.ensurePatientInAnyClinic(patientId, clinicIds);
     const pagination = parsePaginationOptions(options);
 
-    return this.cache.getOrSet(`medical-evolutions:patient:${patientId}:${pagination.limit}:${pagination.offset}`, 15 * 1000, async () => {
+    return this.cache.getOrSet(`medical-evolutions:patient:${clinicScopeKey}:${patientId}:${pagination.limit}:${pagination.offset}`, 15 * 1000, async () => {
       const [evolutions, total] = await this.prisma.$transaction([
         this.prisma.medicalEvolution.findMany({
-          where: { patientId },
+          where: { patientId, clinicId: { in: clinicIds } },
           orderBy: { evolutionDate: "desc" },
           skip: pagination.offset,
           take: pagination.limit,
           include: this.userRelations()
         }),
-        this.prisma.medicalEvolution.count({ where: { patientId } })
+        this.prisma.medicalEvolution.count({ where: { patientId, clinicId: { in: clinicIds } } })
       ]);
 
       return { items: evolutions.map((evolution) => this.toResponse(evolution)), total, limit: pagination.limit, offset: pagination.offset };
     });
   }
 
-  async getById(id: string) {
-    const evolution = await this.findEvolution(id);
+  async getById(user: AuthenticatedUser, id: string, requestedClinicId?: string) {
+    const evolution = await this.findEvolutionInClinics(id, await this.resolveScopedClinicIds(user, requestedClinicId));
     return this.toResponse(evolution);
   }
 
-  async create(userId: string, patientId: string, dto: CreateMedicalEvolutionDto) {
-    await this.ensurePatientExists(patientId);
+  async create(user: AuthenticatedUser, patientId: string, dto: CreateMedicalEvolutionDto) {
+    const clinicId = await this.resolvePatientClinicIdForWrite(user, patientId);
     const text = dto.text.trim();
 
     if (!text) {
@@ -85,24 +90,26 @@ export class MedicalEvolutionsService {
     const evolution = await this.prisma.medicalEvolution.create({
       data: {
         patientId,
+        clinicId,
         text,
         professionalArea: dto.professionalArea,
         evolutionDate: this.parseDate(dto.evolutionDate),
         professionalName: this.normalizeOptionalText(dto.professionalName),
-        createdById: userId,
-        updatedById: userId
+        createdById: user.id,
+        updatedById: user.id
       },
       include: this.userRelations()
     });
 
-    this.invalidateCaches(patientId);
+    this.invalidateCaches(patientId, clinicId);
     const response = this.toResponse(evolution);
-    await this.writeAuditLog(userId, "create_medical_evolution", evolution.id, null, response);
+    await this.writeAuditLog(user.id, clinicId, "create_medical_evolution", evolution.id, null, response);
     return response;
   }
 
-  async update(userId: string, id: string, dto: UpdateMedicalEvolutionDto) {
-    const existingEvolution = await this.findEvolution(id);
+  async update(user: AuthenticatedUser, id: string, dto: UpdateMedicalEvolutionDto, requestedClinicId?: string) {
+    const existingEvolution = await this.findEvolutionInClinics(id, await this.resolveScopedClinicIds(user, requestedClinicId));
+    const clinicId = this.requireEvolutionClinicId(existingEvolution);
 
     if (existingEvolution.status !== "DRAFT") {
       throw new BadRequestException("Apenas rascunhos de evolução podem ser editados.");
@@ -122,19 +129,20 @@ export class MedicalEvolutionsService {
         professionalArea: dto.professionalArea === undefined ? existingEvolution.professionalArea : dto.professionalArea,
         evolutionDate: dto.evolutionDate === undefined ? existingEvolution.evolutionDate : this.parseDate(dto.evolutionDate),
         professionalName: dto.professionalName === undefined ? existingEvolution.professionalName : this.normalizeOptionalText(dto.professionalName),
-        updatedById: userId
+        updatedById: user.id
       },
       include: this.userRelations()
     });
 
-    this.invalidateCaches(updatedEvolution.patientId);
+    this.invalidateCaches(updatedEvolution.patientId, clinicId);
     const response = this.toResponse(updatedEvolution);
-    await this.writeAuditLog(userId, "update_medical_evolution", id, beforeData, response);
+    await this.writeAuditLog(user.id, clinicId, "update_medical_evolution", id, beforeData, response);
     return response;
   }
 
-  async finalize(userId: string, id: string) {
-    const existingEvolution = await this.findEvolution(id);
+  async finalize(user: AuthenticatedUser, id: string, requestedClinicId?: string) {
+    const existingEvolution = await this.findEvolutionInClinics(id, await this.resolveScopedClinicIds(user, requestedClinicId));
+    const clinicId = this.requireEvolutionClinicId(existingEvolution);
 
     if (existingEvolution.status === "FINALIZED") {
       return this.toResponse(existingEvolution);
@@ -153,39 +161,40 @@ export class MedicalEvolutionsService {
     }
 
     const beforeData = this.toResponse(existingEvolution);
-    const professionalSnapshot = await this.getFinalizingProfessionalSnapshot(userId);
+    const professionalSnapshot = await this.getFinalizingProfessionalSnapshot(user.id);
     const finalizedEvolution = await this.prisma.medicalEvolution.update({
       where: { id },
       data: {
         status: "FINALIZED",
         finalizedAt: new Date(),
-        finalizedById: userId,
+        finalizedById: user.id,
         professionalName: professionalSnapshot.name,
         finalizedProfessionalName: professionalSnapshot.name,
         finalizedProfessionalCouncil: professionalSnapshot.professionalCouncil,
         finalizedProfessionalRegistration: professionalSnapshot.professionalRegistration,
         finalizedProfessionalCouncilState: professionalSnapshot.professionalCouncilState,
         finalizedProfessionalSpecialty: professionalSnapshot.professionalSpecialty,
-        updatedById: userId
+        updatedById: user.id
       },
       include: this.userRelations()
     });
 
-    await this.createMedicalRecordEntry(userId, finalizedEvolution);
-    this.invalidateCaches(finalizedEvolution.patientId);
+    await this.createMedicalRecordEntry(user.id, finalizedEvolution);
+    this.invalidateCaches(finalizedEvolution.patientId, clinicId);
     const response = this.toResponse(finalizedEvolution);
-    await this.writeAuditLog(userId, "finalize_medical_evolution", id, beforeData, response);
+    await this.writeAuditLog(user.id, clinicId, "finalize_medical_evolution", id, beforeData, response);
     return response;
   }
 
-  async cancel(userId: string, id: string, dto: CancelMedicalEvolutionDto) {
+  async cancel(user: AuthenticatedUser, id: string, dto: CancelMedicalEvolutionDto, requestedClinicId?: string) {
     const reason = dto.reason.trim();
 
     if (!reason) {
       throw new BadRequestException("Informe o motivo do cancelamento.");
     }
 
-    const existingEvolution = await this.findEvolution(id);
+    const existingEvolution = await this.findEvolutionInClinics(id, await this.resolveScopedClinicIds(user, requestedClinicId));
+    const clinicId = this.requireEvolutionClinicId(existingEvolution);
 
     if (existingEvolution.status === "CANCELED") {
       return this.toResponse(existingEvolution);
@@ -201,22 +210,23 @@ export class MedicalEvolutionsService {
       data: {
         status: "CANCELED",
         canceledAt: new Date(),
-        canceledById: userId,
+        canceledById: user.id,
         cancelReason: reason,
-        updatedById: userId
+        updatedById: user.id
       },
       include: this.userRelations()
     });
 
     await this.markMedicalRecordEntryCanceled(canceledEvolution.id, reason);
-    this.invalidateCaches(canceledEvolution.patientId);
+    this.invalidateCaches(canceledEvolution.patientId, clinicId);
     const response = this.toResponse(canceledEvolution);
-    await this.writeAuditLog(userId, "cancel_medical_evolution", id, beforeData, response);
+    await this.writeAuditLog(user.id, clinicId, "cancel_medical_evolution", id, beforeData, response);
     return response;
   }
 
-  async emitPdfDocument(userId: string, id: string) {
-    const evolution = await this.findEvolution(id);
+  async emitPdfDocument(user: AuthenticatedUser, id: string, requestedClinicId?: string) {
+    const evolution = await this.findEvolutionInClinics(id, await this.resolveScopedClinicIds(user, requestedClinicId));
+    const clinicId = this.requireEvolutionClinicId(evolution);
 
     if (evolution.status !== "FINALIZED") {
       throw new BadRequestException("Apenas evoluções finalizadas podem gerar documento rastreável.");
@@ -232,12 +242,13 @@ export class MedicalEvolutionsService {
         contentHash,
         metadataJson: JSON.stringify({ evolutionId: evolution.id, emittedFrom: "web-pdf-export" }),
         patientId: evolution.patientId,
+        clinicId,
         medicalEvolutionId: evolution.id,
-        emittedById: userId
+        emittedById: user.id
       }
     });
 
-    await this.writeAuditLog(userId, "emit_medical_evolution_pdf", id, null, document);
+    await this.writeAuditLog(user.id, clinicId, "emit_medical_evolution_pdf", id, null, document);
 
     return {
       id: document.id,
@@ -251,17 +262,36 @@ export class MedicalEvolutionsService {
     };
   }
 
-  private async ensurePatientExists(patientId: string) {
-    const patient = await this.prisma.patient.findUnique({ where: { id: patientId }, select: { id: true } });
+  private async ensurePatientInClinic(patientId: string, clinicId: string) {
+    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, clinicId, status: "ACTIVE" }, select: { id: true } });
 
     if (!patient) {
       throw new NotFoundException("Paciente não encontrado.");
     }
   }
 
-  private async findEvolution(id: string) {
-    const evolution = await this.prisma.medicalEvolution.findUnique({
-      where: { id },
+  private async resolvePatientClinicIdForWrite(user: AuthenticatedUser, patientId: string) {
+    const patient = await this.prisma.patient.findFirst({
+      where: { id: patientId, status: "ACTIVE" },
+      select: { clinicId: true }
+    });
+
+    if (!patient) throw new NotFoundException("Paciente não encontrado.");
+    if (!user.availableClinicIds.includes(patient.clinicId)) throw new BadRequestException("Paciente vinculado a uma clínica fora do escopo do usuário.");
+    return patient.clinicId;
+  }
+
+  private async ensurePatientInAnyClinic(patientId: string, clinicIds: string[]) {
+    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, clinicId: { in: clinicIds }, status: "ACTIVE" }, select: { clinicId: true } });
+
+    if (!patient) {
+      throw new NotFoundException("Paciente não encontrado.");
+    }
+  }
+
+  private async findEvolution(id: string, clinicId: string) {
+    const evolution = await this.prisma.medicalEvolution.findFirst({
+      where: { id, clinicId },
       include: this.userRelations()
     });
 
@@ -270,6 +300,24 @@ export class MedicalEvolutionsService {
     }
 
     return evolution;
+  }
+
+  private async findEvolutionInClinics(id: string, clinicIds: string[]) {
+    const evolution = await this.prisma.medicalEvolution.findFirst({
+      where: { id, clinicId: { in: clinicIds } },
+      include: this.userRelations()
+    });
+
+    if (!evolution) {
+      throw new NotFoundException("Evolução não encontrada.");
+    }
+
+    return evolution;
+  }
+
+  private requireEvolutionClinicId(evolution: { clinicId: string | null }) {
+    if (!evolution.clinicId) throw new BadRequestException("Evolução sem clínica vinculada.");
+    return evolution.clinicId;
   }
 
   private async createMedicalRecordEntry(userId: string, evolution: MedicalEvolution) {
@@ -282,6 +330,7 @@ export class MedicalEvolutionsService {
     await this.prisma.medicalRecordEntry.create({
       data: {
         patientId: evolution.patientId,
+        clinicId: evolution.clinicId,
         medicalEvolutionId: evolution.id,
         type: "MEDICAL_EVOLUTION",
         title: `Evolução${evolution.professionalArea ? ` - ${evolution.professionalArea}` : ""}`,
@@ -302,10 +351,54 @@ export class MedicalEvolutionsService {
     });
   }
 
-  private invalidateCaches(patientId: string) {
-    this.cache.deleteByPrefix(`medical-evolutions:patient:${patientId}:`);
-    this.cache.deleteByPrefix(`patients:detail:${patientId}:`);
-    this.cache.deleteByPrefix(`patients:medical-record:${patientId}:`);
+  private invalidateCaches(patientId: string, clinicId: string) {
+    this.cache.deleteByPrefix(`medical-evolutions:patient:${clinicId}:${patientId}:`);
+    this.cache.deleteByPrefix(`patients:detail:${clinicId}:${patientId}:`);
+    this.cache.deleteByPrefix(`patients:medical-record:${clinicId}:${patientId}:`);
+  }
+
+  private resolveScopedClinicId(user: AuthenticatedUser, requestedClinicId?: string) {
+    const normalizedClinicId = requestedClinicId?.trim();
+    if (!normalizedClinicId) return this.resolveDefaultClinicId(user);
+    if (!this.hasPermission(user.permissions, "medical_evolutions.clinic_filter")) throw new BadRequestException("Usuário sem permissão para filtrar evoluções por clínica.");
+    if (!user.availableClinicIds.includes(normalizedClinicId)) throw new BadRequestException("Clínica fora do escopo do usuário.");
+    return normalizedClinicId;
+  }
+
+  private async resolveScopedClinicIds(user: AuthenticatedUser, requestedClinicId?: string, clinicScope?: string) {
+    const normalizedClinicId = requestedClinicId?.trim();
+    if (normalizedClinicId) return [this.resolveScopedClinicId(user, normalizedClinicId)];
+    if (clinicScope === "network") {
+      if (!this.hasPermission(user.permissions, "prontuario.read_network")) throw new BadRequestException("Usuário sem permissão para visualizar a rede consolidada.");
+      const clinics = await this.prisma.clinic.findMany({ where: { status: "ACTIVE" }, select: { id: true } });
+      if (clinics.length === 0) throw new BadRequestException("Nenhuma clínica ativa disponível.");
+      return clinics.map((clinic) => clinic.id);
+    }
+    if (user.availableClinicIds.length === 0) throw new BadRequestException("Usuário sem clínica disponível.");
+    return user.availableClinicIds;
+  }
+
+  private resolveDefaultClinicId(user: AuthenticatedUser) {
+    if (user.availableClinicIds.length === 1) return user.availableClinicIds[0];
+    throw new BadRequestException("Selecione uma clínica para continuar.");
+  }
+
+  private resolveWriteClinicId(user: AuthenticatedUser, requestedClinicId?: string) {
+    const normalizedClinicId = requestedClinicId?.trim();
+    if (normalizedClinicId) {
+      if (!user.availableClinicIds.includes(normalizedClinicId)) throw new BadRequestException("Clínica fora do escopo do usuário.");
+      return normalizedClinicId;
+    }
+    if (user.availableClinicIds.length === 1) return user.availableClinicIds[0];
+    throw new BadRequestException("Informe a clínica do cadastro.");
+  }
+
+  private buildClinicScopeKey(clinicIds: string[]) {
+    return [...clinicIds].sort().join(",");
+  }
+
+  private hasPermission(userPermissions: string[], permission: string) {
+    return userPermissions.includes("admin.full_access") || userPermissions.includes(permission);
   }
 
   private parseDate(value?: string) {
@@ -376,6 +469,7 @@ export class MedicalEvolutionsService {
     return {
       id: evolution.id,
       patientId: evolution.patientId,
+      clinicId: evolution.clinicId,
       status: this.toStatusResponse(evolution.status),
       evolutionDate: evolution.evolutionDate.toISOString(),
       text: evolution.text,
@@ -416,7 +510,7 @@ export class MedicalEvolutionsService {
     return "Evento de evolução registrado";
   }
 
-  private async writeAuditLog(userId: string, action: string, entityId: string, beforeData: unknown, afterData: unknown) {
+  private async writeAuditLog(userId: string, clinicId: string, action: string, entityId: string, beforeData: unknown, afterData: unknown) {
     await this.prisma.auditLog.create({
       data: {
         entity: "medical_evolution",
@@ -425,7 +519,8 @@ export class MedicalEvolutionsService {
         beforeData: beforeData ? JSON.stringify(beforeData) : null,
         afterData: afterData ? JSON.stringify(afterData) : null,
         reason: this.getAuditReason(action, afterData),
-        userId
+        userId,
+        clinicId
       }
     });
     this.cache.deleteByPrefix("access:audit-logs:");

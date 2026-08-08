@@ -78,6 +78,7 @@ export type AnamneseRecord = {
   finalizedAt?: string;
   patientName: string;
   patientId?: string | null;
+  clinicId?: string | null;
   answers: Record<TemplateId, TemplateAnswers>;
   customFields?: Partial<Record<TemplateId, Record<string, FormField[]>>>;
   templateStatuses?: Partial<Record<TemplateId, AnamneseTemplateStatus>>;
@@ -94,6 +95,15 @@ export type PatientSummary = {
   rg?: string | null;
   createdAt: string;
   updatedAt: string;
+  clinics?: Array<{
+    clinicId: string;
+    status?: "ACTIVE" | "INACTIVE";
+    clinic: {
+      id: string;
+      name: string;
+      code?: string | null;
+    };
+  }>;
 };
 
 export type MedicalRecordEntry = {

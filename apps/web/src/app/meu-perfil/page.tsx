@@ -69,12 +69,13 @@ async function updateProfile(token: string, form: ProfileForm) {
 }
 
 export default function MeuPerfilPage() {
-  const { hasPermission, refreshProfile, token, user } = useAuth();
+  const { clinics, hasPermission, refreshProfile, token, user } = useAuth();
   const [form, setForm] = useState<ProfileForm>({ login: "", name: "", email: "", professionalArea: "", professionalCouncil: "", professionalRegistration: "", professionalCouncilState: "", professionalSpecialty: "", password: "" });
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const canViewMedicalInfo = hasPermission("profile.medical_info.read");
+  const accessibleClinics = clinics.filter((clinic) => clinic.status === "ACTIVE");
 
   useEffect(() => {
     if (!user) return;
@@ -130,9 +131,17 @@ export default function MeuPerfilPage() {
           <section className="plain-panel">
             <h3>Dados do cadastro</h3>
             <form className="access-form" onSubmit={handleSubmit}>
-              <label><span>Usuário</span><input autoComplete="username" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, login: event.target.value }))} required value={form.login} /></label>
+              <label><span>Login</span><input autoComplete="username" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, login: event.target.value }))} required value={form.login} /></label>
               <label><span>Nome completo</span><input autoComplete="name" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required value={form.name} /></label>
               <label><span>Email</span><input autoComplete="email" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} type="email" value={form.email} /></label>
+              <div className="profile-readonly-field">
+                <span>Clínicas com acesso</span>
+                <div className="access-checklist compact-checklist">
+                  {accessibleClinics.length > 0 ? accessibleClinics.map((clinic) => (
+                    <span className="choice-pill" key={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</span>
+                  )) : <span>Nenhuma clínica vinculada.</span>}
+                </div>
+              </div>
               {shouldShowProfessionalArea(user?.userType, canViewMedicalInfo) ? <label><span>Área profissional</span><select disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, professionalArea: event.target.value }))} value={form.professionalArea}>
                 <option value="">Selecione</option>
                 {professionalAreaOptions.map((area) => <option key={area} value={area}>{area}</option>)}

@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import type { AnamnesisStatus, MedicalEvolutionStatus, PatientStatus, Prisma } from "@prisma/client";
 import { AppCacheService } from "../../shared/cache/app-cache.service";
 import { PrismaService } from "../../shared/prisma/prisma.service";
+import type { AuthenticatedUser } from "../auth/auth.types";
 import { CreatePatientDto } from "./dto/create-patient.dto";
 import { UpdatePatientDto } from "./dto/update-patient.dto";
 
 type ListQueryOptions = {
+  clinicScope?: string;
+  clinicId?: string;
   status?: string;
   limit?: string;
   offset?: string;
@@ -14,11 +17,11 @@ type ListQueryOptions = {
 
 const defaultListLimit = 5;
 const maxListLimit = 100;
-const patientStatuses = new Set(["ACTIVE", "INACTIVE"]);
+const patientClinicStatuses = new Set(["ACTIVE", "INACTIVE"]);
 
 function parsePatientStatusFilter(status?: string): PatientStatus | undefined {
   if (status === "ALL") return undefined;
-  return patientStatuses.has(status ?? "") ? status as PatientStatus : "ACTIVE";
+  return patientClinicStatuses.has(status ?? "") ? status as PatientStatus : "ACTIVE";
 }
 
 function parsePaginationOptions(options?: ListQueryOptions) {
@@ -40,13 +43,16 @@ export class PatientsService {
     private readonly cache: AppCacheService
   ) {}
 
-  list(search?: string, options?: ListQueryOptions) {
+  async list(user: AuthenticatedUser, search?: string, options?: ListQueryOptions) {
+    const clinicIds = await this.resolveScopedClinicIds(user, options?.clinicId, options?.clinicScope);
+    const clinicScopeKey = this.buildClinicScopeKey(clinicIds);
     const normalizedSearch = search?.trim();
     const status = parsePatientStatusFilter(options?.status);
     const pagination = parsePaginationOptions(options);
-    const cacheKey = `patients:list:${normalizedSearch ? normalizedSearch.toLowerCase() : "all"}:${options?.status === "ALL" ? "all" : status ?? "all"}:${pagination ? `${pagination.limit}:${pagination.offset}` : "legacy"}`;
+    const cacheKey = `patients:list:${clinicScopeKey}:${normalizedSearch ? normalizedSearch.toLowerCase() : "all"}:${options?.status === "ALL" ? "all" : status ?? "all"}:${pagination ? `${pagination.limit}:${pagination.offset}` : "legacy"}`;
 
     const where: Prisma.PatientWhereInput = {
+      clinicId: { in: clinicIds },
       ...(status ? { status } : {}),
       ...(normalizedSearch ? {
         OR: [
@@ -65,55 +71,122 @@ export class PatientsService {
             where,
             orderBy: { name: "asc" },
             skip: pagination.offset,
-            take: pagination.limit
+            take: pagination.limit,
+            include: { clinic: { select: { id: true, name: true, code: true, status: true } } }
           }),
           this.prisma.patient.count({ where })
         ]);
 
-        return { items, total, limit: pagination.limit, offset: pagination.offset };
+        return { items: items.map((patient) => this.toPatientListItem(patient, clinicIds)), total, limit: pagination.limit, offset: pagination.offset };
       });
     }
 
     return this.cache.getOrSet(cacheKey, 15 * 1000, () => this.prisma.patient.findMany({
       where,
       orderBy: { name: "asc" },
-      take: 30
-    }));
+      take: 30,
+      include: { clinic: { select: { id: true, name: true, code: true, status: true } } }
+    }).then((patients) => patients.map((patient) => this.toPatientListItem(patient, clinicIds))));
   }
 
-  async create(actorUserId: string | undefined, dto: CreatePatientDto) {
+  private resolveScopedClinicId(user: AuthenticatedUser, requestedClinicId?: string) {
+    const normalizedClinicId = requestedClinicId?.trim();
+    if (!normalizedClinicId) return this.resolveDefaultClinicId(user);
+    if (!this.hasPermission(user.permissions, "patients.clinic_filter")) throw new BadRequestException("Usuário sem permissão para filtrar pacientes por clínica.");
+    if (!user.availableClinicIds.includes(normalizedClinicId)) throw new BadRequestException("Clínica fora do escopo do usuário.");
+    return normalizedClinicId;
+  }
+
+  private async resolveScopedClinicIds(user: AuthenticatedUser, requestedClinicId?: string, clinicScope?: string) {
+    const normalizedClinicId = requestedClinicId?.trim();
+    if (normalizedClinicId) return [this.resolveScopedClinicId(user, normalizedClinicId)];
+    if (clinicScope === "network") {
+      if (!this.hasPermission(user.permissions, "prontuario.read_network")) throw new BadRequestException("Usuário sem permissão para visualizar a rede consolidada.");
+      const clinics = await this.prisma.clinic.findMany({ where: { status: "ACTIVE" }, select: { id: true } });
+      if (clinics.length === 0) throw new BadRequestException("Nenhuma clínica ativa disponível.");
+      return clinics.map((clinic) => clinic.id);
+    }
+    if (user.availableClinicIds.length === 0) throw new BadRequestException("Usuário sem clínica disponível.");
+    return user.availableClinicIds;
+  }
+
+  async create(user: AuthenticatedUser, dto: CreatePatientDto) {
+    const clinicId = this.resolveWriteClinicId(user, dto.clinicId);
     const cpf = dto.cpf?.trim() || null;
     const rg = dto.rg?.trim() || null;
     const document = dto.document?.trim() || null;
-    const patient = await this.prisma.patient.create({
-      data: {
-        name: dto.name.trim(),
-        birthDate: dto.birthDate ? new Date(`${dto.birthDate}T00:00:00`) : null,
-        document,
-        cpf,
-        rg
+    const documentMatches = [
+      ...(cpf ? [{ cpf }] : []),
+      ...(rg ? [{ rg }] : []),
+      ...(document ? [{ document }] : [])
+    ];
+    const patient = await this.prisma.$transaction(async (tx) => {
+      const existingPatient = documentMatches.length > 0 ? await tx.patient.findFirst({
+        where: { OR: documentMatches },
+        orderBy: { createdAt: "asc" }
+      }) : null;
+
+      if (existingPatient) {
+        if (existingPatient.clinicId === clinicId && existingPatient.status === "ACTIVE") {
+          return { ...existingPatient, linkedExisting: false, existingInClinic: true };
+        }
+
+        await tx.patient.update({
+          where: { id: existingPatient.id },
+          data: { clinicId, status: "ACTIVE" }
+        });
+
+        return { ...existingPatient, linkedExisting: true, existingInClinic: false };
       }
+
+      const createdPatient = await tx.patient.create({
+        data: {
+          name: dto.name.trim(),
+          clinicId,
+          birthDate: dto.birthDate ? new Date(`${dto.birthDate}T00:00:00`) : null,
+          document,
+          cpf,
+          rg
+        }
+      });
+
+      return { ...createdPatient, linkedExisting: false, existingInClinic: false };
     });
 
-    this.cache.deleteByPrefix("patients:list:");
-    await this.writeAuditLog(actorUserId, "create_patient", null, patient, `Paciente criado: ${patient.name}`);
+    this.invalidatePatientCaches(patient.id, clinicId);
+    if (patient.linkedExisting) {
+      await this.writeAuditLog(user.id, clinicId, "link_existing_patient", null, patient, `Paciente vinculado à clínica: ${patient.name}`);
+    } else if (!patient.existingInClinic) {
+      await this.writeAuditLog(user.id, clinicId, "create_patient", null, patient, `Paciente criado: ${patient.name}`);
+    }
     return patient;
   }
 
-  async getById(patientId: string, userPermissions: string[] = []) {
+  async getById(patientId: string, user: AuthenticatedUser, requestedClinicId?: string, clinicScope?: string) {
+    const clinicIds = await this.resolveScopedClinicIds(user, requestedClinicId, clinicScope);
+    return this.getByIdInClinics(patientId, clinicIds, user.permissions);
+  }
+
+  private getByIdInClinic(patientId: string, clinicId: string, userPermissions: string[] = []) {
+    return this.getByIdInClinics(patientId, [clinicId], userPermissions);
+  }
+
+  private getByIdInClinics(patientId: string, clinicIds: string[], userPermissions: string[] = []) {
     const canReadEvolutions = this.hasPermission(userPermissions, "medical_evolutions.read");
-    const cacheKey = `patients:detail:${patientId}:with-anamnesis-summary:${canReadEvolutions ? "with-evolutions" : "without-evolutions"}`;
+    const clinicScopeKey = this.buildClinicScopeKey(clinicIds);
+    const cacheKey = `patients:detail:${clinicScopeKey}:${patientId}:with-anamnesis-summary:${canReadEvolutions ? "with-evolutions" : "without-evolutions"}`;
 
     return this.cache.getOrSet(cacheKey, 15 * 1000, async () => {
-      const patient = await this.prisma.patient.findUnique({
-        where: { id: patientId }
+      const patient = await this.prisma.patient.findFirst({
+        where: { id: patientId, clinicId: { in: clinicIds } },
+        include: { clinic: { select: { id: true, name: true, code: true, status: true } } }
       });
 
       if (!patient) throw new NotFoundException("Paciente não encontrado.");
 
       const [anamneses, evolutions] = await Promise.all([
         this.prisma.anamnesisRecord.findMany({
-          where: { patientId },
+          where: { patientId, clinicId: { in: clinicIds } },
           orderBy: { updatedAt: "desc" },
           select: {
             id: true,
@@ -126,7 +199,7 @@ export class PatientsService {
           }
         }),
         canReadEvolutions ? this.prisma.medicalEvolution.findMany({
-          where: { patientId },
+          where: { patientId, clinicId: { in: clinicIds } },
           orderBy: { evolutionDate: "desc" },
           select: {
             id: true,
@@ -151,6 +224,8 @@ export class PatientsService {
         id: patient.id,
         name: patient.name,
         status: patient.status,
+        globalStatus: patient.status,
+        clinics: [this.toPatientClinicLink(patient)],
         birthDate: patient.birthDate?.toISOString() ?? null,
         document: patient.document,
         cpf: patient.cpf,
@@ -186,38 +261,52 @@ export class PatientsService {
     });
   }
 
-  async update(actorUserId: string | undefined, patientId: string, dto: UpdatePatientDto) {
-    const beforeData = await this.findPatientOrThrow(patientId);
-    const patient = await this.prisma.patient.update({
-      where: { id: patientId },
-      data: {
-        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
-        ...(dto.birthDate !== undefined ? { birthDate: dto.birthDate ? new Date(`${dto.birthDate}T00:00:00`) : null } : {}),
-        ...(dto.document !== undefined ? { document: dto.document?.trim() || null } : {}),
-        ...(dto.cpf !== undefined ? { cpf: dto.cpf?.trim() || null } : {}),
-        ...(dto.rg !== undefined ? { rg: dto.rg?.trim() || null } : {})
-      }
+  async update(user: AuthenticatedUser, patientId: string, dto: UpdatePatientDto, requestedClinicId?: string) {
+    const beforeData = await this.findPatientOrThrow(patientId, await this.resolveScopedClinicIds(user, requestedClinicId));
+    const sourceClinicId = beforeData.clinicId;
+    const targetClinicId = dto.clinicId?.trim() ? this.resolveWriteClinicId(user, dto.clinicId) : sourceClinicId;
+    const patient = await this.prisma.$transaction(async (tx) => {
+      const updatedPatient = await tx.patient.update({
+        where: { id: patientId },
+        data: {
+          clinicId: targetClinicId,
+          status: beforeData.status,
+          ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+          ...(dto.birthDate !== undefined ? { birthDate: dto.birthDate ? new Date(`${dto.birthDate}T00:00:00`) : null } : {}),
+          ...(dto.document !== undefined ? { document: dto.document?.trim() || null } : {}),
+          ...(dto.cpf !== undefined ? { cpf: dto.cpf?.trim() || null } : {}),
+          ...(dto.rg !== undefined ? { rg: dto.rg?.trim() || null } : {})
+        }
+      });
+
+      return updatedPatient;
     });
 
-    this.invalidatePatientCaches(patient.id);
-    await this.writeAuditLog(actorUserId, "update_patient", beforeData, patient, `Paciente atualizado: ${patient.name}`);
-    return patient;
+    const response = await this.getPatientStatusResponse(patient.id, targetClinicId);
+    this.invalidatePatientCaches(patient.id, sourceClinicId);
+    if (targetClinicId !== sourceClinicId) this.invalidatePatientCaches(patient.id, targetClinicId);
+    await this.writeAuditLog(user.id, targetClinicId, "update_patient", beforeData, response, `Paciente atualizado: ${patient.name}`);
+    return response;
   }
 
-  async updateStatus(actorUserId: string | undefined, patientId: string, status: PatientStatus) {
-    const beforeData = await this.findPatientOrThrow(patientId);
-    const patient = await this.prisma.patient.update({
+  async updateStatus(user: AuthenticatedUser, patientId: string, status: PatientStatus, requestedClinicId?: string) {
+    const beforeData = await this.findPatientOrThrow(patientId, await this.resolveScopedClinicIds(user, requestedClinicId));
+    await this.prisma.patient.update({
       where: { id: patientId },
       data: { status }
     });
+    const patient = await this.getPatientStatusResponse(patientId, beforeData.clinicId);
 
-    this.invalidatePatientCaches(patient.id);
-    await this.writeAuditLog(actorUserId, status === "ACTIVE" ? "activate_patient" : "inactivate_patient", beforeData, patient, `${status === "ACTIVE" ? "Paciente ativado" : "Paciente inativado"}: ${patient.name}`);
+    this.invalidatePatientCaches(patient.id, beforeData.clinicId);
+    await this.writeAuditLog(user.id, beforeData.clinicId, status === "ACTIVE" ? "activate_patient" : "inactivate_patient", beforeData, patient, `${status === "ACTIVE" ? "Paciente ativado" : "Paciente inativado"}: ${patient.name}`);
     return patient;
   }
 
-  async emitSummaryReportDocument(actorUserId: string | undefined, patientId: string, userPermissions: string[] = []) {
-    const patient = await this.getById(patientId, userPermissions);
+  async emitSummaryReportDocument(user: AuthenticatedUser, patientId: string, requestedClinicId?: string) {
+    const clinicIds = await this.resolveScopedClinicIds(user, requestedClinicId);
+    const patientAccess = await this.findPatientOrThrow(patientId, clinicIds);
+    const clinicId = patientAccess.clinicId;
+    const patient = await this.getByIdInClinic(patientId, clinicId, user.permissions);
     const contentHash = createHash("sha256").update(JSON.stringify(patient)).digest("hex");
     const document = await this.prisma.clinicalDocument.create({
       data: {
@@ -227,11 +316,12 @@ export class PatientsService {
         contentHash,
         metadataJson: JSON.stringify({ patientId: patient.id, patientName: patient.name, emittedFrom: "web-pdf-export", scope: "patient-summary" }),
         patientId: patient.id,
-        emittedById: actorUserId
+        clinicId,
+        emittedById: user.id
       }
     });
 
-    await this.writePatientDocumentAuditLog(actorUserId, patient.id, "emit_patient_summary_report_pdf", document, `Relatório resumido emitido: ${patient.name}`);
+    await this.writePatientDocumentAuditLog(user.id, clinicId, patient.id, "emit_patient_summary_report_pdf", document, `Relatório resumido emitido: ${patient.name}`);
 
     return {
       id: document.id,
@@ -244,14 +334,17 @@ export class PatientsService {
     };
   }
 
-  getMedicalRecord(patientId: string, userPermissions: string[] = [], options?: ListQueryOptions) {
-    const canReadEvolutions = userPermissions.includes("admin.full_access") || userPermissions.includes("medical_evolutions.read");
+  async getMedicalRecord(patientId: string, user: AuthenticatedUser, options?: ListQueryOptions) {
+    const clinicIds = await this.resolveScopedClinicIds(user, options?.clinicId, options?.clinicScope);
+    const clinicScopeKey = this.buildClinicScopeKey(clinicIds);
+    const canReadEvolutions = user.permissions.includes("admin.full_access") || user.permissions.includes("medical_evolutions.read");
     const pagination = parsePaginationOptions(options);
-    const cacheKey = `patients:medical-record:${patientId}:${canReadEvolutions ? "with-evolutions" : "without-evolutions"}:${pagination ? `${pagination.limit}:${pagination.offset}` : "legacy"}`;
-    const where = canReadEvolutions ? { patientId } : { patientId, NOT: { type: "MEDICAL_EVOLUTION" as const } };
+    const cacheKey = `patients:medical-record:${clinicScopeKey}:${patientId}:${canReadEvolutions ? "with-evolutions" : "without-evolutions"}:${pagination ? `${pagination.limit}:${pagination.offset}` : "legacy"}`;
+    const where = canReadEvolutions ? { patientId, clinicId: { in: clinicIds } } : { patientId, clinicId: { in: clinicIds }, NOT: { type: "MEDICAL_EVOLUTION" as const } };
 
     if (pagination) {
       return this.cache.getOrSet(cacheKey, 15 * 1000, async () => {
+        await this.ensurePatientInAnyClinic(patientId, clinicIds);
         const [items, total] = await this.prisma.$transaction([
           this.prisma.medicalRecordEntry.findMany({
             where,
@@ -271,28 +364,119 @@ export class PatientsService {
       });
     }
 
-    return this.cache.getOrSet(cacheKey, 15 * 1000, () => this.prisma.medicalRecordEntry.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      include: {
-        anamnesisRecord: { select: { id: true, code: true, status: true } },
-        medicalEvolution: { select: { id: true, status: true, professionalArea: true, cancelReason: true } },
-        createdBy: { select: { id: true, name: true, login: true } }
-      }
-    }));
+    return this.cache.getOrSet(cacheKey, 15 * 1000, async () => {
+      await this.ensurePatientInAnyClinic(patientId, clinicIds);
+      return this.prisma.medicalRecordEntry.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        include: {
+          anamnesisRecord: { select: { id: true, code: true, status: true } },
+          medicalEvolution: { select: { id: true, status: true, professionalArea: true, cancelReason: true } },
+          createdBy: { select: { id: true, name: true, login: true } }
+        }
+      });
+    });
   }
 
-  private async findPatientOrThrow(patientId: string) {
-    const patient = await this.prisma.patient.findUnique({ where: { id: patientId } });
+  private async findPatientOrThrow(patientId: string, clinicIds: string[]) {
+    const patient = await this.prisma.patient.findFirst({
+      where: { id: patientId, clinicId: { in: clinicIds } },
+      include: { clinic: { select: { id: true, name: true, code: true, status: true } } }
+    });
+
     if (!patient) throw new NotFoundException("Paciente não encontrado.");
     return patient;
   }
 
-  private invalidatePatientCaches(patientId?: string | null) {
+  private toPatientClinicLink(patient: {
+    clinicId: string;
+    status: PatientStatus;
+    createdAt: Date;
+    updatedAt: Date;
+    clinic: { id: string; name: string; code: string | null; status: "ACTIVE" | "INACTIVE" };
+  }) {
+    return {
+      clinicId: patient.clinicId,
+      status: patient.status,
+      firstSeenAt: patient.createdAt.toISOString(),
+      lastSeenAt: patient.updatedAt.toISOString(),
+      clinic: patient.clinic
+    };
+  }
+
+  private toPatientListItem(patient: {
+    id: string;
+    name: string;
+    status: PatientStatus;
+    clinicId: string;
+    birthDate: Date | null;
+    document: string | null;
+    cpf: string | null;
+    rg: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+    clinic: { id: string; name: string; code: string | null; status: "ACTIVE" | "INACTIVE" };
+  }, scopedClinicIds?: string[]) {
+    if (scopedClinicIds && !scopedClinicIds.includes(patient.clinicId)) throw new NotFoundException("Paciente não encontrado.");
+    return {
+      id: patient.id,
+      name: patient.name,
+      status: patient.status,
+      globalStatus: patient.status,
+      birthDate: patient.birthDate?.toISOString() ?? null,
+      document: patient.document,
+      cpf: patient.cpf,
+      rg: patient.rg,
+      createdAt: patient.createdAt.toISOString(),
+      updatedAt: patient.updatedAt.toISOString(),
+      clinics: [{ clinicId: patient.clinicId, status: patient.status, clinic: { id: patient.clinic.id, name: patient.clinic.name, code: patient.clinic.code } }]
+    };
+  }
+
+  private async getPatientStatusResponse(patientId: string, clinicId: string) {
+    const patient = await this.prisma.patient.findFirst({
+      where: { id: patientId, clinicId },
+      include: { clinic: { select: { id: true, name: true, code: true, status: true } } }
+    });
+
+    if (!patient) throw new NotFoundException("Paciente não encontrado.");
+    return this.toPatientListItem(patient);
+  }
+
+  private async ensurePatientInClinic(patientId: string, clinicId: string) {
+    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, clinicId, status: "ACTIVE" }, select: { id: true } });
+    if (!patient) throw new NotFoundException("Paciente não encontrado.");
+  }
+
+  private async ensurePatientInAnyClinic(patientId: string, clinicIds: string[]) {
+    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, clinicId: { in: clinicIds }, status: "ACTIVE" }, select: { clinicId: true } });
+    if (!patient) throw new NotFoundException("Paciente não encontrado.");
+  }
+
+  private resolveDefaultClinicId(user: AuthenticatedUser) {
+    if (user.availableClinicIds.length === 1) return user.availableClinicIds[0];
+    throw new BadRequestException("Selecione uma clínica para continuar.");
+  }
+
+  private resolveWriteClinicId(user: AuthenticatedUser, requestedClinicId?: string) {
+    const normalizedClinicId = requestedClinicId?.trim();
+    if (normalizedClinicId) {
+      if (!user.availableClinicIds.includes(normalizedClinicId)) throw new BadRequestException("Clínica fora do escopo do usuário.");
+      return normalizedClinicId;
+    }
+    if (user.availableClinicIds.length === 1) return user.availableClinicIds[0];
+    throw new BadRequestException("Informe a clínica do cadastro.");
+  }
+
+  private buildClinicScopeKey(clinicIds: string[]) {
+    return [...clinicIds].sort().join(",");
+  }
+
+  private invalidatePatientCaches(patientId?: string | null, clinicId?: string | null) {
     this.cache.deleteByPrefix("patients:list:");
     if (patientId) {
-      this.cache.deleteByPrefix(`patients:detail:${patientId}:`);
-      this.cache.deleteByPrefix(`patients:medical-record:${patientId}:`);
+      this.cache.deleteByPrefix("patients:detail:");
+      this.cache.deleteByPrefix("patients:medical-record:");
     }
   }
 
@@ -324,7 +508,7 @@ export class PatientsService {
     return `${prefix}${String((Number.isFinite(latestSequence) ? latestSequence : 0) + 1).padStart(4, "0")}`;
   }
 
-  private async writePatientDocumentAuditLog(userId: string | undefined, patientId: string, action: string, document: unknown, reason: string) {
+  private async writePatientDocumentAuditLog(userId: string | undefined, clinicId: string, patientId: string, action: string, document: unknown, reason: string) {
     await this.prisma.auditLog.create({
       data: {
         entity: "patient",
@@ -333,13 +517,14 @@ export class PatientsService {
         beforeData: null,
         afterData: JSON.stringify(document),
         reason,
-        userId: userId ?? null
+        userId: userId ?? null,
+        clinicId
       }
     });
     this.cache.deleteByPrefix("access:audit-logs:");
   }
 
-  private async writeAuditLog(userId: string | undefined, action: string, beforeData: unknown, afterData: unknown, reason: string) {
+  private async writeAuditLog(userId: string | undefined, clinicId: string, action: string, beforeData: unknown, afterData: unknown, reason: string) {
     await this.prisma.auditLog.create({
       data: {
         entity: "patient",
@@ -348,7 +533,8 @@ export class PatientsService {
         beforeData: beforeData ? JSON.stringify(beforeData) : null,
         afterData: afterData ? JSON.stringify(afterData) : null,
         reason,
-        userId: userId ?? null
+        userId: userId ?? null,
+        clinicId
       }
     });
     this.cache.deleteByPrefix("access:audit-logs:");

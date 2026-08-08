@@ -3,4 +3,5 @@ export type AuthenticatedUser = {
   login: string;
   name: string;
   permissions: string[];
+  availableClinicIds: string[];
 };

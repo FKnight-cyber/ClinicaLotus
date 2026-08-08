@@ -89,6 +89,17 @@ function getProfileProfessionalArea(professionalArea?: string | null) {
   return professionalAreaOptions.includes(professionalArea as ProfessionalArea) ? professionalArea as ProfessionalArea : "";
 }
 
+function getPatientClinicId(patient: PatientSummary | null | undefined) {
+  return patient?.clinics?.[0]?.clinicId ?? "";
+}
+
+function getClinicLabel(clinicId: string | null | undefined, clinics: Array<{ id: string; name: string; code?: string | null }>) {
+  if (!clinicId) return "Não informada";
+  const clinic = clinics.find((item) => item.id === clinicId);
+  if (!clinic) return "Clínica fora do escopo";
+  return clinic.code ? `${clinic.name} (${clinic.code})` : clinic.name;
+}
+
 function canUseProfileProfessionalName(userType?: string) {
   return userType === "DOCTOR" || userType === "NURSE";
 }
@@ -119,7 +130,15 @@ function writeStoredSelectedPatient(patient: PatientSummary | null) {
 }
 
 export function ProntuarioPage() {
-  const { hasPermission, token, user } = useAuth();
+  const { clinics, hasPermission, token, user } = useAuth();
+  const prontuarioScopeKey = useMemo(
+    () => clinics
+      .filter((clinic) => clinic.status === "ACTIVE")
+      .map((clinic) => clinic.id)
+      .sort()
+      .join(","),
+    [clinics]
+  );
   const canReadPatients = hasPermission("patients.read");
   const canReadProntuario = hasPermission("prontuario.read");
   const canReadEvolutions = hasPermission("medical_evolutions.read");
@@ -195,7 +214,7 @@ export function ProntuarioPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPatientListLoading(true);
 
-    fetchProntuarioPatients(token, debouncedSearch, { limit: patientSearchLimit, offset: 0 })
+    fetchProntuarioPatients(token, debouncedSearch, { limit: patientSearchLimit, offset: 0, scopeKey: prontuarioScopeKey })
       .then((response) => {
         if (!isCurrent) return;
         setPatients(response.items);
@@ -210,7 +229,7 @@ export function ProntuarioPage() {
     return () => {
       isCurrent = false;
     };
-  }, [canReadPatients, debouncedSearch, token]);
+  }, [canReadPatients, debouncedSearch, prontuarioScopeKey, token]);
 
   useEffect(() => {
     if (!token || !selectedPatientId || !canReadEvolutions) {
@@ -221,7 +240,7 @@ export function ProntuarioPage() {
     let isCurrent = true;
     setEvolutionsLoading(true);
 
-    fetchMedicalEvolutions(token, selectedPatientId, { limit: evolutionsPageSize, offset: evolutionsOffset })
+    fetchMedicalEvolutions(token, selectedPatientId, { limit: evolutionsPageSize, offset: evolutionsOffset, scopeKey: prontuarioScopeKey })
       .then((response) => {
         if (!isCurrent) return;
         setEvolutions(response.items);
@@ -230,7 +249,16 @@ export function ProntuarioPage() {
         setEvolutionMessage(response.total > 0 ? "Evoluções carregadas." : "Paciente sem evoluções registradas.");
       })
       .catch((error) => {
-        if (isCurrent) setEvolutionMessage(error instanceof Error ? error.message : "Não foi possível carregar evoluções.");
+        if (!isCurrent) return;
+        const errorMessage = error instanceof Error ? error.message : "Não foi possível carregar evoluções.";
+        setEvolutionMessage(errorMessage);
+        setEvolutions([]);
+        setEvolutionsPatientId(null);
+        setEvolutionsTotal(0);
+        if (errorMessage.includes("Paciente não encontrado")) {
+          setSearch("");
+          selectPatient(null);
+        }
       })
       .finally(() => {
         if (isCurrent) setEvolutionsLoading(false);
@@ -239,7 +267,7 @@ export function ProntuarioPage() {
     return () => {
       isCurrent = false;
     };
-  }, [canReadEvolutions, evolutionsOffset, selectedPatientId, token]);
+  }, [canReadEvolutions, evolutionsOffset, prontuarioScopeKey, selectedPatientId, token]);
 
   const activeEvolution = useMemo(() => form.id ? visibleEvolutions.find((evolution) => evolution.id === form.id) ?? null : null, [form.id, visibleEvolutions]);
   const isLockedEvolution = Boolean(activeEvolution && activeEvolution.status !== "draft");
@@ -252,7 +280,7 @@ export function ProntuarioPage() {
   async function refreshSelectedPatientData(patientId = selectedPatientId) {
     if (!token || !patientId) return;
     const nextEvolutions = canReadEvolutions
-      ? await fetchMedicalEvolutions(token, patientId, { limit: evolutionsPageSize, offset: evolutionsOffset })
+      ? await fetchMedicalEvolutions(token, patientId, { limit: evolutionsPageSize, offset: evolutionsOffset, scopeKey: prontuarioScopeKey })
       : { items: [], total: 0, limit: evolutionsPageSize, offset: evolutionsOffset };
     setEvolutions(nextEvolutions.items);
     setEvolutionsPatientId(patientId);
@@ -400,7 +428,7 @@ export function ProntuarioPage() {
             {patients.map((patient) => (
               <button key={patient.id} onClick={() => { setSearch(patient.name); setPatients([]); selectPatient(patient); }} type="button">
                 <strong>{patient.name}</strong>
-                <span>{formatPatientDocuments(patient)}</span>
+                <span>{formatPatientDocuments(patient)} • {getClinicLabel(getPatientClinicId(patient), clinics)}</span>
               </button>
             ))}
             {patientListLoading ? <div className="empty-state">Carregando pacientes...</div> : null}
@@ -431,6 +459,7 @@ export function ProntuarioPage() {
             <table className="records-table prontuario-evolutions-table">
               <thead>
                 <tr>
+                  <th>Clínica</th>
                   <th>Data e hora</th>
                   <th>Status</th>
                   <th>Área</th>
@@ -443,10 +472,11 @@ export function ProntuarioPage() {
               <tbody>
                 {visibleEvolutions.length === 0 ? (
                   <tr>
-                    <td colSpan={7}>{recordsLoading ? "Carregando evoluções do paciente..." : "Nenhuma evolução registrada para este paciente."}</td>
+                    <td colSpan={8}>{recordsLoading ? "Carregando evoluções do paciente..." : "Nenhuma evolução registrada para este paciente."}</td>
                   </tr>
                 ) : visibleEvolutions.map((evolution) => (
                   <tr key={evolution.id}>
+                    <td>{getClinicLabel(evolution.clinicId ?? getPatientClinicId(selectedPatient), clinics)}</td>
                     <td>{formatDateTime(evolution.evolutionDate)}</td>
                     <td><span className={`table-status is-${evolution.status}`}>{statusLabel(evolution.status)}</span></td>
                     <td>{evolution.professionalArea ?? "-"}</td>

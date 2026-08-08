@@ -4,10 +4,10 @@ import { ChevronLeft, ChevronRight, Eye, Filter, Plus, RotateCcw, Trash2, X } fr
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/features/auth/AuthProvider";
-import { createAnamneseRecord, deleteAnamneseDraftRecord, fetchAnamneseRecords, fetchAnamneseTemplates, formatDateTime, getPatientName, requiredProgress } from "./storage";
+import { createAnamneseRecord, deleteAnamneseDraftRecord, fetchAnamneseRecords, fetchAnamneseTemplates, fetchPatients, formatDateTime, getPatientName, requiredProgress } from "./storage";
 import { anamneseTemplates as fallbackTemplates } from "./templates";
 import { filterAnamneseTemplatesByPermissions } from "./templatePermissions";
-import type { AnamneseRecord, FormTemplate } from "./types";
+import type { AnamneseRecord, FormTemplate, PatientSummary } from "./types";
 
 const DEFAULT_PAGE_SIZE = 40;
 const MAX_PAGE_SIZE = 100;
@@ -19,6 +19,7 @@ type RequiredFilter = "all" | "complete" | "pending";
 type ListFilters = {
   patient: string;
   code: string;
+  clinicId: string;
   status: StatusFilter;
   required: RequiredFilter;
   updatedFrom: string;
@@ -28,6 +29,7 @@ type ListFilters = {
 const emptyFilters: ListFilters = {
   patient: "",
   code: "",
+  clinicId: "",
   status: "all",
   required: "all",
   updatedFrom: "",
@@ -61,6 +63,7 @@ function readStoredAnamneseFilters() {
       filters: {
         patient: typeof parsedFilters.patient === "string" ? parsedFilters.patient : "",
         code: typeof parsedFilters.code === "string" ? parsedFilters.code : "",
+        clinicId: typeof parsedFilters.clinicId === "string" ? parsedFilters.clinicId : "",
         status: normalizeStatusFilter(parsedFilters.status),
         required: normalizeRequiredFilter(parsedFilters.required),
         updatedFrom: typeof parsedFilters.updatedFrom === "string" ? parsedFilters.updatedFrom : "",
@@ -78,17 +81,40 @@ function writeStoredAnamneseFilters(filters: ListFilters, pageSize: number) {
   window.localStorage.setItem(ANAMNESE_FILTERS_STORAGE_KEY, JSON.stringify({ ...filters, pageSize }));
 }
 
+function buildAnamneseDetailHref(recordId: string, clinicId: string) {
+  const params = new URLSearchParams();
+  if (clinicId) params.set("clinicId", clinicId);
+  const queryString = params.toString();
+  return `/anamnese/${recordId}${queryString ? `?${queryString}` : ""}`;
+}
+
+function getClinicLabel(clinicId: string | null | undefined, clinics: Array<{ id: string; name: string; code?: string | null }>) {
+  if (!clinicId) return "Não informada";
+  const clinic = clinics.find((item) => item.id === clinicId);
+  if (!clinic) return "Clínica fora do escopo";
+  return clinic.code ? `${clinic.name} (${clinic.code})` : clinic.name;
+}
+
 export function AnamneseListPage() {
   const router = useRouter();
-  const { hasPermission, token, user } = useAuth();
+  const { clinics, hasPermission, token, user } = useAuth();
   const canReadAnamnese = hasPermission("anamnese.read");
   const canCreateAnamnese = hasPermission("anamnese.create");
+  const canReadPatients = hasPermission("patients.read");
   const canDeleteDraftAnamnese = hasPermission("admin.full_access");
+  const canFilterByClinic = hasPermission("anamnese.clinic_filter") && clinics.length > 1;
   const [initialFilters] = useState(readStoredAnamneseFilters);
   const [records, setRecords] = useState<AnamneseRecord[]>([]);
   const [templates, setTemplates] = useState<FormTemplate[]>(fallbackTemplates);
   const [filters, setFilters] = useState<ListFilters>(initialFilters.filters);
   const [recordPendingDeletion, setRecordPendingDeletion] = useState<AnamneseRecord | null>(null);
+  const [isCreatePatientModalOpen, setIsCreatePatientModalOpen] = useState(false);
+  const [createPatientSearch, setCreatePatientSearch] = useState("");
+  const [debouncedCreatePatientSearch, setDebouncedCreatePatientSearch] = useState("");
+  const [createPatients, setCreatePatients] = useState<PatientSummary[]>([]);
+  const [selectedCreatePatientId, setSelectedCreatePatientId] = useState("");
+  const [isCreatePatientsLoading, setIsCreatePatientsLoading] = useState(false);
+  const [createPatientsError, setCreatePatientsError] = useState<string | null>(null);
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
   const [pageSize, setPageSize] = useState(initialFilters.pageSize);
   const [page, setPage] = useState(1);
@@ -96,10 +122,16 @@ export function AnamneseListPage() {
   const [isCreatingRecord, setIsCreatingRecord] = useState(false);
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [message, setMessage] = useState("Registros disponíveis para consulta");
+  const effectiveAnamneseClinicId = canFilterByClinic && clinics.some((clinic) => clinic.id === filters.clinicId) ? filters.clinicId : "";
 
   useEffect(() => {
     writeStoredAnamneseFilters(filters, pageSize);
   }, [filters, pageSize]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => setDebouncedCreatePatientSearch(createPatientSearch), 350);
+    return () => clearTimeout(timeout);
+  }, [createPatientSearch]);
 
   useEffect(() => {
     if (!token || !canReadAnamnese) return;
@@ -107,7 +139,7 @@ export function AnamneseListPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true);
 
-    Promise.all([fetchAnamneseRecords(token), fetchAnamneseTemplates(token)])
+    Promise.all([fetchAnamneseRecords(token, effectiveAnamneseClinicId), fetchAnamneseTemplates(token)])
       .then(([nextRecords, nextTemplates]) => {
         if (!isCurrent) return;
         setRecords(nextRecords);
@@ -125,10 +157,44 @@ export function AnamneseListPage() {
     return () => {
       isCurrent = false;
     };
-  }, [canReadAnamnese, token]);
+  }, [canReadAnamnese, effectiveAnamneseClinicId, token]);
+
+  useEffect(() => {
+    if (!token || !canReadPatients || !isCreatePatientModalOpen) return;
+    let isCurrent = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsCreatePatientsLoading(true);
+    setCreatePatientsError(null);
+
+    fetchPatients(token, debouncedCreatePatientSearch, effectiveAnamneseClinicId || undefined)
+      .then((nextPatients) => {
+        if (!isCurrent) return;
+        setCreatePatients(nextPatients);
+        setSelectedCreatePatientId((currentId) => currentId && nextPatients.some((patient) => patient.id === currentId) ? currentId : nextPatients[0]?.id ?? "");
+      })
+      .catch((error) => {
+        if (!isCurrent) return;
+        setCreatePatients([]);
+        setSelectedCreatePatientId("");
+        const nextError = error instanceof Error ? error.message : "Não foi possível carregar os pacientes.";
+        setCreatePatientsError(nextError);
+        setMessage(nextError);
+      })
+      .finally(() => {
+        if (isCurrent) setIsCreatePatientsLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [canReadPatients, debouncedCreatePatientSearch, effectiveAnamneseClinicId, isCreatePatientModalOpen, token]);
 
   const userPermissions = useMemo(() => user?.permissions ?? [], [user?.permissions]);
   const visibleTemplates = useMemo(() => filterAnamneseTemplatesByPermissions(templates, userPermissions), [templates, userPermissions]);
+  const selectedCreatePatient = useMemo(
+    () => createPatients.find((patient) => patient.id === selectedCreatePatientId) ?? null,
+    [createPatients, selectedCreatePatientId]
+  );
 
   const filteredRecords = useMemo(() => {
     return records.filter((record) => {
@@ -148,21 +214,41 @@ export function AnamneseListPage() {
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageRecords = filteredRecords.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const activeFilterCount = Object.entries(filters).filter(([key, value]) => key === "status" || key === "required" ? value !== "all" : Boolean(value)).length + (pageSize !== DEFAULT_PAGE_SIZE ? 1 : 0);
+  const activeFilterCount = Object.entries(filters).filter(([key, value]) => {
+    if (key === "clinicId") return canFilterByClinic && Boolean(value);
+    return key === "status" || key === "required" ? value !== "all" : Boolean(value);
+  }).length + (pageSize !== DEFAULT_PAGE_SIZE ? 1 : 0);
 
-  async function createRecord() {
-    if (!token || !canCreateAnamnese || isCreatingRecord) return;
+  async function createRecord(patient: PatientSummary) {
+    if (!token || isCreatingRecord || !canCreateAnamnese) return;
     setIsCreatingRecord(true);
     setMessage("Criando rascunho no banco...");
     try {
-      const record = await createAnamneseRecord(token, { patientName: "Paciente sem nome" });
+      const record = await createAnamneseRecord(token, { patientId: patient.id, patientName: patient.name });
       setRecords((currentRecords) => [record, ...currentRecords]);
-      router.push(`/anamnese/${record.id}`);
+      setIsCreatePatientModalOpen(false);
+      setSelectedCreatePatientId("");
+      setCreatePatientSearch("");
+      router.push(buildAnamneseDetailHref(record.id, record.clinicId || ""));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível criar o rascunho.");
     } finally {
       setIsCreatingRecord(false);
     }
+  }
+
+  function handleCreateButtonClick() {
+    if (!canCreateAnamnese) return;
+    if (!canReadPatients) {
+      setMessage("Seu perfil precisa da permissão de visualizar pacientes para criar a anamnese a partir do paciente.");
+      return;
+    }
+    setCreatePatientSearch("");
+    setDebouncedCreatePatientSearch("");
+    setCreatePatients([]);
+    setCreatePatientsError(null);
+    setSelectedCreatePatientId("");
+    setIsCreatePatientModalOpen(true);
   }
 
   async function confirmDeleteDraft() {
@@ -216,7 +302,7 @@ export function AnamneseListPage() {
         </div>
         {canCreateAnamnese ? (
           <div className="list-actions">
-            <button className="primary-button" disabled={isCreatingRecord} onClick={createRecord} type="button">
+            <button className="primary-button" disabled={isCreatingRecord} onClick={handleCreateButtonClick} type="button">
               <Plus size={17} />
               {isCreatingRecord ? "Criando..." : "Nova anamnese"}
             </button>
@@ -261,6 +347,15 @@ export function AnamneseListPage() {
                 <span>Código</span>
                 <input onChange={(event) => updateFilter("code", event.target.value)} placeholder="Ex.: ANA-2026" value={filters.code} />
               </label>
+              {canFilterByClinic ? (
+                <label>
+                  <span>Clínica</span>
+                  <select onChange={(event) => updateFilter("clinicId", event.target.value)} value={filters.clinicId}>
+                    <option value="">Todas as clínicas permitidas</option>
+                    {clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}
+                  </select>
+                </label>
+              ) : null}
               <label>
                 <span>Status</span>
                 <select onChange={(event) => updateFilter("status", event.target.value as StatusFilter)} value={filters.status}>
@@ -310,11 +405,48 @@ export function AnamneseListPage() {
         </div>
       ) : null}
 
+      {isCreatePatientModalOpen ? (
+        <div className="confirmation-modal-layer" role="presentation">
+          <button aria-label="Cancelar criação de anamnese" className="confirmation-modal-backdrop" onClick={() => setIsCreatePatientModalOpen(false)} type="button" />
+          <section aria-labelledby="create-anamnesis-patient-title" aria-modal="true" className="confirmation-modal-panel" role="dialog">
+            <div className="confirmation-modal-heading">
+              <span className="confirmation-modal-icon is-primary"><Plus aria-hidden="true" size={20} /></span>
+              <div>
+                <span className="eyebrow">Anamnese</span>
+                <h3 id="create-anamnesis-patient-title">Selecionar paciente</h3>
+              </div>
+            </div>
+            <p>Escolha o paciente. A clínica da anamnese será definida automaticamente pela clínica atual dele.</p>
+            {effectiveAnamneseClinicId ? <p>Busca limitada à clínica filtrada na listagem.</p> : null}
+            <label>
+              <span>Buscar paciente</span>
+              <input onChange={(event) => setCreatePatientSearch(event.target.value)} placeholder="Nome, CPF, RG ou documento" value={createPatientSearch} />
+            </label>
+            <div className="create-anamnesis-patient-list">
+              {isCreatePatientsLoading ? <span>Carregando pacientes...</span> : null}
+              {!isCreatePatientsLoading && createPatientsError ? <span>{createPatientsError}</span> : null}
+              {!isCreatePatientsLoading && !createPatientsError && createPatients.length > 0 ? createPatients.map((patient) => (
+                <label className="choice-pill create-anamnesis-patient-option" key={patient.id}>
+                  <input checked={selectedCreatePatientId === patient.id} name="create-anamnesis-patient" onChange={() => setSelectedCreatePatientId(patient.id)} type="radio" value={patient.id} />
+                  <span>{patient.name}</span>
+                </label>
+              )) : null}
+              {!isCreatePatientsLoading && !createPatientsError && createPatients.length === 0 ? <span>Nenhum paciente ativo encontrado.</span> : null}
+            </div>
+            <div className="confirmation-modal-actions">
+              <button className="secondary-button" disabled={isCreatingRecord} onClick={() => setIsCreatePatientModalOpen(false)} type="button">Cancelar</button>
+              <button className="primary-button" disabled={isCreatingRecord || !selectedCreatePatient || isCreatePatientsLoading} onClick={() => { if (selectedCreatePatient) void createRecord(selectedCreatePatient); }} type="button">{isCreatingRecord ? "Criando..." : "Criar anamnese"}</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       <div className="records-table-shell">
         <table className="records-table">
           <thead>
             <tr>
               <th>Paciente</th>
+              <th>Clínica</th>
               <th>Código</th>
               <th>Status</th>
               <th>Obrigatórios</th>
@@ -325,7 +457,7 @@ export function AnamneseListPage() {
           <tbody>
             {pageRecords.length === 0 ? (
               <tr>
-                <td colSpan={6}>Nenhum registro encontrado.</td>
+                <td colSpan={7}>Nenhum registro encontrado.</td>
               </tr>
             ) : (
               pageRecords.map((record) => {
@@ -335,6 +467,7 @@ export function AnamneseListPage() {
                     <td>
                       <strong>{getPatientName(record)}</strong>
                     </td>
+                    <td>{getClinicLabel(record.clinicId, clinics)}</td>
                     <td>{record.code}</td>
                     <td>
                       <span className={`table-status ${record.status === "finalized" ? "is-finalized" : ""}`}>
@@ -345,7 +478,7 @@ export function AnamneseListPage() {
                     <td>{formatDateTime(record.updatedAt)}</td>
                     <td>
                       <div className="records-table-actions">
-                        <button className="table-action" onClick={() => router.push(`/anamnese/${record.id}`)} type="button">
+                        <button className="table-action" onClick={() => router.push(buildAnamneseDetailHref(record.id, effectiveAnamneseClinicId || record.clinicId || ""))} type="button">
                           <Eye size={16} />
                           Abrir
                         </button>

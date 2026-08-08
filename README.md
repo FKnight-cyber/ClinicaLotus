@@ -187,7 +187,8 @@ npm run start:prod --workspace @clinica/api
 Esse start command faz, ao subir:
 
 - geração do Prisma Client;
-- sincronização do schema atual no banco;
+- aplicação das migrations versionadas no banco;
+- baseline automática do banco caso o ambiente já exista e ainda tenha sido criado no fluxo antigo sem `_prisma_migrations`;
 - seed de permissões, grupos, usuário admin e templates oficiais;
 - início da API compilada.
 
@@ -201,7 +202,7 @@ Deve retornar o healthcheck da API.
 
 #### Nota sobre migrations
 
-O MVP atual usa `prisma db push` para sincronizar schema. Para produção madura, o próximo passo recomendado é versionar migrations Prisma e trocar o start/deploy para `prisma migrate deploy`.
+O deploy da API agora usa migrations Prisma versionadas. Em bancos novos, o `start:prod` aplica a migration inicial e a migration de bootstrap da clínica padrão automaticamente. Em bancos já existentes que foram criados no fluxo antigo com `prisma db push`, o script de deploy marca a migration inicial como aplicada e depois executa apenas as migrations pendentes.
 
 ### 2. Frontend no CloudPages/Cloudflare Pages
 

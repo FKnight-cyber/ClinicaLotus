@@ -28,6 +28,7 @@ export type MedicalEvolutionUser = {
 export type MedicalEvolution = {
   id: string;
   patientId: string;
+  clinicId?: string | null;
   status: MedicalEvolutionStatus;
   evolutionDate: string;
   text: string;
@@ -54,6 +55,7 @@ export type MedicalEvolutionPayload = {
   evolutionDate?: string;
   professionalArea: ProfessionalArea | "";
   professionalName?: string;
+  clinicId?: string;
 };
 
 export type ClinicalDocumentSummary = {

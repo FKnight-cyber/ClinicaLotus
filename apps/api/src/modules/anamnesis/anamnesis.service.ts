@@ -3,6 +3,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import type { AnamnesisRecord, AnamnesisStatus, QuestionType } from "@prisma/client";
 import { AppCacheService } from "../../shared/cache/app-cache.service";
 import { PrismaService } from "../../shared/prisma/prisma.service";
+import type { AuthenticatedUser } from "../auth/auth.types";
 import { CreateAnamnesisDto } from "./dto/create-anamnesis.dto";
 import { UpdateAnamnesisDto } from "./dto/update-anamnesis.dto";
 
@@ -125,12 +126,15 @@ export class AnamnesisService {
     }));
   }
 
-  async list() {
-    return this.cache.getOrSet("anamnesis:records:list", 5 * 1000, () => this.loadRecords());
+  async list(user: AuthenticatedUser, requestedClinicId?: string) {
+    const clinicIds = this.resolveScopedClinicIds(user, requestedClinicId);
+    const clinicScopeKey = this.buildClinicScopeKey(clinicIds);
+    return this.cache.getOrSet(`anamnesis:records:list:${clinicScopeKey}`, 5 * 1000, () => this.loadRecords(clinicIds));
   }
 
-  private async loadRecords() {
+  private async loadRecords(clinicIds: string[]) {
     const records = await this.prisma.anamnesisRecord.findMany({
+      where: { clinicId: { in: clinicIds } },
       orderBy: { updatedAt: "desc" },
       include: {
         answers: {
@@ -152,14 +156,29 @@ export class AnamnesisService {
     return records.map((record) => this.toRecordResponse(record));
   }
 
-  async getById(id: string) {
-    return this.cache.getOrSet(`anamnesis:record:${id}`, 5 * 1000, async () => {
-      const record = await this.findRecord(id);
+  async getById(user: AuthenticatedUser, id: string, requestedClinicId?: string) {
+    return this.getByIdInClinics(id, this.resolveScopedClinicIds(user, requestedClinicId));
+  }
+
+  private async getByIdInClinic(id: string, clinicId: string) {
+    return this.cache.getOrSet(`anamnesis:record:${clinicId}:${id}`, 5 * 1000, async () => {
+      const record = await this.findRecord(id, clinicId);
       return this.toRecordResponse(record);
     });
   }
 
-  async create(userId: string, dto: CreateAnamnesisDto) {
+  private async getByIdInClinics(id: string, clinicIds: string[]) {
+    const clinicScopeKey = this.buildClinicScopeKey(clinicIds);
+    return this.cache.getOrSet(`anamnesis:record:${clinicScopeKey}:${id}`, 5 * 1000, async () => {
+      const record = await this.findRecordInClinics(id, clinicIds);
+      return this.toRecordResponse(record);
+    });
+  }
+
+  async create(user: AuthenticatedUser, dto: CreateAnamnesisDto) {
+    const clinicId = dto.patientId
+      ? await this.resolvePatientClinicIdForRecord(user, dto.patientId)
+      : this.resolveWriteClinicId(user, dto.clinicId);
     const maxCreateAttempts = 5;
     let record: AnamnesisRecord | null = null;
 
@@ -170,11 +189,12 @@ export class AnamnesisService {
             code: await this.nextCode(),
             patientName: dto.patientName,
             patientId: dto.patientId || null,
+            clinicId,
             customFieldsJson: dto.customFields ? JSON.stringify(dto.customFields) : null,
             templateConfigJson: dto.templateConfig ? JSON.stringify(dto.templateConfig) : null,
             status: "DRAFT",
-            createdById: userId,
-            updatedById: userId
+            createdById: user.id,
+            updatedById: user.id
           }
         });
         break;
@@ -191,13 +211,18 @@ export class AnamnesisService {
       await this.replaceAnswers(record.id, dto.answers);
     }
 
-    this.invalidateRecordCaches(record.id);
-    const createdRecord = await this.getById(record.id);
+    this.invalidateRecordCaches(record.id, clinicId);
+    const createdRecord = await this.getByIdInClinic(record.id, clinicId);
+    await this.writeAuditLog(user.id, clinicId, "create_anamnesis", record.id, null, createdRecord);
     return createdRecord;
   }
 
-  async update(userId: string, id: string, dto: UpdateAnamnesisDto) {
-    const existingRecord = await this.findRecord(id);
+  async update(user: AuthenticatedUser, id: string, dto: UpdateAnamnesisDto, requestedClinicId?: string) {
+    const existingRecord = await this.findRecordInClinics(id, this.resolveScopedClinicIds(user, requestedClinicId));
+    const clinicId = this.requireRecordClinicId(existingRecord);
+    const nextClinicId = dto.patientId
+      ? await this.resolvePatientClinicIdForRecord(user, dto.patientId)
+      : clinicId;
 
     if (existingRecord.status === "FINALIZED") {
       throw new BadRequestException("Anamnese finalizada não pode ser editada.");
@@ -213,9 +238,10 @@ export class AnamnesisService {
       data: {
         patientName: dto.patientName ?? existingRecord.patientName,
         patientId: dto.patientId === undefined ? existingRecord.patientId : dto.patientId || null,
+        clinicId: nextClinicId,
         customFieldsJson: dto.customFields === undefined ? existingRecord.customFieldsJson : JSON.stringify(dto.customFields),
         templateConfigJson: dto.templateConfig === undefined ? existingRecord.templateConfigJson : JSON.stringify(dto.templateConfig),
-        updatedById: userId
+        updatedById: user.id
       }
     });
 
@@ -223,16 +249,18 @@ export class AnamnesisService {
       await this.replaceAnswers(id, dto.answers);
     }
 
-    this.invalidateRecordCaches(id);
-    const updatedRecord = await this.getById(id);
+    this.invalidateRecordCaches(id, clinicId);
+    if (nextClinicId !== clinicId) this.invalidateRecordCaches(id, nextClinicId);
+    const updatedRecord = await this.getByIdInClinic(id, nextClinicId);
     if (createdTemplates.length > 0) {
-      await this.writeAuditLog(userId, "create_anamnesis_template", id, beforeData, { record: updatedRecord, createdTemplates });
+      await this.writeAuditLog(user.id, nextClinicId, "create_anamnesis_template", id, beforeData, { record: updatedRecord, createdTemplates });
     }
     return updatedRecord;
   }
 
-  async deleteDraft(userId: string, id: string) {
-    const record = await this.findRecord(id);
+  async deleteDraft(user: AuthenticatedUser, id: string, requestedClinicId?: string) {
+    const record = await this.findRecordInClinics(id, this.resolveScopedClinicIds(user, requestedClinicId));
+    const clinicId = this.requireRecordClinicId(record);
 
     if (record.status !== "DRAFT") {
       throw new BadRequestException("Apenas rascunhos de anamnese podem ser excluídos.");
@@ -240,24 +268,25 @@ export class AnamnesisService {
 
     const beforeData = this.toRecordResponse(record);
     await this.prisma.anamnesisRecord.delete({ where: { id } });
-    this.invalidateRecordCaches(id);
+    this.invalidateRecordCaches(id, clinicId);
     if (beforeData.patientId) {
-      this.cache.deleteByPrefix(`patients:detail:${beforeData.patientId}:`);
-      this.cache.deleteByPrefix(`patients:medical-record:${beforeData.patientId}:`);
+      this.cache.deleteByPrefix(`patients:detail:${clinicId}:${beforeData.patientId}:`);
+      this.cache.deleteByPrefix(`patients:medical-record:${clinicId}:${beforeData.patientId}:`);
     }
-    await this.writeAuditLog(userId, "delete_draft_anamnesis", id, beforeData, null);
+    await this.writeAuditLog(user.id, clinicId, "delete_draft_anamnesis", id, beforeData, null);
     return { id };
   }
 
-  async finalize(userId: string, id: string, userPermissions: string[] = []) {
-    const record = await this.findRecord(id);
+  async finalize(user: AuthenticatedUser, id: string, requestedClinicId?: string) {
+    const record = await this.findRecordInClinics(id, this.resolveScopedClinicIds(user, requestedClinicId));
+    const clinicId = this.requireRecordClinicId(record);
 
     if (record.status === "FINALIZED") {
       return this.toRecordResponse(record);
     }
 
     const answers = this.answersFromRecord(record);
-    const incompleteTemplates = await this.getIncompleteTemplates(this.templateStatusesFromRecord(record), record.templateConfigJson, userPermissions);
+    const incompleteTemplates = await this.getIncompleteTemplates(this.templateStatusesFromRecord(record), record.templateConfigJson, user.permissions);
 
     if (incompleteTemplates.length > 0) {
       throw new BadRequestException({
@@ -266,7 +295,7 @@ export class AnamnesisService {
       });
     }
 
-    const missingRequiredFields = await this.getMissingRequiredFields(answers, undefined, userPermissions);
+    const missingRequiredFields = await this.getMissingRequiredFields(answers, undefined, user.permissions);
 
     if (missingRequiredFields.length > 0) {
       throw new BadRequestException({
@@ -282,32 +311,33 @@ export class AnamnesisService {
       data: {
         status: "FINALIZED",
         finalizedAt: new Date(),
-        updatedById: userId
+        updatedById: user.id
       }
     });
 
-    this.invalidateRecordCaches(id);
-    const finalizedRecord = await this.getById(id);
-    await this.createMedicalRecordEntry(userId, finalizedRecord);
+    this.invalidateRecordCaches(id, clinicId);
+    const finalizedRecord = await this.getByIdInClinic(id, clinicId);
+    await this.createMedicalRecordEntry(user.id, finalizedRecord);
     if (finalizedRecord.patientId) {
-      this.cache.deleteByPrefix(`patients:detail:${finalizedRecord.patientId}:`);
-      this.cache.deleteByPrefix(`patients:medical-record:${finalizedRecord.patientId}:`);
+      this.cache.deleteByPrefix(`patients:detail:${clinicId}:${finalizedRecord.patientId}:`);
+      this.cache.deleteByPrefix(`patients:medical-record:${clinicId}:${finalizedRecord.patientId}:`);
     }
-    await this.writeAuditLog(userId, "finalize_anamnesis", id, beforeData, finalizedRecord);
+    await this.writeAuditLog(user.id, clinicId, "finalize_anamnesis", id, beforeData, finalizedRecord);
     return finalizedRecord;
   }
 
-  async completeTemplate(userId: string, id: string, templateId: string, userPermissions: string[] = []) {
-    const record = await this.findRecord(id);
+  async completeTemplate(user: AuthenticatedUser, id: string, templateId: string, requestedClinicId?: string) {
+    const record = await this.findRecordInClinics(id, this.resolveScopedClinicIds(user, requestedClinicId));
+    const clinicId = this.requireRecordClinicId(record);
 
     if (record.status === "FINALIZED") {
       throw new BadRequestException("Anamnese finalizada não pode ser editada.");
     }
 
     await this.ensureRecordTemplateExists(record, templateId);
-    this.ensureTemplateAccess(templateId, userPermissions);
+    this.ensureTemplateAccess(templateId, user.permissions);
     const answers = this.answersFromRecord(record);
-    const missingRequiredFields = await this.getMissingRequiredFields(answers, templateId, userPermissions);
+    const missingRequiredFields = await this.getMissingRequiredFields(answers, templateId, user.permissions);
 
     if (missingRequiredFields.length > 0) {
       throw new BadRequestException({
@@ -322,7 +352,7 @@ export class AnamnesisService {
       [templateId]: {
         status: "completed",
         completedAt: new Date().toISOString(),
-        completedById: userId
+        completedById: user.id
       }
     };
 
@@ -330,23 +360,25 @@ export class AnamnesisService {
       where: { id },
       data: {
         templateStatusesJson: JSON.stringify(templateStatuses),
-        updatedById: userId
+        updatedById: user.id
       }
     });
 
-    this.invalidateRecordCaches(id);
-    const completedRecord = await this.getById(id);
-    await this.writeAuditLog(userId, "complete_anamnesis_template", id, beforeData, completedRecord);
+    this.invalidateRecordCaches(id, clinicId);
+    const completedRecord = await this.getByIdInClinic(id, clinicId);
+    await this.writeAuditLog(user.id, clinicId, "complete_anamnesis_template", id, beforeData, completedRecord);
     return completedRecord;
   }
 
-  private invalidateRecordCaches(recordId: string) {
-    this.cache.delete("anamnesis:records:list");
+  private invalidateRecordCaches(recordId: string, clinicId?: string | null) {
+    this.cache.deleteByPrefix("anamnesis:records:list");
     this.cache.delete(`anamnesis:record:${recordId}`);
+    if (clinicId) this.cache.delete(`anamnesis:record:${clinicId}:${recordId}`);
   }
 
-  async emitPdfDocument(userId: string, id: string) {
-    const record = await this.findRecord(id);
+  async emitPdfDocument(user: AuthenticatedUser, id: string, requestedClinicId?: string) {
+    const record = await this.findRecordInClinics(id, this.resolveScopedClinicIds(user, requestedClinicId));
+    const clinicId = this.requireRecordClinicId(record);
 
     if (record.status !== "FINALIZED") {
       throw new BadRequestException("Apenas anamneses finalizadas podem gerar documento rastreável.");
@@ -362,12 +394,13 @@ export class AnamnesisService {
         contentHash,
         metadataJson: JSON.stringify({ recordCode: record.code, emittedFrom: "web-pdf-export" }),
         patientId: record.patientId,
+        clinicId,
         anamnesisRecordId: record.id,
-        emittedById: userId
+        emittedById: user.id
       }
     });
 
-    await this.writeAuditLog(userId, "emit_anamnesis_pdf", id, null, document);
+    await this.writeAuditLog(user.id, clinicId, "emit_anamnesis_pdf", id, null, document);
 
     return {
       id: document.id,
@@ -381,10 +414,11 @@ export class AnamnesisService {
     };
   }
 
-  async emitTemplatePdfDocument(userId: string, id: string, templateId: string, userPermissions: string[] = []) {
-    const record = await this.findRecord(id);
+  async emitTemplatePdfDocument(user: AuthenticatedUser, id: string, templateId: string, requestedClinicId?: string) {
+    const record = await this.findRecordInClinics(id, this.resolveScopedClinicIds(user, requestedClinicId));
+    const clinicId = this.requireRecordClinicId(record);
     const template = await this.ensureRecordTemplateExists(record, templateId);
-    this.ensureTemplateAccess(templateId, userPermissions);
+    this.ensureTemplateAccess(templateId, user.permissions);
     const templateStatus = this.templateStatusesFromRecord(record)[templateId];
 
     if (templateStatus?.status !== "completed") {
@@ -401,12 +435,13 @@ export class AnamnesisService {
         contentHash,
         metadataJson: JSON.stringify({ recordCode: record.code, templateId, templateTitle: template.title, scope: "template", emittedFrom: "web-pdf-export" }),
         patientId: record.patientId,
+        clinicId,
         anamnesisRecordId: record.id,
-        emittedById: userId
+        emittedById: user.id
       }
     });
 
-    await this.writeAuditLog(userId, "emit_anamnesis_template_pdf", id, null, document);
+    await this.writeAuditLog(user.id, clinicId, "emit_anamnesis_template_pdf", id, null, document);
 
     return {
       id: document.id,
@@ -420,9 +455,9 @@ export class AnamnesisService {
     };
   }
 
-  private async findRecord(id: string) {
-    const record = await this.prisma.anamnesisRecord.findUnique({
-      where: { id },
+  private async findRecord(id: string, clinicId: string) {
+    const record = await this.prisma.anamnesisRecord.findFirst({
+      where: { id, clinicId },
       include: {
         answers: {
           include: {
@@ -445,6 +480,38 @@ export class AnamnesisService {
     }
 
     return record;
+  }
+
+  private async findRecordInClinics(id: string, clinicIds: string[]) {
+    const record = await this.prisma.anamnesisRecord.findFirst({
+      where: { id, clinicId: { in: clinicIds } },
+      include: {
+        answers: {
+          include: {
+            question: {
+              include: {
+                section: {
+                  include: {
+                    template: true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!record) {
+      throw new NotFoundException("Anamnese não encontrada.");
+    }
+
+    return record;
+  }
+
+  private requireRecordClinicId(record: { clinicId: string | null }) {
+    if (!record.clinicId) throw new BadRequestException("Registro sem clínica vinculada.");
+    return record.clinicId;
   }
 
   private async replaceAnswers(recordId: string, answers: AnamnesisAnswers) {
@@ -668,6 +735,7 @@ export class AnamnesisService {
     status: AnamnesisStatus;
     patientName: string;
     patientId: string | null;
+    clinicId: string | null;
     customFieldsJson?: string | null;
     customAnswersJson?: string | null;
     templateConfigJson?: string | null;
@@ -682,6 +750,7 @@ export class AnamnesisService {
       status: this.toApiStatus(record.status),
       patientName: record.patientName,
       patientId: record.patientId,
+      clinicId: record.clinicId,
       finalizedAt: record.finalizedAt?.toISOString(),
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString()
@@ -723,10 +792,10 @@ export class AnamnesisService {
   }
 
   private async createMedicalRecordEntry(userId: string, record: ReturnType<AnamnesisService["toRecordResponse"]>) {
-    if (!record.patientId) return;
+    if (!record.patientId || !record.clinicId) return;
 
     const existingEntry = await this.prisma.medicalRecordEntry.findFirst({
-      where: { anamnesisRecordId: record.id, type: "ANAMNESIS_FINALIZED" }
+      where: { anamnesisRecordId: record.id, clinicId: record.clinicId, type: "ANAMNESIS_FINALIZED" }
     });
 
     if (existingEntry) return;
@@ -734,6 +803,7 @@ export class AnamnesisService {
     await this.prisma.medicalRecordEntry.create({
       data: {
         patientId: record.patientId,
+        clinicId: record.clinicId,
         anamnesisRecordId: record.id,
         type: "ANAMNESIS_FINALIZED",
         title: `Anamnese finalizada ${record.code}`,
@@ -744,6 +814,7 @@ export class AnamnesisService {
   }
 
   private getAuditReason(action: string, afterData: unknown) {
+    if (action === "create_anamnesis") return "Anamnese criada";
     if (action === "create_anamnesis_template") {
       const payload = afterData as { createdTemplates?: Array<{ title?: string; shortTitle?: string }> };
       const templateNames = payload.createdTemplates?.map((template) => template.title ?? template.shortTitle).filter(Boolean).join(", ");
@@ -758,7 +829,18 @@ export class AnamnesisService {
     return "Evento de anamnese registrado";
   }
 
-  private async writeAuditLog(userId: string, action: string, entityId: string, beforeData: unknown, afterData: unknown) {
+  private async resolvePatientClinicIdForRecord(user: AuthenticatedUser, patientId: string) {
+    const patient = await this.prisma.patient.findFirst({
+      where: { id: patientId, status: "ACTIVE" },
+      select: { clinicId: true }
+    });
+
+    if (!patient) throw new NotFoundException("Paciente não encontrado.");
+    if (!user.availableClinicIds.includes(patient.clinicId)) throw new BadRequestException("Paciente vinculado a uma clínica fora do escopo do usuário.");
+    return patient.clinicId;
+  }
+
+  private async writeAuditLog(userId: string, clinicId: string, action: string, entityId: string, beforeData: unknown, afterData: unknown) {
     await this.prisma.auditLog.create({
       data: {
         entity: "anamnesis_record",
@@ -767,9 +849,53 @@ export class AnamnesisService {
         beforeData: beforeData ? JSON.stringify(beforeData) : null,
         afterData: afterData ? JSON.stringify(afterData) : null,
         reason: this.getAuditReason(action, afterData),
-        userId
+        userId,
+        clinicId
       }
     });
     this.cache.deleteByPrefix("access:audit-logs:");
+  }
+
+  private async ensurePatientInClinic(patientId: string, clinicId: string) {
+    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, clinicId, status: "ACTIVE" }, select: { id: true } });
+    if (!patient) throw new NotFoundException("Paciente não encontrado.");
+  }
+
+  private resolveScopedClinicId(user: AuthenticatedUser, requestedClinicId?: string) {
+    const normalizedClinicId = requestedClinicId?.trim();
+    if (!normalizedClinicId) return this.resolveDefaultClinicId(user);
+    if (!this.hasPermission(user.permissions, "anamnese.clinic_filter")) throw new BadRequestException("Usuário sem permissão para filtrar anamneses por clínica.");
+    if (!user.availableClinicIds.includes(normalizedClinicId)) throw new BadRequestException("Clínica fora do escopo do usuário.");
+    return normalizedClinicId;
+  }
+
+  private resolveScopedClinicIds(user: AuthenticatedUser, requestedClinicId?: string) {
+    const normalizedClinicId = requestedClinicId?.trim();
+    if (normalizedClinicId) return [this.resolveScopedClinicId(user, normalizedClinicId)];
+    if (user.availableClinicIds.length === 0) throw new BadRequestException("Usuário sem clínica disponível.");
+    return user.availableClinicIds;
+  }
+
+  private resolveDefaultClinicId(user: AuthenticatedUser) {
+    if (user.availableClinicIds.length === 1) return user.availableClinicIds[0];
+    throw new BadRequestException("Selecione uma clínica para continuar.");
+  }
+
+  private resolveWriteClinicId(user: AuthenticatedUser, requestedClinicId?: string) {
+    const normalizedClinicId = requestedClinicId?.trim();
+    if (normalizedClinicId) {
+      if (!user.availableClinicIds.includes(normalizedClinicId)) throw new BadRequestException("Clínica fora do escopo do usuário.");
+      return normalizedClinicId;
+    }
+    if (user.availableClinicIds.length === 1) return user.availableClinicIds[0];
+    throw new BadRequestException("Informe a clínica do cadastro.");
+  }
+
+  private buildClinicScopeKey(clinicIds: string[]) {
+    return [...clinicIds].sort().join(",");
+  }
+
+  private hasPermission(userPermissions: string[], permission: string) {
+    return userPermissions.includes("admin.full_access") || userPermissions.includes(permission);
   }
 }

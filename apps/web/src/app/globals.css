@@ -376,6 +376,28 @@ button:disabled {
   gap: 6px;
 }
 
+.sidebar-footer {
+  margin-top: auto;
+}
+
+.sidebar-action {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: #d9ebe5;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  padding: 11px 12px;
+  width: 100%;
+}
+
+.sidebar-action:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
 .module-nav-group {
   display: grid;
   gap: 4px;
@@ -510,6 +532,46 @@ a.operator-chip {
   align-items: center;
   display: flex;
   gap: 8px;
+}
+
+.clinic-context,
+.clinic-switcher {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--primary-strong);
+  display: inline-flex;
+  gap: 8px;
+  min-height: 40px;
+  max-width: 280px;
+  padding: 0 10px;
+}
+
+.clinic-context span {
+  color: var(--text);
+  font-size: 0.88rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clinic-switcher select {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.88rem;
+  min-width: 150px;
+  outline: none;
+  width: 100%;
+}
+
+.clinic-switcher:has(select:focus-visible) {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(15, 107, 90, 0.14);
 }
 
 .icon-button {
@@ -2003,6 +2065,16 @@ td input {
   font-weight: 700;
 }
 
+.profile-readonly-field {
+  display: grid;
+  gap: 7px;
+}
+
+.profile-readonly-field > span {
+  color: var(--text);
+  font-weight: 700;
+}
+
 .panel-hint {
   color: var(--muted);
   margin: 0;
@@ -2019,11 +2091,13 @@ td input {
   padding: 12px 22px;
 }
 
+.group-access-editor,
 .permission-picker {
   display: grid;
   gap: 10px;
 }
 
+.clinic-scope-picker,
 .permission-picker fieldset {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -2031,6 +2105,7 @@ td input {
   padding: 10px;
 }
 
+.clinic-scope-picker legend,
 .permission-picker legend {
   color: var(--accent);
   font-size: 0.78rem;
@@ -2038,10 +2113,62 @@ td input {
   text-transform: uppercase;
 }
 
+.clinic-scope-picker p {
+  color: var(--muted);
+  font-size: 0.88rem;
+  margin: 0 0 10px;
+}
+
 .access-checklist {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.compact-checklist {
+  gap: 6px;
+}
+
+.compact-checklist .choice-pill {
+  font-size: 0.82rem;
+  max-width: 100%;
+  padding: 6px 9px;
+}
+
+.create-anamnesis-patient-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.create-anamnesis-patient-option {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.patient-clinic-pill {
+  align-items: flex-start;
+  border-radius: 18px;
+  flex-direction: column;
+}
+
+.patient-clinic-pill.is-current-context {
+  background: color-mix(in srgb, var(--primary-soft) 60%, #ffffff 40%);
+  border-color: var(--primary);
+}
+
+.patient-clinic-pill-header {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.patient-clinic-pill-meta {
+  color: var(--muted);
+  line-height: 1.35;
 }
 
 .access-list {
@@ -2323,6 +2450,19 @@ td input {
   margin-top: 0;
   max-width: none;
   white-space: nowrap;
+}
+
+.user-clinic-scope {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.user-clinic-scope > strong {
+  color: var(--accent);
+  font-size: 0.78rem;
+  text-transform: uppercase;
 }
 
 .user-status-badge.is-active {
@@ -2739,6 +2879,10 @@ td input {
   min-width: 1040px;
 }
 
+.clinics-table {
+  min-width: 960px;
+}
+
 .records-table th,
 .records-table td {
   padding: 13px 12px;
@@ -2803,7 +2947,15 @@ td input {
   min-width: 360px;
 }
 
+.clinics-table-actions {
+  min-width: 220px;
+}
+
 .patients-inline-loading {
+  margin: 14px 22px 0;
+}
+
+.clinics-inline-loading {
   margin: 14px 22px 0;
 }
 
@@ -2812,10 +2964,20 @@ td input {
   width: min(720px, 100%);
 }
 
+.clinic-modal-panel {
+  max-width: 640px;
+  width: min(640px, 100%);
+}
+
 .patient-form-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.clinic-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.clinic-form-full,
 .patient-form-full {
   grid-column: 1 / -1;
 }

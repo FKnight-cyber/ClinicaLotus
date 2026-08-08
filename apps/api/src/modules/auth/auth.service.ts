@@ -24,12 +24,18 @@ export class AuthService {
           include: {
             accessGroup: {
               include: {
-                permissions: { include: { permission: true } }
+                permissions: { include: { permission: true } },
+                clinics: { include: { clinic: true } }
               }
             }
           }
         },
-        passwordChangeRequests: { where: { status: "PENDING" }, select: { id: true }, take: 1 }
+        passwordChangeRequests: { where: { status: "PENDING" }, select: { id: true }, take: 1 },
+        clinics: {
+          where: { status: "ACTIVE", clinic: { status: "ACTIVE" } },
+          include: { clinic: true },
+          orderBy: [{ isDefault: "desc" }, { assignedAt: "asc" }]
+        }
       }
     });
 
@@ -46,10 +52,12 @@ export class AuthService {
     }
 
     const permissions = this.getEffectivePermissions(user.groups);
-    const accessToken = await this.jwtService.signAsync({ sub: user.id, login: user.login, permissions });
+    const clinics = this.resolveClinicContext(user.clinics, user.groups);
+    const accessToken = await this.signAccessToken(user.id, user.login, permissions, clinics.map((clinic) => clinic.id));
 
     return {
       accessToken,
+      clinics,
       user: {
         id: user.id,
         login: user.login,
@@ -72,7 +80,7 @@ export class AuthService {
     const password = dto.password.trim();
 
     if (!login) {
-      throw new BadRequestException("Informe o usuário.");
+      throw new BadRequestException("Informe o login.");
     }
 
     if (!password) {
@@ -123,32 +131,57 @@ export class AuthService {
   }
 
   async register(dto: RegisterDto) {
+    const login = dto.login.trim();
+    const name = dto.name.trim();
+    const email = dto.email?.trim() || undefined;
+
     const existingUser = await this.prisma.user.findFirst({
       where: {
         OR: [
-          { login: dto.login },
-          ...(dto.email ? [{ email: dto.email }] : [])
+          { login },
+          { name },
+          ...(email ? [{ email }] : [])
         ]
       }
     });
 
     if (existingUser) {
-      throw new BadRequestException("Já existe um usuário com este login ou email.");
+      if (existingUser.login === login) throw new BadRequestException("Já existe um usuário com este login.");
+      if (existingUser.name === name) throw new BadRequestException("Já existe um usuário com este nome.");
+      throw new BadRequestException("Já existe um usuário com este email.");
     }
 
-    const user = await this.prisma.user.create({
-      data: {
-        login: dto.login,
-        name: dto.name,
-        email: dto.email,
-        passwordHash: hashPassword(dto.password),
-        status: "PENDING",
-        mustChangePassword: false
-      },
-      select: { id: true, login: true, name: true, email: true, status: true }
+    const user = await this.prisma.$transaction(async (tx) => {
+      const createdUser = await tx.user.create({
+        data: {
+          login,
+          name,
+          email,
+          passwordHash: hashPassword(dto.password),
+          status: "PENDING",
+          mustChangePassword: false
+        },
+        select: { id: true, login: true, name: true, email: true, status: true }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          entity: "access_user",
+          entityId: createdUser.id,
+          action: "request_user_registration",
+          beforeData: null,
+          afterData: JSON.stringify(createdUser),
+          reason: `Cadastro solicitado: ${createdUser.name}`,
+          userId: null,
+          clinicId: null
+        }
+      });
+
+      return createdUser;
     });
 
-    this.cache.delete("access:users");
+    this.cache.deleteByPrefix("access:users:");
+    this.cache.deleteByPrefix("access:audit-logs:");
     return {
       message: "Cadastro enviado para aprovação do administrador.",
       user
@@ -166,9 +199,17 @@ export class AuthService {
         groups: {
           include: {
             accessGroup: {
-              include: { permissions: { include: { permission: true } } }
+              include: {
+                permissions: { include: { permission: true } },
+                clinics: { include: { clinic: true } }
+              }
             }
           }
+        },
+        clinics: {
+          where: { status: "ACTIVE", clinic: { status: "ACTIVE" } },
+          include: { clinic: true },
+          orderBy: [{ isDefault: "desc" }, { assignedAt: "asc" }]
         }
       }
     });
@@ -176,6 +217,9 @@ export class AuthService {
     if (!user || user.status !== "ACTIVE") {
       throw new UnauthorizedException("Usuário inválido ou inativo.");
     }
+
+    const permissions = this.getEffectivePermissions(user.groups);
+    const clinics = this.resolveClinicContext(user.clinics, user.groups);
 
     return {
       id: user.id,
@@ -188,7 +232,8 @@ export class AuthService {
       professionalRegistration: user.professionalRegistration,
       professionalCouncilState: user.professionalCouncilState,
       professionalSpecialty: user.professionalSpecialty,
-      permissions: this.getEffectivePermissions(user.groups)
+      permissions,
+      clinics
     };
   }
 
@@ -210,27 +255,30 @@ export class AuthService {
     const password = dto.password?.trim();
 
     if (!login) {
-      throw new BadRequestException("Informe o usuário.");
+      throw new BadRequestException("Informe o login.");
     }
 
     if (!name) {
       throw new BadRequestException("Informe o nome.");
     }
 
-    if (login !== currentUser.login || email !== currentUser.email) {
+    if (login !== currentUser.login || name !== currentUser.name || email !== currentUser.email) {
       const existingUser = await this.prisma.user.findFirst({
         where: {
           id: { not: userId },
           OR: [
             { login },
+            { name },
             ...(email ? [{ email }] : [])
           ]
         },
-        select: { id: true }
+        select: { id: true, login: true, name: true, email: true }
       });
 
       if (existingUser) {
-        throw new BadRequestException("Já existe um usuário com este login ou email.");
+        if (existingUser.login === login) throw new BadRequestException("Já existe um usuário com este login.");
+        if (existingUser.name === name) throw new BadRequestException("Já existe um usuário com este nome.");
+        throw new BadRequestException("Já existe um usuário com este email.");
       }
     }
 
@@ -249,7 +297,7 @@ export class AuthService {
       }
     });
 
-    this.cache.delete(`auth:profile:${userId}`);
+    this.cache.deleteByPrefix(`auth:profile:${userId}:`);
     this.cache.delete("access:users");
     this.cache.delete(`access:user:${userId}`);
     const updatedProfile = await this.getProfile(userId);
@@ -289,5 +337,32 @@ export class AuthService {
     }
 
     return [...permissions].sort();
+  }
+
+  private resolveClinicContext(
+    _clinics: Array<{ isDefault: boolean; assignedAt: Date; clinic: { id: string; name: string; code: string | null; status: string } }>,
+    groups: Array<{ accessGroup: { active: boolean; clinics: Array<{ clinic: { id: string; name: string; code: string | null; status: string } }> } }> = []
+  ) {
+    const availableClinicsById = new Map<string, { id: string; name: string; code: string | null; status: string; isDefault: boolean }>();
+
+    for (const group of groups) {
+      if (!group.accessGroup.active) continue;
+      for (const relation of group.accessGroup.clinics) {
+        if (relation.clinic.status !== "ACTIVE" || availableClinicsById.has(relation.clinic.id)) continue;
+        availableClinicsById.set(relation.clinic.id, {
+          id: relation.clinic.id,
+          name: relation.clinic.name,
+          code: relation.clinic.code,
+          status: relation.clinic.status,
+          isDefault: false
+        });
+      }
+    }
+
+    return [...availableClinicsById.values()];
+  }
+
+  private signAccessToken(userId: string, login: string, permissions: string[], availableClinicIds: string[]) {
+    return this.jwtService.signAsync({ sub: userId, login, permissions, availableClinicIds });
   }
 }

@@ -27,15 +27,14 @@ export function useShellTitle(title: string | null) {
 }
 
 export function AppShell({ activeSlug, children }: AppShellProps) {
-  const { hasPermission, logout, token, user } = useAuth();
+  const { clinics, hasPermission, logout, token, user } = useAuth();
   const pathname = usePathname();
   const [customTitle, setCustomTitle] = useState<string | null>(null);
   const [pendingPasswordChangeRequests, setPendingPasswordChangeRequests] = useState<number | null>(null);
   const setShellTitle = useMemo(() => setCustomTitle, []);
   const visibleModules = moduleItems.filter((module) => hasPermission(module.visibilityPermission));
-  const activeModule = moduleItems.find((module) => module.slug === activeSlug);
-  const title = customTitle ?? activeModule?.label ?? "Sistema clínico";
   const canReadPasswordChangeRequests = hasPermission("access.password_changes.read");
+  const shouldShowMissingClinicNotice = Boolean(token && user && clinics.length === 0 && !hasPermission("admin.full_access"));
   const passwordChangeRequestsBadgeCount = token && canReadPasswordChangeRequests ? pendingPasswordChangeRequests : null;
 
   useEffect(() => {
@@ -124,23 +123,21 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
             );
           })}
         </nav>
+
+        <div className="sidebar-footer">
+          <button className="sidebar-action" onClick={logout} type="button">
+            <LogOut aria-hidden="true" size={18} />
+            <span>Sair</span>
+          </button>
+        </div>
       </aside>
 
       <main className="main-area">
-        <header className="topbar">
-          <div>
-            <span className="eyebrow">Sistema clínico</span>
-            <h1>{title}</h1>
+        {shouldShowMissingClinicNotice ? (
+          <div className="access-message" role="alert">
+            Seu usuário ainda não possui clínica vinculada. Solicite a um administrador a liberação de uma clínica antes de usar os módulos operacionais.
           </div>
-          <div className="operator-actions">
-            <Link className="operator-chip" href="/meu-perfil" title="Abrir meu perfil">
-              {user?.name ?? "Profissional logado"}
-            </Link>
-            <button className="icon-button" onClick={logout} title="Sair" type="button">
-              <LogOut aria-hidden="true" size={18} />
-            </button>
-          </div>
-        </header>
+        ) : null}
 
         <ShellTitleContext.Provider value={setShellTitle}>
           {children}
