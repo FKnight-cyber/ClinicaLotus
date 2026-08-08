@@ -42,7 +42,7 @@ type AuthContextValue = {
   clinics: AuthClinic[];
   login: (login: string, password: string) => Promise<void>;
   logout: () => void;
-  refreshProfile: () => Promise<AuthUser | null>;
+  refreshProfile: () => Promise<(AuthUser & { clinics?: AuthClinic[] }) | null>;
   hasPermission: (permission: string) => boolean;
 };
 

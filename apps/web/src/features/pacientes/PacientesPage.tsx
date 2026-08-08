@@ -205,7 +205,7 @@ async function apiRequest<T>(token: string, path: string, options: RequestInit =
 }
 
 export function PacientesPage() {
-  const { clinics, hasPermission, token } = useAuth();
+  const { clinics, hasPermission, refreshProfile, token } = useAuth();
   const router = useRouter();
   const canReadPatients = hasPermission("patients.read");
   const canCreatePatients = hasPermission("patients.create");
@@ -213,6 +213,7 @@ export function PacientesPage() {
   const canUpdatePatients = hasPermission("patients.update");
   const canInactivatePatients = hasPermission("patients.inactivate");
   const availablePatientClinics: PatientClinicFilter[] = clinics.filter((clinic) => clinic.status === "ACTIVE");
+  const shouldShowPatientClinicField = availablePatientClinics.length > 0;
   const mustChoosePatientClinic = availablePatientClinics.length > 1;
   const patientsCacheRef = useRef(new Map<string, PaginatedPatients>());
   const [initialPatientFilters] = useState(readStoredPatientFilters);
@@ -346,10 +347,13 @@ export function PacientesPage() {
     setIsPatientFiltersOpen(false);
   };
 
-  const openCreatePatientModal = () => {
+  const openCreatePatientModal = async () => {
+    const refreshedProfile = await refreshProfile().catch(() => null);
+    const refreshedClinics = refreshedProfile?.clinics?.filter((clinic) => clinic.status === "ACTIVE") ?? availablePatientClinics;
+
     setEditingPatient(null);
     setEditingPatientClinicId("");
-    setPatientForm({ ...emptyPatientForm, clinicId: effectivePatientClinicId || (availablePatientClinics.length === 1 ? availablePatientClinics[0].id : "") });
+    setPatientForm({ ...emptyPatientForm, clinicId: effectivePatientClinicId || (refreshedClinics.length === 1 ? refreshedClinics[0].id : "") });
     setIsPatientModalOpen(true);
   };
 
@@ -586,11 +590,11 @@ export function PacientesPage() {
               <button className="icon-button" onClick={() => setIsPatientModalOpen(false)} title="Fechar" type="button"><X aria-hidden="true" size={18} /></button>
             </div>
             <form className="access-form patient-form-grid" onSubmit={handleSavePatient}>
-              {!editingPatient && mustChoosePatientClinic ? (
+              {!editingPatient && shouldShowPatientClinicField ? (
                 <label className="patient-form-full">
                   <span>Clínica do cadastro</span>
-                  <select onChange={(event) => setPatientForm((form) => ({ ...form, clinicId: event.target.value }))} required value={patientForm.clinicId}>
-                    <option value="">Selecione a clínica</option>
+                  <select disabled={!mustChoosePatientClinic} onChange={(event) => setPatientForm((form) => ({ ...form, clinicId: event.target.value }))} required value={patientForm.clinicId}>
+                    {mustChoosePatientClinic ? <option value="">Selecione a clínica</option> : null}
                     {availablePatientClinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</option>)}
                   </select>
                 </label>
