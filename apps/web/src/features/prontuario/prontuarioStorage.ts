@@ -7,17 +7,19 @@ const patientsCache = new Map<string, { expiresAt: number; promise?: Promise<Pag
 const evolutionsCache = new Map<string, { expiresAt: number; promise?: Promise<PaginatedResponse<MedicalEvolution>>; value?: PaginatedResponse<MedicalEvolution> }>();
 
 type ListQueryOptions = {
+  clinicScope?: "network";
   clinicId?: string;
+  scopeKey?: string;
   limit: number;
   offset: number;
 };
 
 function buildPatientsCacheKey(token: string, search: string, options: ListQueryOptions) {
-  return `${token}:prontuario-patients:${options.clinicId || "active"}:${search.trim().toLowerCase()}:${options.limit}:${options.offset}`;
+  return `${token}:prontuario-patients:${options.scopeKey || options.clinicScope || options.clinicId || "active"}:${search.trim().toLowerCase()}:${options.limit}:${options.offset}`;
 }
 
 function buildEvolutionsCacheKey(token: string, patientId: string, options: ListQueryOptions) {
-  return `${token}:medical-evolutions:${options.clinicId || "active"}:${patientId}:${options.limit}:${options.offset}`;
+  return `${token}:medical-evolutions:${options.scopeKey || options.clinicScope || options.clinicId || "active"}:${patientId}:${options.limit}:${options.offset}`;
 }
 
 function buildListQuery(options: ListQueryOptions, search?: string) {
@@ -34,7 +36,18 @@ function buildListQuery(options: ListQueryOptions, search?: string) {
     params.set("clinicId", options.clinicId);
   }
 
+  if (options.clinicScope) {
+    params.set("clinicScope", options.clinicScope);
+  }
+
   return params.toString();
+}
+
+function buildClinicQuery(clinicId?: string) {
+  const params = new URLSearchParams();
+  if (clinicId) params.set("clinicId", clinicId);
+  const queryString = params.toString();
+  return queryString ? `?${queryString}` : "";
 }
 
 function normalizePaginatedResponse<T>(payload: PaginatedResponse<T> | T[], options: ListQueryOptions): PaginatedResponse<T> {
@@ -124,8 +137,8 @@ export function fetchMedicalEvolutions(token: string, patientId: string, options
     .then((payload) => normalizePaginatedResponse(payload, options)));
 }
 
-export function fetchMedicalEvolution(token: string, evolutionId: string) {
-  return apiRequest<MedicalEvolution>(token, `/api/medical-evolutions/${evolutionId}`);
+export function fetchMedicalEvolution(token: string, evolutionId: string, clinicId?: string) {
+  return apiRequest<MedicalEvolution>(token, `/api/medical-evolutions/${evolutionId}${buildClinicQuery(clinicId)}`);
 }
 
 export async function createMedicalEvolution(token: string, patientId: string, payload: MedicalEvolutionPayload) {
@@ -137,8 +150,8 @@ export async function createMedicalEvolution(token: string, patientId: string, p
   return evolution;
 }
 
-export async function updateMedicalEvolution(token: string, evolutionId: string, patientId: string, payload: MedicalEvolutionPayload) {
-  const evolution = await apiRequest<MedicalEvolution>(token, `/api/medical-evolutions/${evolutionId}`, {
+export async function updateMedicalEvolution(token: string, evolutionId: string, patientId: string, payload: MedicalEvolutionPayload, clinicId?: string) {
+  const evolution = await apiRequest<MedicalEvolution>(token, `/api/medical-evolutions/${evolutionId}${buildClinicQuery(clinicId)}`, {
     method: "PATCH",
     body: JSON.stringify(payload)
   });
@@ -146,16 +159,16 @@ export async function updateMedicalEvolution(token: string, evolutionId: string,
   return evolution;
 }
 
-export async function finalizeMedicalEvolution(token: string, evolution: MedicalEvolution) {
-  const finalizedEvolution = await apiRequest<MedicalEvolution>(token, `/api/medical-evolutions/${evolution.id}/finalize`, {
+export async function finalizeMedicalEvolution(token: string, evolution: MedicalEvolution, clinicId?: string) {
+  const finalizedEvolution = await apiRequest<MedicalEvolution>(token, `/api/medical-evolutions/${evolution.id}/finalize${buildClinicQuery(clinicId)}`, {
     method: "POST"
   });
   invalidateEvolutions(token, evolution.patientId);
   return finalizedEvolution;
 }
 
-export async function cancelMedicalEvolution(token: string, evolution: MedicalEvolution, reason: string) {
-  const canceledEvolution = await apiRequest<MedicalEvolution>(token, `/api/medical-evolutions/${evolution.id}/cancel`, {
+export async function cancelMedicalEvolution(token: string, evolution: MedicalEvolution, reason: string, clinicId?: string) {
+  const canceledEvolution = await apiRequest<MedicalEvolution>(token, `/api/medical-evolutions/${evolution.id}/cancel${buildClinicQuery(clinicId)}`, {
     method: "POST",
     body: JSON.stringify({ reason })
   });
@@ -163,8 +176,8 @@ export async function cancelMedicalEvolution(token: string, evolution: MedicalEv
   return canceledEvolution;
 }
 
-export function emitMedicalEvolutionPdfDocument(token: string, evolutionId: string) {
-  return apiRequest<ClinicalDocumentSummary>(token, `/api/medical-evolutions/${evolutionId}/documents/pdf`, {
+export function emitMedicalEvolutionPdfDocument(token: string, evolutionId: string, clinicId?: string) {
+  return apiRequest<ClinicalDocumentSummary>(token, `/api/medical-evolutions/${evolutionId}/documents/pdf${buildClinicQuery(clinicId)}`, {
     method: "POST"
   });
 }

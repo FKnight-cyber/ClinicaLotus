@@ -376,6 +376,28 @@ button:disabled {
   gap: 6px;
 }
 
+.sidebar-footer {
+  margin-top: auto;
+}
+
+.sidebar-action {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: #d9ebe5;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  padding: 11px 12px;
+  width: 100%;
+}
+
+.sidebar-action:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
 .module-nav-group {
   display: grid;
   gap: 4px;
@@ -2043,6 +2065,16 @@ td input {
   font-weight: 700;
 }
 
+.profile-readonly-field {
+  display: grid;
+  gap: 7px;
+}
+
+.profile-readonly-field > span {
+  color: var(--text);
+  font-weight: 700;
+}
+
 .panel-hint {
   color: var(--muted);
   margin: 0;
@@ -2101,6 +2133,42 @@ td input {
   font-size: 0.82rem;
   max-width: 100%;
   padding: 6px 9px;
+}
+
+.create-anamnesis-patient-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.create-anamnesis-patient-option {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.patient-clinic-pill {
+  align-items: flex-start;
+  border-radius: 18px;
+  flex-direction: column;
+}
+
+.patient-clinic-pill.is-current-context {
+  background: color-mix(in srgb, var(--primary-soft) 60%, #ffffff 40%);
+  border-color: var(--primary);
+}
+
+.patient-clinic-pill-header {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.patient-clinic-pill-meta {
+  color: var(--muted);
+  line-height: 1.35;
 }
 
 .access-list {

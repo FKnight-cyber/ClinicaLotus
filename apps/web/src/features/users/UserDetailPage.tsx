@@ -13,6 +13,13 @@ type AccessGroup = {
   active: boolean;
 };
 
+type Clinic = {
+  id: string;
+  name: string;
+  code?: string | null;
+  status: "ACTIVE" | "INACTIVE";
+};
+
 type AccessUser = {
   id: string;
   login: string;
@@ -23,6 +30,7 @@ type AccessUser = {
   status: "PENDING" | "ACTIVE" | "INACTIVE";
   mustChangePassword: boolean;
   groups: { accessGroup: AccessGroup }[];
+  clinics: { clinic: Clinic }[];
 };
 
 type PaginatedAccessGroups = {
@@ -107,7 +115,8 @@ export function UserDetailPage({ userId }: { userId: string }) {
           professionalArea: user.professionalArea,
           status: "ACTIVE",
           mustChangePassword: Boolean(user.mustChangePassword),
-          groups: []
+          groups: [],
+          clinics: []
         };
 
         if (!isCurrent) return;
@@ -256,6 +265,17 @@ export function UserDetailPage({ userId }: { userId: string }) {
                 {group.name}
               </label>
             ))}
+          </div>
+        </section>
+      ) : null}
+
+      {canManageUsers ? (
+        <section className="plain-panel user-access-panel">
+          <div className="access-card-heading">
+            <div>
+              <h3>Escopo de clínicas</h3>
+              <p>O acesso às clínicas deste usuário é definido exclusivamente pelos grupos vinculados acima.</p>
+            </div>
           </div>
         </section>
       ) : null}

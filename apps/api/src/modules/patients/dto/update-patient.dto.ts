@@ -3,6 +3,10 @@ import { IsISO8601, IsNotEmpty, IsOptional, IsString } from "class-validator";
 export class UpdatePatientDto {
   @IsOptional()
   @IsString()
+  clinicId?: string;
+
+  @IsOptional()
+  @IsString()
   @IsNotEmpty()
   name?: string;
 

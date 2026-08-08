@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import type { AuthenticatedUser } from "../auth/auth.types";
 import { AuthGuard } from "../auth/guards/auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
@@ -134,5 +134,11 @@ export class AccessController {
   @RequirePermissions("access.users.manage")
   updateUserClinics(@Param("userId") userId: string, @Body() dto: UpdateUserClinicsDto, @Req() request: { user?: AuthenticatedUser }) {
     return this.accessService.updateUserClinics(userId, dto, request.user?.id);
+  }
+
+  @Delete("users/:userId")
+  @RequirePermissions("access.users.manage")
+  deleteUser(@Param("userId") userId: string, @Req() request: { user?: AuthenticatedUser }) {
+    return this.accessService.deleteUser(userId, request.user?.id);
   }
 }

@@ -541,16 +541,15 @@ type AnamneseWorkspaceProps = {
 
 export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps) {
   const router = useRouter();
-  const { activeClinic, hasPermission, token, user } = useAuth();
-  const isViewingFilteredClinic = Boolean(clinicId && clinicId !== activeClinic?.id);
+  const { hasPermission, token, user } = useAuth();
   const canReadAnamnese = hasPermission("anamnese.read");
   const canCreateAnamnese = hasPermission("anamnese.create");
-  const canUpdateAnamnese = hasPermission("anamnese.update") && !isViewingFilteredClinic;
-  const canFinalizeAnamnese = hasPermission("anamnese.finalize") && !isViewingFilteredClinic;
-  const canPrintAnamnese = hasPermission("anamnese.print") && !isViewingFilteredClinic;
+  const canUpdateAnamnese = hasPermission("anamnese.update");
+  const canFinalizeAnamnese = hasPermission("anamnese.finalize");
+  const canPrintAnamnese = hasPermission("anamnese.print");
   const canReadPatients = hasPermission("patients.read");
-  const canReadEvolutionHistory = hasPermission("medical_evolutions.read") && !isViewingFilteredClinic;
-  const canPrintEvolutionHistory = hasPermission("medical_evolutions.print") && !isViewingFilteredClinic;
+  const canReadEvolutionHistory = hasPermission("medical_evolutions.read");
+  const canPrintEvolutionHistory = hasPermission("medical_evolutions.print");
   const canUpdateAnamneseOptions = canUpdateAnamnese;
   const canUpdateAnamneseQuestions = canUpdateAnamnese;
   const [currentRecord, setCurrentRecord] = useState<AnamneseRecord | null>(null);
@@ -641,7 +640,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
       if (isCurrent) setIsEvolutionHistoryLoading(true);
     });
 
-    fetchMedicalEvolutions(token, currentRecord.patientId, { limit: evolutionHistoryPageSize, offset })
+    fetchMedicalEvolutions(token, currentRecord.patientId, { limit: evolutionHistoryPageSize, offset, clinicId })
       .then((response) => {
         if (!isCurrent) return;
         setEvolutionHistory(response.items);
@@ -658,7 +657,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
     return () => {
       isCurrent = false;
     };
-  }, [canReadEvolutionHistory, currentRecord?.patientId, evolutionHistoryPage, isEvolutionHistoryOpen, token]);
+  }, [canReadEvolutionHistory, clinicId, currentRecord?.patientId, evolutionHistoryPage, isEvolutionHistoryOpen, token]);
 
   useEffect(() => {
     if (!token || !currentRecord || !canUpdateAnamnese || currentRecord.status === "finalized") return;
@@ -681,7 +680,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
     autosaveTimerRef.current = setTimeout(() => {
       setMessage("Salvando rascunho automaticamente...");
       const payload = getRecordSavePayload(currentRecord);
-      void saveAnamneseRecord(token, currentRecord.id, payload)
+      void saveAnamneseRecord(token, currentRecord.id, payload, clinicId)
         .then((savedRecord) => {
           if (autosaveSequenceRef.current !== sequence) return;
           lastSavedSnapshotRef.current = getRecordSnapshot(savedRecord);
@@ -699,7 +698,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
         clearTimeout(autosaveTimerRef.current);
       }
     };
-  }, [canUpdateAnamnese, currentRecord, token]);
+  }, [canUpdateAnamnese, clinicId, currentRecord, token]);
 
   useEffect(() => () => {
     if (autosaveTimerRef.current) {
@@ -792,7 +791,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
 
   async function persistDraft(record: AnamneseRecord) {
     if (!token) return record;
-    const savedRecord = await saveAnamneseRecord(token, record.id, getRecordSavePayload(record));
+    const savedRecord = await saveAnamneseRecord(token, record.id, getRecordSavePayload(record), clinicId);
     lastSavedSnapshotRef.current = getRecordSnapshot(savedRecord);
     setCurrentRecord(savedRecord);
     return savedRecord;
@@ -820,7 +819,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
 
     setMessage(status === "finalized" ? "Salvando e finalizando anamnese..." : "Salvando rascunho no banco...");
     const savedRecord = await persistDraft(loadedRecord);
-    const nextRecord = status === "finalized" ? await finalizeAnamneseRecord(token, savedRecord.id) : savedRecord;
+    const nextRecord = status === "finalized" ? await finalizeAnamneseRecord(token, savedRecord.id, clinicId) : savedRecord;
     lastSavedSnapshotRef.current = getRecordSnapshot(nextRecord);
     setCurrentRecord(nextRecord);
     setMessage(status === "finalized" ? "Anamnese finalizada no banco" : "Rascunho salvo no banco");
@@ -843,7 +842,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
 
     setMessage(`Concluindo ficha ${activeTemplate.shortTitle}...`);
     const savedRecord = await persistDraft(loadedRecord);
-    const completedRecord = await completeAnamneseTemplate(token, savedRecord.id, activeTemplate.id);
+    const completedRecord = await completeAnamneseTemplate(token, savedRecord.id, activeTemplate.id, clinicId);
     lastSavedSnapshotRef.current = getRecordSnapshot(completedRecord);
     setCurrentRecord(completedRecord);
     setMessage(`Ficha ${activeTemplate.shortTitle} concluída`);
@@ -906,8 +905,9 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
     setPrintingEvolutionId(evolution.id);
     try {
       setEvolutionHistoryMessage("Gerando PDF da evolução...");
-      const latestEvolution = await fetchMedicalEvolution(token, evolution.id);
-      const document = await emitMedicalEvolutionPdfDocument(token, evolution.id);
+      const evolutionClinicId = evolution.clinicId ?? clinicId;
+      const latestEvolution = await fetchMedicalEvolution(token, evolution.id, evolutionClinicId);
+      const document = await emitMedicalEvolutionPdfDocument(token, evolution.id, evolutionClinicId);
       await downloadMedicalEvolutionPdf(patient, latestEvolution, document.code);
       setEvolutionHistoryMessage(`PDF ${document.code} gerado.`);
     } catch (error) {
@@ -920,7 +920,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
   async function handleDownloadPdf() {
     if (!token || !canPrintAnamnese) return;
     setMessage("Gerando PDF...");
-    const document = await emitAnamnesePdfDocument(token, loadedRecord.id);
+    const document = await emitAnamnesePdfDocument(token, loadedRecord.id, clinicId);
     await downloadAnamnesePdf(loadedRecord, effectiveTemplates);
     setMessage(`PDF ${document.code} gerado.`);
   }
@@ -928,7 +928,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
   async function handleDownloadTemplatePdf() {
     if (!token || !canPrintAnamnese || !isActiveTemplateCompleted) return;
     setMessage(`Gerando PDF da ficha ${activeTemplate.shortTitle}...`);
-    const document = await emitAnamneseTemplatePdfDocument(token, loadedRecord.id, activeTemplate.id);
+    const document = await emitAnamneseTemplatePdfDocument(token, loadedRecord.id, activeTemplate.id, clinicId);
     await downloadAnamnesePdf(loadedRecord, effectiveTemplates, {
       templateId: activeTemplate.id,
       title: "FICHA DE ANAMNESE",

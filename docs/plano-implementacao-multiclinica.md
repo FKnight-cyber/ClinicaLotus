@@ -1,7 +1,7 @@
 # Plano de implementacao - Multi-clinica
 
 **Criado em:** 28/07/2026  
-**Atualizado em:** 03/08/2026  
+**Atualizado em:** 08/08/2026
 **Modulo:** Cadastros gerais / Autenticacao / Prontuario / Atendimento clinico  
 **Objetivo:** detalhar as mudancas necessarias para transformar o sistema atual, hoje orientado a uma unica clinica, em um modelo multi-clinica funcional para clinicas da mesma rede.
 
@@ -57,22 +57,14 @@ Esta secao resume o que ja foi implementado ate 03/08/2026 e o que ainda falta p
 
 ### 0.3 Ainda falta
 
-- Usar a clinica do proprio registro para editar/finalizar/cancelar/emitir PDF de registros existentes quando usuarios com multiplas clinicas estiverem na visao `Todos`.
-- Expandir `clinicId` local/escopo permitido para detalhe e PDF de evolucoes, removendo dependencia residual da clinica ativa.
-- Decidir status global do paciente versus status por clinica em `PatientClinic.status`.
-- Ajustar cadastro/aprovacao de usuario pendente para confirmar clinicas.
-- Tornar `clinicId` obrigatorio no schema quando todos os escritores estiverem migrados.
+- Validar em ambiente de homologacao os fluxos migrados apos `clinicId` se tornar obrigatorio no schema.
 - Criar testes automatizados ou roteiro manual completo para acesso cruzado entre clinicas.
 
 ### 0.4 Duvidas abertas
 
-- Status do paciente deve ser global (`Patient.status`) ou por vinculo de clinica (`PatientClinic.status`)?
-- Usuario comum pode buscar paciente na rede inteira para evitar duplicidade ou apenas dentro de `availableClinicIds`?
-- Prontuario deve ter visao consolidada da rede na primeira entrega ou somente a visao por escopo/filtro atual?
-- Qual permissao deve liberar uma eventual visao consolidada da rede?
-- Cadastro publico/pendente deve listar clinicas ou usar convite/link por clinica?
-- Administrador global continua sendo `admin.full_access` ou deve existir uma permissao especifica para visao global?
-- Para registros existentes, a regra final sera sempre usar a clinica gravada no registro para editar/finalizar/cancelar/emitir PDF?
+- Avaliar se a busca ampliada da rede deve ficar restrita ao prontuario consolidado ou tambem aparecer no cadastro operacional de pacientes.
+- Cadastro publico/pendente passou a listar clinicas ativas; convite/link por clinica permanece como possivel refinamento futuro.
+- Administrador global continua sendo `admin.full_access` ou deve existir uma permissao especifica alem de `prontuario.read_network` para outras visoes globais?
 
 ---
 
@@ -928,7 +920,7 @@ GET /api/patients/:patientId/prontuario?clinicId=...
 Para administradores globais, endpoints futuros podem aceitar escopo consolidado alem de `availableClinicIds`, se a visao global entrar no escopo:
 
 ```txt
-GET /api/patients?clinicScope=all&search=...
+GET /api/patients?clinicScope=network&search=...
 ```
 
 ### 9.5 Auditoria
@@ -971,7 +963,7 @@ Opcoes:
 Recomendacao inicial:
 
 - implementar visao por clinica como padrao;
-- criar permissao futura `prontuario.read_network` para visao consolidada;
+- usar permissao `prontuario.read_network` para visao consolidada;
 - em qualquer visao consolidada, mostrar a clinica de origem de cada evento.
 
 ### 10.3 Novo atendimento na rede 3
@@ -1002,7 +994,7 @@ Quando um paciente previamente cadastrado na rede 1 for atendido na rede 3:
 - [x] Criar clinica padrao no seed/migracao.
 - [x] Vincular dados existentes a clinica padrao.
 - [x] Gerar Prisma Client.
-- [ ] Tornar `clinicId` obrigatorio apos concluir todos os escritores.
+- [x] Tornar `clinicId` obrigatorio apos concluir todos os escritores.
 
 ### Fase 2 - Autenticacao e contexto de clinica
 
@@ -1012,7 +1004,7 @@ Quando um paciente previamente cadastrado na rede 1 for atendido na rede 3:
 - [x] Ajustar `AuthGuard` e `AuthenticatedUser`.
 - [x] Criar endpoint de troca de clinica ativa.
 - [x] Validar UX para usuario com uma unica clinica: leitura e criacao usam o escopo automaticamente.
-- [ ] Melhorar UX para usuario sem nenhuma clinica disponivel.
+- [x] Melhorar UX para usuario sem nenhuma clinica disponivel.
 
 ### Fase 3 - Isolamento backend operacional
 
@@ -1023,7 +1015,7 @@ Quando um paciente previamente cadastrado na rede 1 for atendido na rede 3:
 - [x] Validar anamneses por ID contra escopo permitido ou `clinicId` local.
 - [x] Filtrar prontuario por escopo de clinicas do usuario.
 - [x] Filtrar evolucoes por escopo de clinicas do usuario.
-- [ ] Validar evolucoes por ID contra escopo permitido sem depender da clinica ativa.
+- [x] Validar evolucoes por ID contra escopo permitido sem depender da clinica ativa.
 - [x] Gravar `clinicId` em documentos nos fluxos migrados.
 - [x] Gravar `clinicId` em auditoria nos fluxos migrados.
 - [x] Ajustar chaves e invalidacoes de cache nos fluxos migrados.
@@ -1037,8 +1029,8 @@ Quando um paciente previamente cadastrado na rede 1 for atendido na rede 3:
 - [x] Permitir criar/editar/inativar clinicas.
 - [x] Ajustar grupos para vincular escopo de clinicas.
 - [x] Ajustar tela de usuarios para vincular clinicas diretamente.
-- [ ] Ajustar aprovacao de cadastro pendente.
-- [ ] Adicionar filtro por clinica na listagem de usuarios.
+- [x] Ajustar aprovacao de cadastro pendente.
+- [x] Adicionar filtro por clinica na listagem de usuarios.
 - [x] Manter grupos e permissoes globais.
 
 ### Fase 5 - Frontend operacional
@@ -1057,11 +1049,11 @@ Quando um paciente previamente cadastrado na rede 1 for atendido na rede 3:
 
 ### Fase 6 - Regras de rede e refinamento
 
-- [ ] Definir busca ampliada de pacientes fora de `availableClinicIds`, caso entre no escopo.
+- [x] Definir busca ampliada de pacientes fora de `availableClinicIds`, caso entre no escopo.
 - [x] Implementar vinculo de paciente existente a nova clinica por CPF/RG/documento.
-- [ ] Decidir e implementar visao consolidada do prontuario, se entrar no escopo.
+- [x] Decidir e implementar visao consolidada do prontuario, se entrar no escopo.
 - [x] Exibir clinica de origem nos eventos de auditoria e registros ja migrados.
-- [ ] Revisar mensagens, filtros e estados vazios.
+- [x] Revisar mensagens, filtros e estados vazios.
 
 ---
 
@@ -1195,14 +1187,14 @@ Se a visao consolidada de prontuario da rede entrar no primeiro pacote, a estima
 ## 15. Decisoes pendentes
 
 - [x] Paciente operacional aparece apenas dentro do escopo permitido e/ou apos vinculo `PatientClinic` com a clinica.
-- [ ] Usuario comum pode buscar paciente fora de `availableClinicIds` para evitar duplicidade?
-- [ ] Prontuario deve ter visao consolidada da rede na primeira entrega?
-- [ ] Qual permissao libera visao consolidada da rede?
-- [ ] Cadastro publico deve listar clinicas ou usar convite/link por clinica?
-- [ ] Inativacao de paciente sera global (`Patient.status`) ou por clinica (`PatientClinic.status`)?
+- [x] Usuario comum pode buscar paciente fora de `availableClinicIds` para evitar duplicidade?
+- [x] Prontuario deve ter visao consolidada da rede na primeira entrega?
+- [x] Qual permissao libera visao consolidada da rede?
+- [x] Cadastro publico deve listar clinicas ou usar convite/link por clinica?
+- [x] Inativacao de paciente sera global (`Patient.status`) ou por clinica (`PatientClinic.status`)?
 - [ ] Administrador global sera identificado por `admin.full_access` ou por nova permissao especifica?
 - [x] Criacao operacional com multiplas clinicas deve informar a clinica no formulario; com uma unica clinica, o backend resolve automaticamente.
-- [ ] Edicao/finalizacao/cancelamento/emissao de PDF deve sempre usar a clinica gravada no registro existente?
+- [x] Edicao/finalizacao/cancelamento/emissao de PDF deve sempre usar a clinica gravada no registro existente?
 - [x] O seletor global de clinica fica restrito a administradores/gestao; profissionais usam filtros locais por tela.
 
 ---

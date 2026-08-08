@@ -33,11 +33,6 @@ enum UserClinicStatus {
   INACTIVE
 }
 
-enum PatientClinicStatus {
-  ACTIVE
-  INACTIVE
-}
-
 enum AnamnesisStatus {
   DRAFT
   FINALIZED
@@ -78,7 +73,7 @@ enum UserType {
 model User {
   id                 String            @id @default(uuid())
   login              String            @unique
-  name               String
+  name               String            @unique
   email              String?           @unique
   userType           UserType          @default(MANAGER)
   professionalArea   String?
@@ -116,7 +111,7 @@ model Clinic {
   updatedAt DateTime     @updatedAt
 
   users     UserClinic[]
-  patients  PatientClinic[]
+  patients  Patient[]
   accessGroups AccessGroupClinic[]
   anamnesisRecords AnamnesisRecord[]
   medicalRecordEntries MedicalRecordEntry[]
@@ -214,30 +209,19 @@ model Patient {
   id              String            @id @default(uuid())
   name            String
   status          PatientStatus     @default(ACTIVE)
+  clinicId        String
   birthDate       DateTime?
   document        String?
   cpf             String?
   rg              String?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
+  clinic          Clinic            @relation(fields: [clinicId], references: [id])
   anamnesisRecord AnamnesisRecord[]
   medicalRecordEntries MedicalRecordEntry[]
   medicalEvolutions MedicalEvolution[]
   clinicalDocuments ClinicalDocument[]
-  clinics PatientClinic[]
-}
 
-model PatientClinic {
-  patientId   String
-  clinicId    String
-  status      PatientClinicStatus @default(ACTIVE)
-  firstSeenAt DateTime            @default(now())
-  lastSeenAt  DateTime?
-
-  patient     Patient             @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  clinic      Clinic              @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-
-  @@id([patientId, clinicId])
   @@index([clinicId, status])
 }
 
@@ -313,7 +297,7 @@ model AnamnesisRecord {
   status      AnamnesisStatus    @default(DRAFT)
   patientName String
   patientId   String?
-  clinicId    String?
+  clinicId    String
   customFieldsJson String?
   customAnswersJson String?
   templateConfigJson String?
@@ -324,7 +308,7 @@ model AnamnesisRecord {
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
   patient     Patient?           @relation(fields: [patientId], references: [id])
-  clinic      Clinic?            @relation(fields: [clinicId], references: [id])
+  clinic      Clinic             @relation(fields: [clinicId], references: [id])
   createdBy   User?              @relation("AnamnesisCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?              @relation("AnamnesisUpdatedBy", fields: [updatedById], references: [id])
   answers     AnamnesisAnswer[]
@@ -338,7 +322,7 @@ model AnamnesisRecord {
 model MedicalRecordEntry {
   id                String           @id @default(uuid())
   patientId         String
-  clinicId          String?
+  clinicId          String
   anamnesisRecordId String?
   medicalEvolutionId String?
   type              String
@@ -347,7 +331,7 @@ model MedicalRecordEntry {
   createdById       String?
   createdAt         DateTime         @default(now())
   patient           Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  clinic            Clinic?          @relation(fields: [clinicId], references: [id])
+  clinic            Clinic           @relation(fields: [clinicId], references: [id])
   anamnesisRecord   AnamnesisRecord? @relation(fields: [anamnesisRecordId], references: [id], onDelete: SetNull)
   medicalEvolution  MedicalEvolution? @relation(fields: [medicalEvolutionId], references: [id], onDelete: SetNull)
   createdBy         User?            @relation(fields: [createdById], references: [id])
@@ -358,7 +342,7 @@ model MedicalRecordEntry {
 model MedicalEvolution {
   id                   String                 @id @default(uuid())
   patientId            String
-  clinicId             String?
+  clinicId             String
   status               MedicalEvolutionStatus @default(DRAFT)
   evolutionDate        DateTime               @default(now())
   text                 String
@@ -379,7 +363,7 @@ model MedicalEvolution {
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
   patient              Patient                @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  clinic               Clinic?                @relation(fields: [clinicId], references: [id])
+  clinic               Clinic                 @relation(fields: [clinicId], references: [id])
   createdBy            User?                  @relation("MedicalEvolutionCreatedBy", fields: [createdById], references: [id])
   updatedBy            User?                  @relation("MedicalEvolutionUpdatedBy", fields: [updatedById], references: [id])
   finalizedBy          User?                  @relation("MedicalEvolutionFinalizedBy", fields: [finalizedById], references: [id])
@@ -400,13 +384,13 @@ model ClinicalDocument {
   contentHash       String
   metadataJson      String?
   patientId         String?
-  clinicId          String?
+  clinicId          String
   anamnesisRecordId String?
   medicalEvolutionId String?
   emittedById       String?
   emittedAt         DateTime         @default(now())
   patient           Patient?         @relation(fields: [patientId], references: [id], onDelete: SetNull)
-  clinic            Clinic?          @relation(fields: [clinicId], references: [id])
+  clinic            Clinic           @relation(fields: [clinicId], references: [id])
   anamnesisRecord   AnamnesisRecord? @relation(fields: [anamnesisRecordId], references: [id], onDelete: Cascade)
   medicalEvolution  MedicalEvolution? @relation(fields: [medicalEvolutionId], references: [id], onDelete: Cascade)
   emittedBy         User?            @relation(fields: [emittedById], references: [id])

@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Clock3, Eye, KeyRound, ShieldCheck, ToggleLeft, ToggleRight, UserX, UsersRound, X, XCircle } from "lucide-react";
+import { CheckCircle2, Clock3, Eye, KeyRound, ShieldCheck, ToggleLeft, ToggleRight, Trash2, UserX, UsersRound, X, XCircle } from "lucide-react";
 import Link from "next/link";
 import { ClearFiltersButton, FilterButton } from "@/components/filters/FilterActionButtons";
 import { useAuth } from "@/features/auth/AuthProvider";
@@ -165,17 +165,18 @@ function normalizeUserStatus(value: unknown): AccessUser["status"] | "" {
 }
 
 function readStoredUserFilters() {
-  const defaultFilters = { search: "", groupId: "", status: "" as AccessUser["status"] | "", limit: DEFAULT_USER_LIMIT };
+  const defaultFilters = { search: "", groupId: "", clinicId: "", status: "" as AccessUser["status"] | "", limit: DEFAULT_USER_LIMIT };
   if (typeof window === "undefined") return defaultFilters;
 
   try {
     const storedFilters = window.localStorage.getItem(USER_FILTERS_STORAGE_KEY);
     if (!storedFilters) return defaultFilters;
-    const parsedFilters = JSON.parse(storedFilters) as { search?: unknown; groupId?: unknown; status?: unknown; limit?: unknown };
+    const parsedFilters = JSON.parse(storedFilters) as { search?: unknown; groupId?: unknown; clinicId?: unknown; status?: unknown; limit?: unknown };
 
     return {
       search: typeof parsedFilters.search === "string" ? parsedFilters.search : "",
       groupId: typeof parsedFilters.groupId === "string" ? parsedFilters.groupId : "",
+      clinicId: typeof parsedFilters.clinicId === "string" ? parsedFilters.clinicId : "",
       status: normalizeUserStatus(parsedFilters.status),
       limit: normalizeUserLimit(parsedFilters.limit)
     };
@@ -185,8 +186,8 @@ function readStoredUserFilters() {
   }
 }
 
-function writeStoredUserFilters(search: string, groupId: string, status: AccessUser["status"] | "", limit: number) {
-  window.localStorage.setItem(USER_FILTERS_STORAGE_KEY, JSON.stringify({ search, groupId, status, limit }));
+function writeStoredUserFilters(search: string, groupId: string, clinicId: string, status: AccessUser["status"] | "", limit: number) {
+  window.localStorage.setItem(USER_FILTERS_STORAGE_KEY, JSON.stringify({ search, groupId, clinicId, status, limit }));
 }
 
 function buildGroupsPath(limit: number, search: string) {
@@ -200,17 +201,18 @@ function buildGroupsCacheKey(limit: number, search: string) {
   return `${limit}:${search.trim().toLowerCase()}`;
 }
 
-function buildUsersPath(limit: number, search: string, groupId: string, status: string) {
+function buildUsersPath(limit: number, search: string, groupId: string, clinicId: string, status: string) {
   const params = new URLSearchParams({ limit: String(limit) });
   const normalizedSearch = search.trim();
   if (normalizedSearch) params.set("search", normalizedSearch);
   if (groupId) params.set("groupId", groupId);
+  if (clinicId) params.set("clinicId", clinicId);
   if (status) params.set("status", status);
   return `/api/access/users?${params.toString()}`;
 }
 
-function buildUsersCacheKey(limit: number, search: string, groupId: string, status: string) {
-  return `${limit}:${search.trim().toLowerCase()}:${groupId}:${status}`;
+function buildUsersCacheKey(limit: number, search: string, groupId: string, clinicId: string, status: string) {
+  return `${limit}:${search.trim().toLowerCase()}:${groupId}:${clinicId}:${status}`;
 }
 
 function buildClinicsPath() {
@@ -623,7 +625,7 @@ export function AccessGroupsPage() {
 }
 
 export function AccessUsersAdminPage() {
-  const { hasPermission, token } = useAuth();
+  const { hasPermission, token, user: sessionUser } = useAuth();
   const canManageUsers = hasPermission("access.users.manage");
   const usersCacheRef = useRef(new Map<string, PaginatedAccessUsers>());
   const userGroupsCacheRef = useRef<AccessGroup[] | null>(null);
@@ -632,36 +634,35 @@ export function AccessUsersAdminPage() {
   const [users, setUsers] = useState<AccessUser[]>([]);
   const [userGroups, setUserGroups] = useState<AccessGroup[]>([]);
   const [userClinics, setUserClinics] = useState<Clinic[]>([]);
-  const [userClinicDrafts, setUserClinicDrafts] = useState<Record<string, string[]>>({});
   const [userTotal, setUserTotal] = useState(0);
   const [userLimit, setUserLimit] = useState(initialUserFilters.limit);
   const [userSearch, setUserSearch] = useState(initialUserFilters.search);
   const [debouncedUserSearch, setDebouncedUserSearch] = useState(initialUserFilters.search);
   const [selectedUserGroupId, setSelectedUserGroupId] = useState(initialUserFilters.groupId);
+  const [selectedUserClinicId, setSelectedUserClinicId] = useState(initialUserFilters.clinicId);
   const [selectedUserStatus, setSelectedUserStatus] = useState<AccessUser["status"] | "">(initialUserFilters.status);
   const [draftUserLimit, setDraftUserLimit] = useState(initialUserFilters.limit);
   const [draftUserSearch, setDraftUserSearch] = useState(initialUserFilters.search);
   const [draftSelectedUserGroupId, setDraftSelectedUserGroupId] = useState(initialUserFilters.groupId);
+  const [draftSelectedUserClinicId, setDraftSelectedUserClinicId] = useState(initialUserFilters.clinicId);
   const [draftSelectedUserStatus, setDraftSelectedUserStatus] = useState<AccessUser["status"] | "">(initialUserFilters.status);
   const [isUserFiltersOpen, setIsUserFiltersOpen] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isUsersLoading, setIsUsersLoading] = useState(true);
   const [savingUserStatusId, setSavingUserStatusId] = useState<string | null>(null);
-  const [savingUserClinicsId, setSavingUserClinicsId] = useState<string | null>(null);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [statusConfirmation, setStatusConfirmation] = useState<{ user: AccessUser; nextStatus: AccessUser["status"] } | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<AccessUser | null>(null);
 
   const pendingUsersCount = users.filter((user) => user.status === "PENDING").length;
-  const activeUserFilterCount = [userSearch.trim(), selectedUserGroupId, selectedUserStatus, userLimit !== DEFAULT_USER_LIMIT ? String(userLimit) : ""].filter(Boolean).length;
+  const activeUserFilterCount = [userSearch.trim(), selectedUserGroupId, selectedUserClinicId, selectedUserStatus, userLimit !== DEFAULT_USER_LIMIT ? String(userLimit) : ""].filter(Boolean).length;
   const hasActiveUserFilters = activeUserFilterCount > 0;
 
   const applyUsersPage = useCallback((nextUsersPage: PaginatedAccessUsers) => {
     setUsers(nextUsersPage.items);
     setUserTotal(nextUsersPage.total);
     setUserLimit(nextUsersPage.limit);
-    setUserClinicDrafts(Object.fromEntries(
-      nextUsersPage.items.map((user) => [user.id, user.clinics.map((item) => item.clinic.id)])
-    ));
   }, []);
 
   const fetchUserGroups = useCallback(async () => {
@@ -684,14 +685,14 @@ export function AccessUsersAdminPage() {
     return nextClinicsPage.items;
   }, [token]);
 
-  const fetchUsersPage = useCallback(async (limit: number, search: string, groupId: string, status: string, bypassCache = false) => {
+  const fetchUsersPage = useCallback(async (limit: number, search: string, groupId: string, clinicId: string, status: string, bypassCache = false) => {
     if (!token) return { items: [], limit, total: 0 };
 
-    const cacheKey = buildUsersCacheKey(limit, search, groupId, status);
+    const cacheKey = buildUsersCacheKey(limit, search, groupId, clinicId, status);
     const cachedUsersPage = usersCacheRef.current.get(cacheKey);
     if (!bypassCache && cachedUsersPage) return cachedUsersPage;
 
-    const nextUsersPayload = await apiRequest<PaginatedAccessUsers | AccessUser[]>(token, buildUsersPath(limit, search, groupId, status));
+    const nextUsersPayload = await apiRequest<PaginatedAccessUsers | AccessUser[]>(token, buildUsersPath(limit, search, groupId, clinicId, status));
     const nextUsersPage = normalizeUsersPage(nextUsersPayload, limit);
     usersCacheRef.current.set(cacheKey, nextUsersPage);
     return nextUsersPage;
@@ -706,14 +707,14 @@ export function AccessUsersAdminPage() {
   }, [userSearch]);
 
   useEffect(() => {
-    writeStoredUserFilters(userSearch, selectedUserGroupId, selectedUserStatus, userLimit);
-  }, [selectedUserGroupId, selectedUserStatus, userLimit, userSearch]);
+    writeStoredUserFilters(userSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus, userLimit);
+  }, [selectedUserClinicId, selectedUserGroupId, selectedUserStatus, userLimit, userSearch]);
 
   useEffect(() => {
     if (!token) return;
 
     let isCurrent = true;
-    const cacheKey = buildUsersCacheKey(userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserStatus);
+    const cacheKey = buildUsersCacheKey(userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus);
     const cachedUsersPage = usersCacheRef.current.get(cacheKey);
 
     Promise.resolve().then(() => {
@@ -722,7 +723,7 @@ export function AccessUsersAdminPage() {
       if (!cachedUsersPage) setIsLoading(true);
     });
 
-    Promise.all([fetchUserGroups(), fetchUserClinics(), fetchUsersPage(userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserStatus)]).then(([nextGroups, nextClinics, nextUsersPage]) => {
+    Promise.all([fetchUserGroups(), fetchUserClinics(), fetchUsersPage(userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus)]).then(([nextGroups, nextClinics, nextUsersPage]) => {
       if (!isCurrent) return;
       setUserGroups(nextGroups);
       setUserClinics(nextClinics);
@@ -738,16 +739,18 @@ export function AccessUsersAdminPage() {
     return () => {
       isCurrent = false;
     };
-  }, [token, userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserStatus, applyUsersPage, fetchUserClinics, fetchUserGroups, fetchUsersPage]);
+  }, [token, userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus, applyUsersPage, fetchUserClinics, fetchUserGroups, fetchUsersPage]);
 
   const handleClearUserFilters = () => {
     setUserSearch("");
     setDebouncedUserSearch("");
     setSelectedUserGroupId("");
+    setSelectedUserClinicId("");
     setSelectedUserStatus("");
     setUserLimit(DEFAULT_USER_LIMIT);
     setDraftUserSearch("");
     setDraftSelectedUserGroupId("");
+    setDraftSelectedUserClinicId("");
     setDraftSelectedUserStatus("");
     setDraftUserLimit(DEFAULT_USER_LIMIT);
   };
@@ -755,6 +758,7 @@ export function AccessUsersAdminPage() {
   const handleOpenUserFilters = () => {
     setDraftUserSearch(userSearch);
     setDraftSelectedUserGroupId(selectedUserGroupId);
+    setDraftSelectedUserClinicId(selectedUserClinicId);
     setDraftSelectedUserStatus(selectedUserStatus);
     setDraftUserLimit(userLimit);
     setIsUserFiltersOpen(true);
@@ -764,6 +768,7 @@ export function AccessUsersAdminPage() {
     setUserSearch(draftUserSearch);
     setDebouncedUserSearch(draftUserSearch);
     setSelectedUserGroupId(draftSelectedUserGroupId);
+    setSelectedUserClinicId(draftSelectedUserClinicId);
     setSelectedUserStatus(draftSelectedUserStatus);
     setUserLimit(draftUserLimit);
     setIsUserFiltersOpen(false);
@@ -787,7 +792,7 @@ export function AccessUsersAdminPage() {
         body: JSON.stringify({ status: nextStatus })
       });
       usersCacheRef.current.clear();
-      const nextUsersPage = await fetchUsersPage(userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserStatus, true);
+      const nextUsersPage = await fetchUsersPage(userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus, true);
       applyUsersPage(nextUsersPage);
       setStatusConfirmation(null);
       setStatusMessage(nextStatus === "ACTIVE" ? "Usuário ativado e disponível nos fluxos do sistema." : "Usuário inativado e removido dos fluxos operacionais do sistema.");
@@ -799,31 +804,27 @@ export function AccessUsersAdminPage() {
     }
   };
 
-  const handleToggleUserClinic = async (userId: string, clinicId: string) => {
-    if (!token || !canManageUsers) return;
+  const handleConfirmDeleteUser = async () => {
+    if (!token || !deleteConfirmation || !canManageUsers) return;
 
-    const previousClinicIds = userClinicDrafts[userId] ?? [];
-    const nextClinicIds = toggleValue(previousClinicIds, clinicId);
-    setUserClinicDrafts((current) => ({ ...current, [userId]: nextClinicIds }));
-    setSavingUserClinicsId(userId);
+    setDeletingUserId(deleteConfirmation.id);
+    setIsUsersLoading(true);
 
-    await apiRequest<AccessUser>(token, `/api/access/users/${userId}/clinics`, {
-      method: "PATCH",
-      body: JSON.stringify({ clinicIds: nextClinicIds })
-    }).then((updatedUser) => {
+    try {
+      await apiRequest<{ id: string }>(token, `/api/access/users/${deleteConfirmation.id}`, {
+        method: "DELETE"
+      });
       usersCacheRef.current.clear();
-      setUsers((currentUsers) => currentUsers.map((user) => user.id === updatedUser.id ? updatedUser : user));
-      setUserClinicDrafts((current) => ({
-        ...current,
-        [updatedUser.id]: updatedUser.clinics.map((item) => item.clinic.id)
-      }));
-      setStatusMessage("Clínicas do usuário atualizadas.");
-    }).catch((error) => {
-      setUserClinicDrafts((current) => ({ ...current, [userId]: previousClinicIds }));
-      setStatusMessage(error instanceof Error ? error.message : "Não foi possível atualizar as clínicas do usuário.");
-    }).finally(() => {
-      setSavingUserClinicsId((currentUserId) => currentUserId === userId ? null : currentUserId);
-    });
+      const nextUsersPage = await fetchUsersPage(userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus, true);
+      applyUsersPage(nextUsersPage);
+      setStatusMessage("Usuário excluído.");
+      setDeleteConfirmation(null);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Não foi possível excluir o usuário.");
+    } finally {
+      setDeletingUserId(null);
+      setIsUsersLoading(false);
+    }
   };
 
   if (!hasPermission("access.users.read")) {
@@ -895,6 +896,13 @@ export function AccessUsersAdminPage() {
                     </select>
                   </label>
                   <label>
+                    <span>Clínica</span>
+                    <select aria-label="Filtrar por clínica" onChange={(event) => setDraftSelectedUserClinicId(event.target.value)} value={draftSelectedUserClinicId}>
+                      <option value="">Todas as clínicas</option>
+                      {userClinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}
+                    </select>
+                  </label>
+                  <label>
                     <span>Status</span>
                     <select aria-label="Filtrar por status" onChange={(event) => setDraftSelectedUserStatus(normalizeUserStatus(event.target.value))} value={draftSelectedUserStatus}>
                       <option value="">Todos os status</option>
@@ -923,17 +931,16 @@ export function AccessUsersAdminPage() {
           ) : null}
           {isUsersLoading ? <div className="inline-loading">Atualizando usuários...</div> : null}
           <div className={`access-user-list ${isUsersLoading ? "is-loading" : ""}`}>
-            {users.map((user) => (
+            {users.map((listedUser) => (
               <UserCard
                 canManageUsers={canManageUsers}
-                clinics={userClinics}
-                isSavingClinics={savingUserClinicsId === user.id}
-                isSavingStatus={savingUserStatusId === user.id}
-                key={user.id}
+                isCurrentUser={listedUser.id === (sessionUser?.id ?? "")}
+                isDeleting={deletingUserId === listedUser.id}
+                isSavingStatus={savingUserStatusId === listedUser.id}
+                key={listedUser.id}
+                onRequestDeleteUser={() => setDeleteConfirmation(listedUser)}
                 onRequestStatusChange={handleRequestUserStatusChange}
-                onToggleClinic={(clinicId) => handleToggleUserClinic(user.id, clinicId)}
-                selectedClinicIds={userClinicDrafts[user.id] ?? []}
-                user={user}
+                user={listedUser}
               />
             ))}
             {users.length === 0 ? <div className="empty-state">Nenhum usuário encontrado.</div> : null}
@@ -947,6 +954,14 @@ export function AccessUsersAdminPage() {
           onCancel={() => setStatusConfirmation(null)}
           onConfirm={handleConfirmUserStatusChange}
           user={statusConfirmation.user}
+        />
+      ) : null}
+      {deleteConfirmation ? (
+        <UserDeleteConfirmationModal
+          isSaving={deletingUserId === deleteConfirmation.id}
+          onCancel={() => setDeleteConfirmation(null)}
+          onConfirm={handleConfirmDeleteUser}
+          user={deleteConfirmation}
         />
       ) : null}
     </section>
@@ -1290,21 +1305,19 @@ function PasswordChangeReviewModal({
 
 function UserCard({
   canManageUsers,
-  clinics,
-  isSavingClinics,
+  isCurrentUser,
+  isDeleting,
   isSavingStatus,
-  onToggleClinic,
+  onRequestDeleteUser,
   onRequestStatusChange,
-  selectedClinicIds,
   user
 }: {
   canManageUsers: boolean;
-  clinics: Clinic[];
-  isSavingClinics: boolean;
+  isCurrentUser: boolean;
+  isDeleting: boolean;
   isSavingStatus: boolean;
-  onToggleClinic: (clinicId: string) => void;
+  onRequestDeleteUser: () => void;
   onRequestStatusChange: (user: AccessUser) => void;
-  selectedClinicIds: string[];
   user: AccessUser;
 }) {
   const statusBadge = getUserStatusBadge(user.status);
@@ -1320,22 +1333,20 @@ function UserCard({
       </div>
       <p>{user.groups.map((group) => group.accessGroup.name).join(", ") || "Sem grupo vinculado"}</p>
       <div className="user-clinic-scope">
-        <strong>Clínicas diretas</strong>
-        <div className="access-checklist compact-checklist">
-          {clinics.map((clinic) => (
-            <label className="choice-pill" key={clinic.id} title={clinic.code ?? clinic.name}>
-              <input checked={selectedClinicIds.includes(clinic.id)} disabled={!canManageUsers || isSavingClinics} onChange={() => onToggleClinic(clinic.id)} type="checkbox" />
-              {clinic.name}{clinic.code ? ` (${clinic.code})` : ""}
-            </label>
-          ))}
-          {clinics.length === 0 ? <span>Nenhuma clínica ativa encontrada.</span> : null}
-        </div>
+        <strong>Escopo de clínicas</strong>
+        <p>O acesso às clínicas é definido exclusivamente pelos grupos vinculados ao usuário.</p>
       </div>
       <div className="user-card-actions">
         {canManageUsers ? (
           <button className="secondary-button user-status-toggle" disabled={isSavingStatus} onClick={() => onRequestStatusChange(user)} type="button">
             <ToggleIcon aria-hidden="true" size={16} />
             {isSavingStatus ? "Atualizando..." : nextStatus === "ACTIVE" ? "Ativar" : "Inativar"}
+          </button>
+        ) : null}
+        {canManageUsers ? (
+          <button className="danger-button" disabled={isDeleting || isCurrentUser} onClick={onRequestDeleteUser} type="button">
+            <Trash2 aria-hidden="true" size={16} />
+            {isDeleting ? "Excluindo..." : "Excluir"}
           </button>
         ) : null}
         <Link className="secondary-button" href={`/usuarios/${user.id}`}><Eye aria-hidden="true" size={16} />Abrir detalhes</Link>
@@ -1377,6 +1388,38 @@ function UserStatusConfirmationModal({
           <button className={confirmation.tone === "danger" ? "danger-button" : "primary-button"} disabled={isSaving} onClick={onConfirm} type="button">
             {isSaving ? "Atualizando..." : confirmation.actionLabel}
           </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function UserDeleteConfirmationModal({
+  isSaving,
+  onCancel,
+  onConfirm,
+  user
+}: {
+  isSaving: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  user: AccessUser;
+}) {
+  return (
+    <div className="confirmation-modal-layer" role="presentation">
+      <button aria-label="Cancelar exclusão de usuário" className="confirmation-modal-backdrop" disabled={isSaving} onClick={onCancel} type="button" />
+      <section aria-labelledby="user-delete-confirmation-title" aria-modal="true" className="confirmation-modal-panel" role="dialog">
+        <div className="confirmation-modal-heading">
+          <span className="confirmation-modal-icon is-danger"><Trash2 aria-hidden="true" size={20} /></span>
+          <div>
+            <span className="eyebrow">Confirmação obrigatória</span>
+            <h3 id="user-delete-confirmation-title">Excluir usuário</h3>
+          </div>
+        </div>
+        <p>Esta ação remove o usuário {user.name} de forma definitiva. O histórico de auditoria será preservado.</p>
+        <div className="confirmation-modal-actions">
+          <button className="secondary-button" disabled={isSaving} onClick={onCancel} type="button">Cancelar</button>
+          <button className="danger-button" disabled={isSaving} onClick={onConfirm} type="button">{isSaving ? "Excluindo..." : "Excluir usuário"}</button>
         </div>
       </section>
     </div>

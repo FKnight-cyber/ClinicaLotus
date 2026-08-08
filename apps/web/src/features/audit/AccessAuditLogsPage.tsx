@@ -74,9 +74,12 @@ const accessAuditConfig: AuditLogsPageConfig = {
   ],
   actionLabels: {
   create_group: "Grupo criado",
+  delete_user: "Usuário excluído",
+  update_group_clinics: "Clínicas do grupo atualizadas",
   update_group_permissions: "Permissões do grupo atualizadas",
   create_user: "Usuário criado",
   update_user: "Dados do usuário atualizados",
+  update_user_clinics: "Clínicas do usuário atualizadas",
   update_user_groups: "Grupos do usuário atualizados",
   update_user_status: "Status do usuário atualizado",
   update_own_profile: "Perfil atualizado"
@@ -240,6 +243,33 @@ function formatListDiff(beforeValues: string[], afterValues: string[], emptyMess
   return parts.join(". ") || emptyMessage;
 }
 
+function formatClinicChangeLabel(payload: Record<string, unknown> | null | undefined) {
+  const clinic = payload?.clinic;
+  if (clinic && typeof clinic === "object") {
+    const clinicRecord = clinic as { name?: unknown; code?: unknown };
+    const clinicName = typeof clinicRecord.name === "string" ? clinicRecord.name : "";
+    const clinicCode = typeof clinicRecord.code === "string" ? clinicRecord.code : "";
+    if (clinicName) return clinicCode ? `${clinicName} (${clinicCode})` : clinicName;
+  }
+
+  const clinics = payload?.clinics;
+  if (Array.isArray(clinics) && clinics.length > 0) {
+    const firstClinic = clinics[0];
+    if (firstClinic && typeof firstClinic === "object" && "clinic" in firstClinic) {
+      const nestedClinic = (firstClinic as { clinic?: unknown }).clinic;
+      if (nestedClinic && typeof nestedClinic === "object") {
+        const clinicRecord = nestedClinic as { name?: unknown; code?: unknown };
+        const clinicName = typeof clinicRecord.name === "string" ? clinicRecord.name : "";
+        const clinicCode = typeof clinicRecord.code === "string" ? clinicRecord.code : "";
+        if (clinicName) return clinicCode ? `${clinicName} (${clinicCode})` : clinicName;
+      }
+    }
+  }
+
+  const clinicId = payload?.clinicId;
+  return typeof clinicId === "string" && clinicId ? clinicId : "não informada";
+}
+
 function readAuditDetails(log: AccessAuditLog) {
   const beforePayload = parseAuditPayload(log.beforeData);
   const afterPayload = parseAuditPayload(log.afterData);
@@ -267,7 +297,10 @@ function readAuditDetails(log: AccessAuditLog) {
   if (log.action === "activate_patient" || log.action === "inactivate_patient") return `Status alterado para ${formatStatus(afterPayload?.status)}.`;
 
   if (log.action === "update_patient") {
+    const beforeClinicLabel = formatClinicChangeLabel(beforePayload);
+    const afterClinicLabel = formatClinicChangeLabel(afterPayload);
     const changes = [
+      beforeClinicLabel !== afterClinicLabel ? `Clínica: ${beforeClinicLabel} -> ${afterClinicLabel}` : "",
       beforePayload?.name !== afterPayload?.name ? `Nome: ${beforePayload?.name ?? "não informado"} -> ${afterPayload?.name ?? "não informado"}` : "",
       beforePayload?.cpf !== afterPayload?.cpf ? `CPF: ${beforePayload?.cpf ?? "não informado"} -> ${afterPayload?.cpf ?? "não informado"}` : "",
       beforePayload?.rg !== afterPayload?.rg ? `RG: ${beforePayload?.rg ?? "não informado"} -> ${afterPayload?.rg ?? "não informado"}` : "",
@@ -278,6 +311,10 @@ function readAuditDetails(log: AccessAuditLog) {
 
   if (log.action === "update_user_status") {
     return `Status alterado de ${formatStatus(beforePayload?.status)} para ${formatStatus(afterPayload?.status)}.`;
+  }
+
+  if (log.action === "delete_user") {
+    return `Usuário excluído: ${beforePayload?.name ?? readAuditTarget(log)}.`;
   }
 
   if (log.action === "update_group_permissions") {

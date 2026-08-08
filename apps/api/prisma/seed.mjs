@@ -46,6 +46,7 @@ const basePermissions = [
   ["patients.update", "patients", "update", "Editar pacientes"],
   ["patients.inactivate", "patients", "inactivate", "Ativar e inativar pacientes"],
   ["prontuario.read", "prontuario", "read", "Visualizar prontuário"],
+  ["prontuario.read_network", "prontuario", "read_network", "Visualizar prontuário consolidado da rede"],
   ["medical_evolutions.read", "medical_evolutions", "read", "Visualizar evoluções"],
   ["medical_evolutions.create", "medical_evolutions", "create", "Criar evoluções"],
   ["medical_evolutions.update", "medical_evolutions", "update", "Editar rascunhos de evoluções"],
@@ -214,19 +215,12 @@ async function seedAnamnesisTemplates() {
 
 async function seedDefaultClinic() {
   const defaultClinic = await prisma.clinic.upsert({
-    where: { code: "PRINCIPAL" },
-    update: { name: "Clínica principal", status: "ACTIVE" },
-    create: { name: "Clínica principal", code: "PRINCIPAL", status: "ACTIVE" }
+    where: { code: "CLINICA-1" },
+    update: { name: "Clínica 1", document: "00.000.000/0001-00", status: "ACTIVE" },
+    create: { name: "Clínica 1", code: "CLINICA-1", document: "00.000.000/0001-00", status: "ACTIVE" }
   });
 
-  const users = await prisma.user.findMany({ select: { id: true } });
-  for (const user of users) {
-    await prisma.userClinic.upsert({
-      where: { userId_clinicId: { userId: user.id, clinicId: defaultClinic.id } },
-      update: { status: "ACTIVE" },
-      create: { userId: user.id, clinicId: defaultClinic.id, status: "ACTIVE", isDefault: true }
-    });
-  }
+  await prisma.userClinic.deleteMany({});
 
   const accessGroups = await prisma.accessGroup.findMany({ select: { id: true } });
   for (const accessGroup of accessGroups) {
@@ -239,19 +233,15 @@ async function seedDefaultClinic() {
 
   const patients = await prisma.patient.findMany({ select: { id: true } });
   for (const patient of patients) {
-    await prisma.patientClinic.upsert({
-      where: { patientId_clinicId: { patientId: patient.id, clinicId: defaultClinic.id } },
-      update: { status: "ACTIVE" },
-      create: { patientId: patient.id, clinicId: defaultClinic.id, status: "ACTIVE" }
-    });
+    await prisma.patient.update({ where: { id: patient.id }, data: { clinicId: defaultClinic.id } });
   }
 
-  await prisma.anamnesisRecord.updateMany({ where: { clinicId: null }, data: { clinicId: defaultClinic.id } });
-  await prisma.medicalEvolution.updateMany({ where: { clinicId: null }, data: { clinicId: defaultClinic.id } });
-  await prisma.medicalRecordEntry.updateMany({ where: { clinicId: null }, data: { clinicId: defaultClinic.id } });
-  await prisma.clinicalDocument.updateMany({ where: { clinicId: null }, data: { clinicId: defaultClinic.id } });
+  await prisma.$executeRaw`UPDATE "AnamnesisRecord" SET "clinicId" = ${defaultClinic.id}`;
+  await prisma.$executeRaw`UPDATE "MedicalEvolution" SET "clinicId" = ${defaultClinic.id}`;
+  await prisma.$executeRaw`UPDATE "MedicalRecordEntry" SET "clinicId" = ${defaultClinic.id}`;
+  await prisma.$executeRaw`UPDATE "ClinicalDocument" SET "clinicId" = ${defaultClinic.id}`;
   await prisma.auditLog.updateMany({
-    where: { clinicId: null, entity: { in: ["patient", "anamnesis_record", "medical_evolution"] } },
+    where: { entity: { in: ["patient", "anamnesis_record", "medical_evolution"] } },
     data: { clinicId: defaultClinic.id }
   });
 

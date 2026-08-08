@@ -19,4 +19,9 @@ export class CreateUserDto {
   @IsArray()
   @IsString({ each: true })
   groupIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  clinicIds?: string[];
 }

@@ -18,6 +18,7 @@ type Patient = {
   id: string;
   name: string;
   status: PatientStatus;
+  clinics?: Array<{ clinicId: string; status: PatientStatus; clinic: PatientClinicFilter }>;
   birthDate?: string | null;
   document?: string | null;
   cpf?: string | null;
@@ -58,6 +59,19 @@ const emptyPatientForm: PatientFormState = {
   rg: "",
   clinicId: ""
 };
+
+function getEditablePatientClinicId(patient: Patient, fallbackClinicId = "") {
+  if (fallbackClinicId && patient.clinics?.some((clinic) => clinic.clinicId === fallbackClinicId)) return fallbackClinicId;
+  return patient.clinics?.find((clinic) => clinic.status === "ACTIVE")?.clinicId ?? patient.clinics?.[0]?.clinicId ?? fallbackClinicId;
+}
+
+function getPatientClinicLabel(patient: Patient, selectedClinicId = "") {
+  const clinicLink = (selectedClinicId ? patient.clinics?.find((clinic) => clinic.clinicId === selectedClinicId) : null)
+    ?? patient.clinics?.find((clinic) => clinic.status === "ACTIVE")
+    ?? patient.clinics?.[0];
+  if (!clinicLink) return "Sem clínica vinculada";
+  return clinicLink.clinic.code ? `${clinicLink.clinic.name} (${clinicLink.clinic.code})` : clinicLink.clinic.name;
+}
 
 function normalizePatientsPage(payload: PaginatedPatients | Patient[], fallbackLimit: number, fallbackOffset: number): PaginatedPatients {
   if (Array.isArray(payload)) {
@@ -219,6 +233,7 @@ export function PacientesPage() {
   const [editingPatient, setEditingPatient] = useState<Patient | null>(null);
   const [statusConfirmation, setStatusConfirmation] = useState<{ patient: Patient; nextStatus: PatientStatus } | null>(null);
   const [patientForm, setPatientForm] = useState<PatientFormState>(emptyPatientForm);
+  const [editingPatientClinicId, setEditingPatientClinicId] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isPatientsLoading, setIsPatientsLoading] = useState(true);
@@ -333,13 +348,16 @@ export function PacientesPage() {
 
   const openCreatePatientModal = () => {
     setEditingPatient(null);
+    setEditingPatientClinicId("");
     setPatientForm({ ...emptyPatientForm, clinicId: effectivePatientClinicId || (availablePatientClinics.length === 1 ? availablePatientClinics[0].id : "") });
     setIsPatientModalOpen(true);
   };
 
   const openEditPatientModal = (patient: Patient) => {
+    const currentClinicId = getEditablePatientClinicId(patient, effectivePatientClinicId);
     setEditingPatient(patient);
-    setPatientForm(getPatientForm(patient));
+    setEditingPatientClinicId(currentClinicId);
+    setPatientForm({ ...getPatientForm(patient), clinicId: currentClinicId });
     setIsPatientModalOpen(true);
   };
 
@@ -350,7 +368,8 @@ export function PacientesPage() {
 
     try {
       if (editingPatient) {
-        await apiRequest<Patient>(token, `/api/patients/${editingPatient.id}`, {
+        const clinicQuery = editingPatientClinicId ? `?clinicId=${encodeURIComponent(editingPatientClinicId)}` : "";
+        await apiRequest<Patient>(token, `/api/patients/${editingPatient.id}${clinicQuery}`, {
           method: "PATCH",
           body: JSON.stringify(toPatientPayload(patientForm))
         });
@@ -364,6 +383,7 @@ export function PacientesPage() {
       }
 
       setIsPatientModalOpen(false);
+      setEditingPatientClinicId("");
       setPatientForm(emptyPatientForm);
       await refreshCurrentPage();
     } catch (error) {
@@ -495,6 +515,7 @@ export function PacientesPage() {
           <thead>
             <tr>
               <th>Paciente</th>
+              <th>Clínica</th>
               <th>Documentos</th>
               <th>Nascimento</th>
               <th>Status</th>
@@ -505,7 +526,7 @@ export function PacientesPage() {
           <tbody>
             {patients.length === 0 ? (
               <tr>
-                <td colSpan={6}>Nenhum paciente encontrado.</td>
+                <td colSpan={7}>Nenhum paciente encontrado.</td>
               </tr>
             ) : (
               patients.map((patient) => {
@@ -516,6 +537,7 @@ export function PacientesPage() {
                 return (
                   <tr key={patient.id}>
                     <td><strong>{patient.name}</strong></td>
+                    <td>{getPatientClinicLabel(patient, effectivePatientClinicId)}</td>
                     <td>{formatPatientDocuments(patient)}</td>
                     <td>{formatBirthDate(patient.birthDate)}</td>
                     <td>
@@ -573,14 +595,23 @@ export function PacientesPage() {
                   </select>
                 </label>
               ) : null}
+              {editingPatient ? (
+                <label className="patient-form-full">
+                  <span>Clínica do paciente</span>
+                  <select onChange={(event) => setPatientForm((form) => ({ ...form, clinicId: event.target.value }))} required value={patientForm.clinicId}>
+                    <option value="">Selecione a clínica</option>
+                    {availablePatientClinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</option>)}
+                  </select>
+                </label>
+              ) : null}
               <label><span>Nome completo</span><input autoFocus onChange={(event) => setPatientForm((form) => ({ ...form, name: event.target.value }))} required value={patientForm.name} /></label>
               <label><span>Nascimento</span><input onChange={(event) => setPatientForm((form) => ({ ...form, birthDate: event.target.value }))} type="date" value={patientForm.birthDate} /></label>
               <label><span>CPF</span><input onChange={(event) => setPatientForm((form) => ({ ...form, cpf: event.target.value }))} placeholder="CPF" value={patientForm.cpf} /></label>
               <label><span>RG</span><input onChange={(event) => setPatientForm((form) => ({ ...form, rg: event.target.value }))} placeholder="RG" value={patientForm.rg} /></label>
               <label className="patient-form-full"><span>Documento complementar</span><input onChange={(event) => setPatientForm((form) => ({ ...form, document: event.target.value }))} placeholder="Outro documento" value={patientForm.document} /></label>
               <div className="confirmation-modal-actions patient-form-full">
-                <button className="secondary-button" disabled={isSavingPatient} onClick={() => setIsPatientModalOpen(false)} type="button">Cancelar</button>
-                <button className="primary-button" disabled={isSavingPatient || !patientForm.name.trim() || (!editingPatient && mustChoosePatientClinic && !patientForm.clinicId)} type="submit">{isSavingPatient ? "Salvando..." : "Salvar paciente"}</button>
+                <button className="secondary-button" disabled={isSavingPatient} onClick={() => { setIsPatientModalOpen(false); setEditingPatientClinicId(""); }} type="button">Cancelar</button>
+                <button className="primary-button" disabled={isSavingPatient || !patientForm.name.trim() || !patientForm.clinicId} type="submit">{isSavingPatient ? "Salvando..." : "Salvar paciente"}</button>
               </div>
             </form>
           </section>

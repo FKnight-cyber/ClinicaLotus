@@ -170,8 +170,8 @@ export async function createAnamneseRecord(token: string, payload: AnamnesePaylo
   return normalizedRecord;
 }
 
-export async function saveAnamneseRecord(token: string, recordId: string, payload: AnamnesePayload) {
-  const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}`, {
+export async function saveAnamneseRecord(token: string, recordId: string, payload: AnamnesePayload, clinicId?: string) {
+  const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}${buildClinicQuery(clinicId)}`, {
     method: "PATCH",
     body: JSON.stringify(payload)
   });
@@ -180,15 +180,15 @@ export async function saveAnamneseRecord(token: string, recordId: string, payloa
   return normalizedRecord;
 }
 
-export async function deleteAnamneseDraftRecord(token: string, recordId: string) {
-  await apiRequest<{ id: string }>(token, `/api/anamneses/${recordId}`, {
+export async function deleteAnamneseDraftRecord(token: string, recordId: string, clinicId?: string) {
+  await apiRequest<{ id: string }>(token, `/api/anamneses/${recordId}${buildClinicQuery(clinicId)}`, {
     method: "DELETE"
   });
   removeAnamneseRecordFromCache(token, recordId);
 }
 
-export async function finalizeAnamneseRecord(token: string, recordId: string) {
-  const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}/finalize`, {
+export async function finalizeAnamneseRecord(token: string, recordId: string, clinicId?: string) {
+  const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}/finalize${buildClinicQuery(clinicId)}`, {
     method: "POST"
   });
   const normalizedRecord = normalizeAnamneseRecord(record);
@@ -199,8 +199,8 @@ export async function finalizeAnamneseRecord(token: string, recordId: string) {
   return normalizedRecord;
 }
 
-export async function completeAnamneseTemplate(token: string, recordId: string, templateId: TemplateId) {
-  const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}/templates/${templateId}/complete`, {
+export async function completeAnamneseTemplate(token: string, recordId: string, templateId: TemplateId, clinicId?: string) {
+  const record = await apiRequest<AnamneseRecord>(token, `/api/anamneses/${recordId}/templates/${templateId}/complete${buildClinicQuery(clinicId)}`, {
     method: "POST"
   });
   const normalizedRecord = normalizeAnamneseRecord(record);
@@ -218,18 +218,18 @@ export function fetchPatients(token: string, search = "", clinicId?: string) {
   return getCached(patientsCache, buildCacheKey(token, "patients", clinicCacheKey, normalizedSearch.toLowerCase()), patientsCacheTtlMs, () => apiRequest<PatientSummary[]>(token, `/api/patients${query}`));
 }
 
-export function fetchPatientMedicalRecord(token: string, patientId: string) {
-  return getCached(medicalRecordCache, buildCacheKey(token, "medical-record", patientId), medicalRecordCacheTtlMs, () => apiRequest<MedicalRecordEntry[]>(token, `/api/patients/${patientId}/prontuario`));
+export function fetchPatientMedicalRecord(token: string, patientId: string, clinicId?: string) {
+  return getCached(medicalRecordCache, buildCacheKey(token, "medical-record", clinicId || "active", patientId), medicalRecordCacheTtlMs, () => apiRequest<MedicalRecordEntry[]>(token, `/api/patients/${patientId}/prontuario${buildClinicQuery(clinicId)}`));
 }
 
-export function emitAnamnesePdfDocument(token: string, recordId: string) {
-  return apiRequest<ClinicalDocumentSummary>(token, `/api/anamneses/${recordId}/documents/pdf`, {
+export function emitAnamnesePdfDocument(token: string, recordId: string, clinicId?: string) {
+  return apiRequest<ClinicalDocumentSummary>(token, `/api/anamneses/${recordId}/documents/pdf${buildClinicQuery(clinicId)}`, {
     method: "POST"
   });
 }
 
-export function emitAnamneseTemplatePdfDocument(token: string, recordId: string, templateId: TemplateId) {
-  return apiRequest<ClinicalDocumentSummary>(token, `/api/anamneses/${recordId}/templates/${templateId}/documents/pdf`, {
+export function emitAnamneseTemplatePdfDocument(token: string, recordId: string, templateId: TemplateId, clinicId?: string) {
+  return apiRequest<ClinicalDocumentSummary>(token, `/api/anamneses/${recordId}/templates/${templateId}/documents/pdf${buildClinicQuery(clinicId)}`, {
     method: "POST"
   });
 }

@@ -26,6 +26,7 @@ type MedicalEvolutionUserRelation = {
 };
 
 type ListQueryOptions = {
+  clinicScope?: string;
   clinicId?: string;
   limit?: string;
   offset?: string;
@@ -52,7 +53,7 @@ export class MedicalEvolutionsService {
   ) {}
 
   async listByPatient(user: AuthenticatedUser, patientId: string, options?: ListQueryOptions) {
-    const clinicIds = this.resolveScopedClinicIds(user, options?.clinicId);
+    const clinicIds = await this.resolveScopedClinicIds(user, options?.clinicId, options?.clinicScope);
     const clinicScopeKey = this.buildClinicScopeKey(clinicIds);
     await this.ensurePatientInAnyClinic(patientId, clinicIds);
     const pagination = parsePaginationOptions(options);
@@ -73,15 +74,13 @@ export class MedicalEvolutionsService {
     });
   }
 
-  async getById(user: AuthenticatedUser, id: string) {
-    const clinicId = this.resolveDefaultClinicId(user);
-    const evolution = await this.findEvolution(id, clinicId);
+  async getById(user: AuthenticatedUser, id: string, requestedClinicId?: string) {
+    const evolution = await this.findEvolutionInClinics(id, await this.resolveScopedClinicIds(user, requestedClinicId));
     return this.toResponse(evolution);
   }
 
   async create(user: AuthenticatedUser, patientId: string, dto: CreateMedicalEvolutionDto) {
-    const clinicId = this.resolveWriteClinicId(user, dto.clinicId);
-    await this.ensurePatientInClinic(patientId, clinicId);
+    const clinicId = await this.resolvePatientClinicIdForWrite(user, patientId);
     const text = dto.text.trim();
 
     if (!text) {
@@ -108,9 +107,9 @@ export class MedicalEvolutionsService {
     return response;
   }
 
-  async update(user: AuthenticatedUser, id: string, dto: UpdateMedicalEvolutionDto) {
-    const clinicId = this.resolveDefaultClinicId(user);
-    const existingEvolution = await this.findEvolution(id, clinicId);
+  async update(user: AuthenticatedUser, id: string, dto: UpdateMedicalEvolutionDto, requestedClinicId?: string) {
+    const existingEvolution = await this.findEvolutionInClinics(id, await this.resolveScopedClinicIds(user, requestedClinicId));
+    const clinicId = this.requireEvolutionClinicId(existingEvolution);
 
     if (existingEvolution.status !== "DRAFT") {
       throw new BadRequestException("Apenas rascunhos de evolução podem ser editados.");
@@ -141,9 +140,9 @@ export class MedicalEvolutionsService {
     return response;
   }
 
-  async finalize(user: AuthenticatedUser, id: string) {
-    const clinicId = this.resolveDefaultClinicId(user);
-    const existingEvolution = await this.findEvolution(id, clinicId);
+  async finalize(user: AuthenticatedUser, id: string, requestedClinicId?: string) {
+    const existingEvolution = await this.findEvolutionInClinics(id, await this.resolveScopedClinicIds(user, requestedClinicId));
+    const clinicId = this.requireEvolutionClinicId(existingEvolution);
 
     if (existingEvolution.status === "FINALIZED") {
       return this.toResponse(existingEvolution);
@@ -187,15 +186,15 @@ export class MedicalEvolutionsService {
     return response;
   }
 
-  async cancel(user: AuthenticatedUser, id: string, dto: CancelMedicalEvolutionDto) {
-    const clinicId = this.resolveDefaultClinicId(user);
+  async cancel(user: AuthenticatedUser, id: string, dto: CancelMedicalEvolutionDto, requestedClinicId?: string) {
     const reason = dto.reason.trim();
 
     if (!reason) {
       throw new BadRequestException("Informe o motivo do cancelamento.");
     }
 
-    const existingEvolution = await this.findEvolution(id, clinicId);
+    const existingEvolution = await this.findEvolutionInClinics(id, await this.resolveScopedClinicIds(user, requestedClinicId));
+    const clinicId = this.requireEvolutionClinicId(existingEvolution);
 
     if (existingEvolution.status === "CANCELED") {
       return this.toResponse(existingEvolution);
@@ -225,9 +224,9 @@ export class MedicalEvolutionsService {
     return response;
   }
 
-  async emitPdfDocument(user: AuthenticatedUser, id: string) {
-    const clinicId = this.resolveDefaultClinicId(user);
-    const evolution = await this.findEvolution(id, clinicId);
+  async emitPdfDocument(user: AuthenticatedUser, id: string, requestedClinicId?: string) {
+    const evolution = await this.findEvolutionInClinics(id, await this.resolveScopedClinicIds(user, requestedClinicId));
+    const clinicId = this.requireEvolutionClinicId(evolution);
 
     if (evolution.status !== "FINALIZED") {
       throw new BadRequestException("Apenas evoluções finalizadas podem gerar documento rastreável.");
@@ -264,15 +263,26 @@ export class MedicalEvolutionsService {
   }
 
   private async ensurePatientInClinic(patientId: string, clinicId: string) {
-    const patient = await this.prisma.patientClinic.findUnique({ where: { patientId_clinicId: { patientId, clinicId } }, select: { status: true } });
+    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, clinicId, status: "ACTIVE" }, select: { id: true } });
 
-    if (!patient || patient.status !== "ACTIVE") {
+    if (!patient) {
       throw new NotFoundException("Paciente não encontrado.");
     }
   }
 
+  private async resolvePatientClinicIdForWrite(user: AuthenticatedUser, patientId: string) {
+    const patient = await this.prisma.patient.findFirst({
+      where: { id: patientId, status: "ACTIVE" },
+      select: { clinicId: true }
+    });
+
+    if (!patient) throw new NotFoundException("Paciente não encontrado.");
+    if (!user.availableClinicIds.includes(patient.clinicId)) throw new BadRequestException("Paciente vinculado a uma clínica fora do escopo do usuário.");
+    return patient.clinicId;
+  }
+
   private async ensurePatientInAnyClinic(patientId: string, clinicIds: string[]) {
-    const patient = await this.prisma.patientClinic.findFirst({ where: { patientId, clinicId: { in: clinicIds }, status: "ACTIVE" }, select: { clinicId: true } });
+    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, clinicId: { in: clinicIds }, status: "ACTIVE" }, select: { clinicId: true } });
 
     if (!patient) {
       throw new NotFoundException("Paciente não encontrado.");
@@ -290,6 +300,24 @@ export class MedicalEvolutionsService {
     }
 
     return evolution;
+  }
+
+  private async findEvolutionInClinics(id: string, clinicIds: string[]) {
+    const evolution = await this.prisma.medicalEvolution.findFirst({
+      where: { id, clinicId: { in: clinicIds } },
+      include: this.userRelations()
+    });
+
+    if (!evolution) {
+      throw new NotFoundException("Evolução não encontrada.");
+    }
+
+    return evolution;
+  }
+
+  private requireEvolutionClinicId(evolution: { clinicId: string | null }) {
+    if (!evolution.clinicId) throw new BadRequestException("Evolução sem clínica vinculada.");
+    return evolution.clinicId;
   }
 
   private async createMedicalRecordEntry(userId: string, evolution: MedicalEvolution) {
@@ -337,16 +365,21 @@ export class MedicalEvolutionsService {
     return normalizedClinicId;
   }
 
-  private resolveScopedClinicIds(user: AuthenticatedUser, requestedClinicId?: string) {
+  private async resolveScopedClinicIds(user: AuthenticatedUser, requestedClinicId?: string, clinicScope?: string) {
     const normalizedClinicId = requestedClinicId?.trim();
     if (normalizedClinicId) return [this.resolveScopedClinicId(user, normalizedClinicId)];
+    if (clinicScope === "network") {
+      if (!this.hasPermission(user.permissions, "prontuario.read_network")) throw new BadRequestException("Usuário sem permissão para visualizar a rede consolidada.");
+      const clinics = await this.prisma.clinic.findMany({ where: { status: "ACTIVE" }, select: { id: true } });
+      if (clinics.length === 0) throw new BadRequestException("Nenhuma clínica ativa disponível.");
+      return clinics.map((clinic) => clinic.id);
+    }
     if (user.availableClinicIds.length === 0) throw new BadRequestException("Usuário sem clínica disponível.");
     return user.availableClinicIds;
   }
 
   private resolveDefaultClinicId(user: AuthenticatedUser) {
     if (user.availableClinicIds.length === 1) return user.availableClinicIds[0];
-    if (user.activeClinicId && user.availableClinicIds.includes(user.activeClinicId)) return user.activeClinicId;
     throw new BadRequestException("Selecione uma clínica para continuar.");
   }
 

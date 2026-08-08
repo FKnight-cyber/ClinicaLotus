@@ -28,6 +28,7 @@ export type MedicalEvolutionUser = {
 export type MedicalEvolution = {
   id: string;
   patientId: string;
+  clinicId?: string | null;
   status: MedicalEvolutionStatus;
   evolutionDate: string;
   text: string;

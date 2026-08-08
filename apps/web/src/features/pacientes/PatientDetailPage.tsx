@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, ArrowLeft, CalendarClock, ClipboardList, FileDown, FileText, ToggleLeft, ToggleRight, UserRound } from "lucide-react";
+import { Activity, ArrowLeft, Building2, CalendarClock, ClipboardList, FileDown, FileText, ToggleLeft, ToggleRight, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useShellTitle } from "@/components/shell/AppShell";
 import { useAuth } from "@/features/auth/AuthProvider";
@@ -14,6 +14,7 @@ type PatientDetail = {
   id: string;
   name: string;
   status: PatientStatus;
+  clinics: PatientClinicLink[];
   birthDate?: string | null;
   document?: string | null;
   cpf?: string | null;
@@ -25,6 +26,19 @@ type PatientDetail = {
 };
 
 type PatientStatusResponse = Omit<PatientDetail, "anamneses" | "evolutions">;
+
+type PatientClinicLink = {
+  clinicId: string;
+  status: PatientStatus;
+  firstSeenAt: string;
+  lastSeenAt?: string | null;
+  clinic: {
+    id: string;
+    name: string;
+    code?: string | null;
+    status: "ACTIVE" | "INACTIVE";
+  };
+};
 
 type ClinicalDocumentSummary = {
   id: string;
@@ -124,6 +138,14 @@ function countByStatus(items: Array<{ status: ClinicalStatus }>, status: Clinica
   return items.filter((item) => item.status === status).length;
 }
 
+function formatClinicLabel(clinicLink: PatientClinicLink) {
+  return clinicLink.clinic.code ? `${clinicLink.clinic.name} (${clinicLink.clinic.code})` : clinicLink.clinic.name;
+}
+
+function isCurrentClinicContext(clinicLink: PatientClinicLink, currentClinicId?: string) {
+  return Boolean(currentClinicId) && clinicLink.clinicId === currentClinicId;
+}
+
 function buildPatientDetailPath(patientId: string, clinicId?: string) {
   const params = new URLSearchParams();
   if (clinicId) params.set("clinicId", clinicId);
@@ -132,13 +154,12 @@ function buildPatientDetailPath(patientId: string, clinicId?: string) {
 }
 
 export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; patientId: string }) {
-  const { activeClinic, hasPermission, token, user } = useAuth();
+  const { hasPermission, token, user } = useAuth();
   const canReadPatients = hasPermission("patients.read");
   const canReadAnamnese = hasPermission("anamnese.read");
   const canReadEvolutions = hasPermission("medical_evolutions.read");
-  const isViewingFilteredClinic = Boolean(clinicId && clinicId !== activeClinic?.id);
-  const canUpdatePatientStatus = hasPermission("patients.inactivate") && !isViewingFilteredClinic;
-  const canGenerateReport = !isViewingFilteredClinic;
+  const canUpdatePatientStatus = hasPermission("patients.inactivate");
+  const canGenerateReport = true;
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -190,12 +211,12 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
     setIsSavingStatus(true);
 
     try {
-      const updatedPatient = await apiRequest<PatientStatusResponse>(token, `/api/patients/${patient.id}/status`, {
+      const updatedPatient = await apiRequest<PatientStatusResponse>(token, `/api/patients/${patient.id}/status${clinicId ? `?clinicId=${encodeURIComponent(clinicId)}` : ""}`, {
         method: "PATCH",
         body: JSON.stringify({ status: nextStatus })
       });
       setPatient((currentPatient) => currentPatient ? { ...currentPatient, ...updatedPatient } : null);
-      setMessage(nextStatus === "ACTIVE" ? "Paciente ativado." : "Paciente inativado no cadastro administrativo.");
+      setMessage(nextStatus === "ACTIVE" ? "Paciente ativado nesta clínica." : "Paciente inativado nesta clínica.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível atualizar o status do paciente.");
     } finally {
@@ -209,7 +230,7 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
     setMessage("Gerando relatório do paciente...");
 
     try {
-      const document = await apiRequest<ClinicalDocumentSummary>(token, `/api/patients/${patient.id}/report/pdf`, { method: "POST" });
+      const document = await apiRequest<ClinicalDocumentSummary>(token, `/api/patients/${patient.id}/report/pdf${clinicId ? `?clinicId=${encodeURIComponent(clinicId)}` : ""}`, { method: "POST" });
       await downloadPatientSummaryReportPdf(patient, {
         code: document.code,
         emittedAt: document.emittedAt,
@@ -237,6 +258,8 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
 
   const ToggleIcon = patient.status === "ACTIVE" ? ToggleLeft : ToggleRight;
   const anamnesePermissionTooltip = "Você não tem permissão para ver anamnese do paciente";
+  const activeOperationalClinicId = patient.clinics.find((clinicLink) => clinicLink.status === "ACTIVE")?.clinicId ?? patient.clinics[0]?.clinicId;
+  const linkedClinic = patient.clinics[0] ?? null;
 
   return (
     <section className="user-detail-page patient-detail-page">
@@ -291,6 +314,32 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
                 <small>{item.detail}</small>
               </div>
             ))}
+          </div>
+        </section>
+
+        <section className="plain-panel patient-analysis-panel">
+          <div className="access-card-heading">
+            <div>
+              <h3>Clínica vinculada</h3>
+              <p>{clinicId ? "A clínica abaixo é a usada no contexto atual desta tela." : "Mostra a clínica operacional atualmente vinculada ao paciente."}</p>
+            </div>
+            <Building2 aria-hidden="true" size={22} />
+          </div>
+          <div className="access-checklist compact-checklist">
+            {linkedClinic ? (
+              <div className={`choice-pill patient-clinic-pill${isCurrentClinicContext(linkedClinic, clinicId) ? " is-current-context" : ""}`} key={linkedClinic.clinicId}>
+                <div className="patient-clinic-pill-header">
+                  <strong>{formatClinicLabel(linkedClinic)}</strong>
+                  {isCurrentClinicContext(linkedClinic, clinicId) ? <span className="table-status">Em visualização</span> : null}
+                  {linkedClinic.clinicId === activeOperationalClinicId ? <span className="table-status is-finalized">Clínica operacional atual</span> : null}
+                  {linkedClinic.clinic.status === "INACTIVE" ? <span className="table-status is-inactive">Clínica inativa</span> : null}
+                </div>
+                <span className="patient-clinic-pill-meta">{linkedClinic.status === "ACTIVE" ? "Vínculo ativo" : "Vínculo inativo"}</span>
+                <span className="patient-clinic-pill-meta">Primeiro vínculo: {formatDateTime(linkedClinic.firstSeenAt)}</span>
+                <span className="patient-clinic-pill-meta">Última passagem: {formatDateTime(linkedClinic.lastSeenAt)}</span>
+              </div>
+            ) : null}
+            {!linkedClinic ? <span>Nenhuma clínica vinculada.</span> : null}
           </div>
         </section>
       </div>

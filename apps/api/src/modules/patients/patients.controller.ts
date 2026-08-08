@@ -15,8 +15,8 @@ export class PatientsController {
 
   @Get()
   @RequirePermissions("patients.read")
-  list(@Req() request: { user: AuthenticatedUser }, @Query("search") search?: string, @Query("status") status?: string, @Query("limit") limit?: string, @Query("offset") offset?: string, @Query("clinicId") clinicId?: string) {
-    return this.patientsService.list(request.user, search, { status, limit, offset, clinicId });
+  list(@Req() request: { user: AuthenticatedUser }, @Query("search") search?: string, @Query("status") status?: string, @Query("limit") limit?: string, @Query("offset") offset?: string, @Query("clinicId") clinicId?: string, @Query("clinicScope") clinicScope?: string) {
+    return this.patientsService.list(request.user, search, { status, limit, offset, clinicId, clinicScope });
   }
 
   @Post()
@@ -27,31 +27,31 @@ export class PatientsController {
 
   @Get(":patientId")
   @RequirePermissions("patients.read")
-  getById(@Param("patientId") patientId: string, @Req() request: { user: AuthenticatedUser }, @Query("clinicId") clinicId?: string) {
-    return this.patientsService.getById(patientId, request.user, clinicId);
+  getById(@Param("patientId") patientId: string, @Req() request: { user: AuthenticatedUser }, @Query("clinicId") clinicId?: string, @Query("clinicScope") clinicScope?: string) {
+    return this.patientsService.getById(patientId, request.user, clinicId, clinicScope);
   }
 
   @Post(":patientId/report/pdf")
   @RequirePermissions("patients.read")
-  emitSummaryReportDocument(@Req() request: { user: AuthenticatedUser }, @Param("patientId") patientId: string) {
-    return this.patientsService.emitSummaryReportDocument(request.user, patientId);
+  emitSummaryReportDocument(@Req() request: { user: AuthenticatedUser }, @Param("patientId") patientId: string, @Query("clinicId") clinicId?: string) {
+    return this.patientsService.emitSummaryReportDocument(request.user, patientId, clinicId);
   }
 
   @Patch(":patientId")
   @RequirePermissions("patients.update")
-  update(@Req() request: { user: AuthenticatedUser }, @Param("patientId") patientId: string, @Body() dto: UpdatePatientDto) {
-    return this.patientsService.update(request.user, patientId, dto);
+  update(@Req() request: { user: AuthenticatedUser }, @Param("patientId") patientId: string, @Body() dto: UpdatePatientDto, @Query("clinicId") clinicId?: string) {
+    return this.patientsService.update(request.user, patientId, dto, clinicId);
   }
 
   @Patch(":patientId/status")
   @RequirePermissions("patients.inactivate")
-  updateStatus(@Req() request: { user: AuthenticatedUser }, @Param("patientId") patientId: string, @Body() dto: UpdatePatientStatusDto) {
-    return this.patientsService.updateStatus(request.user, patientId, dto.status);
+  updateStatus(@Req() request: { user: AuthenticatedUser }, @Param("patientId") patientId: string, @Body() dto: UpdatePatientStatusDto, @Query("clinicId") clinicId?: string) {
+    return this.patientsService.updateStatus(request.user, patientId, dto.status, clinicId);
   }
 
   @Get(":patientId/prontuario")
   @RequirePermissions("prontuario.read")
-  getMedicalRecord(@Param("patientId") patientId: string, @Req() request: { user: AuthenticatedUser }, @Query("limit") limit?: string, @Query("offset") offset?: string, @Query("clinicId") clinicId?: string) {
-    return this.patientsService.getMedicalRecord(patientId, request.user, { limit, offset, clinicId });
+  getMedicalRecord(@Param("patientId") patientId: string, @Req() request: { user: AuthenticatedUser }, @Query("limit") limit?: string, @Query("offset") offset?: string, @Query("clinicId") clinicId?: string, @Query("clinicScope") clinicScope?: string) {
+    return this.patientsService.getMedicalRecord(patientId, request.user, { limit, offset, clinicId, clinicScope });
   }
 }

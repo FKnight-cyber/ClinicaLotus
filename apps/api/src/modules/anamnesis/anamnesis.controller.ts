@@ -38,37 +38,37 @@ export class AnamnesisController {
 
   @Patch(":id")
   @RequirePermissions("anamnese.update")
-  update(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Body() dto: UpdateAnamnesisDto) {
-    return this.anamnesisService.update(request.user, id, dto);
+  update(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Body() dto: UpdateAnamnesisDto, @Query("clinicId") clinicId?: string) {
+    return this.anamnesisService.update(request.user, id, dto, clinicId);
   }
 
   @Delete(":id")
   @RequirePermissions("admin.full_access")
-  deleteDraft(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string) {
-    return this.anamnesisService.deleteDraft(request.user, id);
+  deleteDraft(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Query("clinicId") clinicId?: string) {
+    return this.anamnesisService.deleteDraft(request.user, id, clinicId);
   }
 
   @Post(":id/finalize")
   @RequirePermissions("anamnese.finalize")
-  finalize(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string) {
-    return this.anamnesisService.finalize(request.user, id);
+  finalize(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Query("clinicId") clinicId?: string) {
+    return this.anamnesisService.finalize(request.user, id, clinicId);
   }
 
   @Post(":id/templates/:templateId/complete")
   @RequirePermissions("anamnese.finalize")
-  completeTemplate(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Param("templateId") templateId: string) {
-    return this.anamnesisService.completeTemplate(request.user, id, templateId);
+  completeTemplate(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Param("templateId") templateId: string, @Query("clinicId") clinicId?: string) {
+    return this.anamnesisService.completeTemplate(request.user, id, templateId, clinicId);
   }
 
   @Post(":id/documents/pdf")
   @RequirePermissions("anamnese.print")
-  emitPdfDocument(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string) {
-    return this.anamnesisService.emitPdfDocument(request.user, id);
+  emitPdfDocument(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Query("clinicId") clinicId?: string) {
+    return this.anamnesisService.emitPdfDocument(request.user, id, clinicId);
   }
 
   @Post(":id/templates/:templateId/documents/pdf")
   @RequirePermissions("anamnese.print")
-  emitTemplatePdfDocument(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Param("templateId") templateId: string) {
-    return this.anamnesisService.emitTemplatePdfDocument(request.user, id, templateId);
+  emitTemplatePdfDocument(@Req() request: { user: AuthenticatedUser }, @Param("id") id: string, @Param("templateId") templateId: string, @Query("clinicId") clinicId?: string) {
+    return this.anamnesisService.emitTemplatePdfDocument(request.user, id, templateId, clinicId);
   }
 }
