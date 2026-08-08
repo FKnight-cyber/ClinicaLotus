@@ -4,13 +4,14 @@
   "private": true,
   "scripts": {
     "start": "npm run start:prod",
-    "start:prod": "prisma generate && prisma db push && npm run prisma:seed && node dist/main.js",
+    "start:prod": "prisma generate && npm run prisma:deploy && npm run prisma:seed && node dist/main.js",
     "start:dev": "nest start --watch",
     "build": "prisma generate && nest build",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
-    "prisma:seed": "node prisma/seed.mjs"
+    "prisma:seed": "node prisma/seed.mjs",
+    "prisma:deploy": "node prisma/deploy.mjs"
   },
   "dependencies": {
     "@nestjs/common": "latest",

@@ -220,8 +220,6 @@ async function seedDefaultClinic() {
     create: { name: "Clínica 1", code: "CLINICA-1", document: "00.000.000/0001-00", status: "ACTIVE" }
   });
 
-  await prisma.userClinic.deleteMany({});
-
   const accessGroups = await prisma.accessGroup.findMany({ select: { id: true } });
   for (const accessGroup of accessGroups) {
     await prisma.accessGroupClinic.upsert({
@@ -230,20 +228,6 @@ async function seedDefaultClinic() {
       create: { accessGroupId: accessGroup.id, clinicId: defaultClinic.id }
     });
   }
-
-  const patients = await prisma.patient.findMany({ select: { id: true } });
-  for (const patient of patients) {
-    await prisma.patient.update({ where: { id: patient.id }, data: { clinicId: defaultClinic.id } });
-  }
-
-  await prisma.$executeRaw`UPDATE "AnamnesisRecord" SET "clinicId" = ${defaultClinic.id}`;
-  await prisma.$executeRaw`UPDATE "MedicalEvolution" SET "clinicId" = ${defaultClinic.id}`;
-  await prisma.$executeRaw`UPDATE "MedicalRecordEntry" SET "clinicId" = ${defaultClinic.id}`;
-  await prisma.$executeRaw`UPDATE "ClinicalDocument" SET "clinicId" = ${defaultClinic.id}`;
-  await prisma.auditLog.updateMany({
-    where: { entity: { in: ["patient", "anamnesis_record", "medical_evolution"] } },
-    data: { clinicId: defaultClinic.id }
-  });
 
   return defaultClinic;
 }
