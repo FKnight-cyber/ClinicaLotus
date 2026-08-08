@@ -12,23 +12,35 @@ BEGIN
     RETURN;
   END IF;
 
-  INSERT INTO "Clinic" ("id", "name", "code", "document", "status", "createdAt", "updatedAt")
-  VALUES (
-    md5(random()::text || clock_timestamp()::text),
-    'Clínica 1',
-    'CLINICA-1',
-    '00.000.000/0001-00',
-    'ACTIVE'::"ClinicStatus",
-    CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP
-  )
-  ON CONFLICT ("code") DO UPDATE
-  SET
-    "name" = EXCLUDED."name",
-    "document" = EXCLUDED."document",
-    "status" = EXCLUDED."status",
-    "updatedAt" = CURRENT_TIMESTAMP
-  RETURNING "id" INTO default_clinic_id;
+  SELECT "id" INTO default_clinic_id
+  FROM "Clinic"
+  WHERE "code" = 'CLINICA-1'
+  ORDER BY "createdAt" ASC
+  LIMIT 1;
+
+  IF default_clinic_id IS NULL THEN
+    INSERT INTO "Clinic" ("id", "name", "code", "document", "status", "createdAt", "updatedAt")
+    VALUES (
+      md5(random()::text || clock_timestamp()::text),
+      'Clínica 1',
+      'CLINICA-1',
+      '00.000.000/0001-00',
+      'ACTIVE'::"ClinicStatus",
+      CURRENT_TIMESTAMP,
+      CURRENT_TIMESTAMP
+    )
+    RETURNING "id" INTO default_clinic_id;
+  ELSE
+    UPDATE "Clinic"
+    SET
+      "name" = 'Clínica 1',
+      "document" = '00.000.000/0001-00',
+      "status" = 'ACTIVE'::"ClinicStatus",
+      "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "id" = default_clinic_id;
+  END IF;
+
+  CREATE UNIQUE INDEX IF NOT EXISTS "Clinic_code_key" ON "Clinic"("code");
 
   DELETE FROM "UserClinic";
 

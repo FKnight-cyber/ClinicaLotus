@@ -160,6 +160,22 @@ async function getMissingLegacyClinicColumns(client) {
   return missingColumns;
 }
 
+async function ensureClinicCodeUniqueIndexIfNeeded() {
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+
+  try {
+    if (!(await hasTable(client, "Clinic")) || await hasIndex(client, "Clinic_code_key")) {
+      return;
+    }
+
+    console.log("Tabela Clinic encontrada sem índice único em code. Criando Clinic_code_key antes de continuar o deploy.");
+    await client.query(`CREATE UNIQUE INDEX "Clinic_code_key" ON "Clinic"("code")`);
+  } finally {
+    await client.end();
+  }
+}
+
 async function shouldBaselineExistingDatabase() {
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();
@@ -261,27 +277,36 @@ async function applyLegacyClinicTransitionIfNeeded() {
     await client.query(`ALTER TABLE "ClinicalDocument" ADD COLUMN IF NOT EXISTS "clinicId" TEXT`);
     await client.query(`ALTER TABLE "AuditLog" ADD COLUMN IF NOT EXISTS "clinicId" TEXT`);
 
-    const defaultClinicResult = await client.query(`
-      INSERT INTO "Clinic" ("id", "name", "code", "document", "status", "createdAt", "updatedAt")
-      VALUES (
-        md5(random()::text || clock_timestamp()::text),
-        'Clínica 1',
-        'CLINICA-1',
-        '00.000.000/0001-00',
-        'ACTIVE'::"ClinicStatus",
-        CURRENT_TIMESTAMP,
-        CURRENT_TIMESTAMP
-      )
-      ON CONFLICT ("code") DO UPDATE
-      SET
-        "name" = EXCLUDED."name",
-        "document" = EXCLUDED."document",
-        "status" = EXCLUDED."status",
-        "updatedAt" = CURRENT_TIMESTAMP
-      RETURNING "id"
-    `);
+    let defaultClinicId = (await client.query(`SELECT "id" FROM "Clinic" WHERE "code" = 'CLINICA-1' ORDER BY "createdAt" ASC LIMIT 1`)).rows[0]?.id;
 
-    const defaultClinicId = defaultClinicResult.rows[0]?.id;
+    if (!defaultClinicId) {
+      const defaultClinicResult = await client.query(`
+        INSERT INTO "Clinic" ("id", "name", "code", "document", "status", "createdAt", "updatedAt")
+        VALUES (
+          md5(random()::text || clock_timestamp()::text),
+          'Clínica 1',
+          'CLINICA-1',
+          '00.000.000/0001-00',
+          'ACTIVE'::"ClinicStatus",
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP
+        )
+        RETURNING "id"
+      `);
+
+      defaultClinicId = defaultClinicResult.rows[0]?.id;
+    } else {
+      await client.query(`
+        UPDATE "Clinic"
+        SET
+          "name" = 'Clínica 1',
+          "document" = '00.000.000/0001-00',
+          "status" = 'ACTIVE'::"ClinicStatus",
+          "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "id" = $1
+      `, [defaultClinicId]);
+    }
+
     if (!defaultClinicId) {
       throw new Error("Não foi possível obter a clínica padrão durante a transição legada.");
     }
@@ -442,6 +467,7 @@ async function recoverFailedBootstrapMigrationIfNeeded() {
 
 async function main() {
   await recoverBrokenEmptyDatabaseMigrationStateIfNeeded();
+  await ensureClinicCodeUniqueIndexIfNeeded();
 
   const transitionedLegacyDatabase = await applyLegacyClinicTransitionIfNeeded();
   if (transitionedLegacyDatabase) {
