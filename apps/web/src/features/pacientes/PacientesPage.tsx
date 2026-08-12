@@ -1,12 +1,15 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Edit3, Eye, Plus, ToggleLeft, ToggleRight, UserRound, X } from "lucide-react";
+import { CircleAlert, ChevronLeft, ChevronRight, Edit3, Eye, Plus, ToggleLeft, ToggleRight, UserRound, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ClearFiltersButton, FilterButton } from "@/components/filters/FilterActionButtons";
+import { invalidateAnamneseCachesForPatientTransfer } from "@/features/anamnese/storage";
 import { useAuth } from "@/features/auth/AuthProvider";
+import { invalidateProntuarioCachesForPatientTransfer } from "@/features/prontuario/prontuarioStorage";
 
 type PatientStatus = "ACTIVE" | "INACTIVE";
+type ClinicalStatus = "draft" | "finalized" | "canceled";
 
 type PatientClinicFilter = {
   id: string;
@@ -27,6 +30,12 @@ type Patient = {
   updatedAt: string;
   linkedExisting?: boolean;
   existingInClinic?: boolean;
+  transferSummary?: {
+    sourceClinicId: string;
+    targetClinicId: string;
+    draftAnamnesesTransferred: number;
+    draftEvolutionsTransferred: number;
+  } | null;
 };
 
 type PatientFormState = {
@@ -45,11 +54,22 @@ type PaginatedPatients = {
   total: number;
 };
 
+type PatientTransferPreview = {
+  draftAnamneses: number;
+  draftEvolutions: number;
+};
+
+type PatientTransferPreviewResponse = {
+  anamneses: Array<{ status: ClinicalStatus }>;
+  evolutions: Array<{ status: ClinicalStatus }>;
+};
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
 const DEFAULT_PATIENT_LIMIT = 40;
 const MAX_PATIENT_LIMIT = 100;
 const PATIENT_SEARCH_DELAY_MS = 350;
 const PATIENT_FILTERS_STORAGE_KEY = "clinica.pacientes.filters";
+const patientClinicEditTooltip = "Ao trocar a clínica atual do paciente, os registros concluídos permanecem na clínica original. Se houver anamneses ou evoluções em andamento, elas serão transferidas para a nova clínica e o sistema avisará ao salvar.";
 
 const emptyPatientForm: PatientFormState = {
   name: "",
@@ -186,6 +206,32 @@ function formatPageSummary(total: number, offset: number, count: number) {
   return `${offset + 1}-${offset + count} de ${total} pacientes`;
 }
 
+function buildTransferMessage(transferSummary?: Patient["transferSummary"] | null) {
+  if (!transferSummary || transferSummary.sourceClinicId === transferSummary.targetClinicId) return "";
+
+  const transferredItems = [
+    transferSummary.draftAnamnesesTransferred ? `${transferSummary.draftAnamnesesTransferred} anamnese(s) em andamento` : "",
+    transferSummary.draftEvolutionsTransferred ? `${transferSummary.draftEvolutionsTransferred} evolução(ões) em andamento` : ""
+  ].filter(Boolean);
+
+  if (transferredItems.length === 0) {
+    return " Registros concluídos permanecem na clínica anterior.";
+  }
+
+  return ` Registros concluídos permanecem na clínica anterior. ${transferredItems.join(" e ")} transferida(s) para a nova clínica.`;
+}
+
+function buildTransferPreview(counts: PatientTransferPreview) {
+  if (!counts.draftAnamneses && !counts.draftEvolutions) return null;
+
+  const items = [
+    counts.draftAnamneses ? `${counts.draftAnamneses} anamnese(s) em rascunho` : "",
+    counts.draftEvolutions ? `${counts.draftEvolutions} evolução(ões) em rascunho` : ""
+  ].filter(Boolean);
+
+  return `Há ${items.join(" e ")} nesta clínica. Ao salvar a troca, esses registros em aberto serão transferidos para a nova clínica. Os registros concluídos permanecerão na clínica anterior.`;
+}
+
 async function apiRequest<T>(token: string, path: string, options: RequestInit = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
@@ -240,12 +286,16 @@ export function PacientesPage() {
   const [isPatientsLoading, setIsPatientsLoading] = useState(true);
   const [isSavingPatient, setIsSavingPatient] = useState(false);
   const [savingStatusPatientId, setSavingStatusPatientId] = useState<string | null>(null);
+  const [isLoadingPatientTransferPreview, setIsLoadingPatientTransferPreview] = useState(false);
+  const [patientTransferPreview, setPatientTransferPreview] = useState<PatientTransferPreview | null>(null);
 
   const patientOffset = (patientPage - 1) * patientLimit;
   const selectedPatientClinicIsAvailable = availablePatientClinics.some((clinic) => clinic.id === selectedPatientClinicId);
   const effectivePatientClinicId = canFilterPatientsByClinic && selectedPatientClinicIsAvailable ? selectedPatientClinicId : "";
   const activePatientFilterCount = [patientSearch.trim(), effectivePatientClinicId, selectedPatientStatus !== "ACTIVE" ? "status" : "", patientLimit !== DEFAULT_PATIENT_LIMIT ? String(patientLimit) : ""].filter(Boolean).length;
   const hasActivePatientFilters = activePatientFilterCount > 0;
+  const isChangingPatientClinic = Boolean(editingPatient && editingPatientClinicId && patientForm.clinicId && patientForm.clinicId !== editingPatientClinicId);
+  const patientTransferPreviewMessage = patientTransferPreview ? buildTransferPreview(patientTransferPreview) : null;
 
   const applyPatientsPage = useCallback((nextPatientsPage: PaginatedPatients) => {
     setPatients(nextPatientsPage.items);
@@ -353,16 +403,34 @@ export function PacientesPage() {
 
     setEditingPatient(null);
     setEditingPatientClinicId("");
+    setPatientTransferPreview(null);
+    setIsLoadingPatientTransferPreview(false);
     setPatientForm({ ...emptyPatientForm, clinicId: effectivePatientClinicId || (refreshedClinics.length === 1 ? refreshedClinics[0].id : "") });
     setIsPatientModalOpen(true);
   };
 
-  const openEditPatientModal = (patient: Patient) => {
+  const openEditPatientModal = async (patient: Patient) => {
     const currentClinicId = getEditablePatientClinicId(patient, effectivePatientClinicId);
     setEditingPatient(patient);
     setEditingPatientClinicId(currentClinicId);
+    setPatientTransferPreview(null);
     setPatientForm({ ...getPatientForm(patient), clinicId: currentClinicId });
     setIsPatientModalOpen(true);
+
+    if (!token || !currentClinicId) return;
+
+    setIsLoadingPatientTransferPreview(true);
+    try {
+      const detail = await apiRequest<PatientTransferPreviewResponse>(token, `/api/patients/${patient.id}?clinicId=${encodeURIComponent(currentClinicId)}`);
+      setPatientTransferPreview({
+        draftAnamneses: detail.anamneses.filter((record) => record.status === "draft").length,
+        draftEvolutions: detail.evolutions.filter((record) => record.status === "draft").length
+      });
+    } catch {
+      setPatientTransferPreview(null);
+    } finally {
+      setIsLoadingPatientTransferPreview(false);
+    }
   };
 
   const handleSavePatient = async (event: FormEvent<HTMLFormElement>) => {
@@ -373,21 +441,30 @@ export function PacientesPage() {
     try {
       if (editingPatient) {
         const clinicQuery = editingPatientClinicId ? `?clinicId=${encodeURIComponent(editingPatientClinicId)}` : "";
-        await apiRequest<Patient>(token, `/api/patients/${editingPatient.id}${clinicQuery}`, {
+        const updatedPatient = await apiRequest<Patient>(token, `/api/patients/${editingPatient.id}${clinicQuery}`, {
           method: "PATCH",
           body: JSON.stringify(toPatientPayload(patientForm))
         });
-        setMessage("Paciente atualizado.");
+        invalidateAnamneseCachesForPatientTransfer(token, editingPatient.id);
+        invalidateProntuarioCachesForPatientTransfer(token, editingPatient.id);
+        setMessage(`Paciente atualizado.${buildTransferMessage(updatedPatient.transferSummary)}`);
       } else {
         const patient = await apiRequest<Patient>(token, "/api/patients", {
           method: "POST",
           body: JSON.stringify(toPatientPayload(patientForm))
         });
-        setMessage(patient.linkedExisting ? "Paciente existente vinculado à clínica selecionada." : patient.existingInClinic ? "Paciente já estava cadastrado nesta clínica." : "Paciente criado.");
+        invalidateAnamneseCachesForPatientTransfer(token, patient.id);
+        invalidateProntuarioCachesForPatientTransfer(token, patient.id);
+        setMessage(patient.linkedExisting
+          ? `Paciente existente vinculado à clínica selecionada.${buildTransferMessage(patient.transferSummary)}`
+          : patient.existingInClinic
+            ? "Paciente já estava cadastrado nesta clínica."
+            : `Paciente criado.${buildTransferMessage(patient.transferSummary)}`);
       }
 
       setIsPatientModalOpen(false);
       setEditingPatientClinicId("");
+      setPatientTransferPreview(null);
       setPatientForm(emptyPatientForm);
       await refreshCurrentPage();
     } catch (error) {
@@ -552,7 +629,7 @@ export function PacientesPage() {
                     <td>{formatDateTime(patient.updatedAt)}</td>
                     <td>
                       <div className="records-table-actions patients-table-actions">
-                        {canUpdatePatients ? <button className="table-action" onClick={() => openEditPatientModal(patient)} type="button"><Edit3 aria-hidden="true" size={16} />Editar</button> : null}
+                        {canUpdatePatients ? <button className="table-action" onClick={() => { void openEditPatientModal(patient); }} type="button"><Edit3 aria-hidden="true" size={16} />Editar</button> : null}
                         {canInactivatePatients ? (
                           <button className="table-action" disabled={savingStatusPatientId === patient.id} onClick={() => setStatusConfirmation({ patient, nextStatus })} type="button">
                             <ToggleIcon aria-hidden="true" size={16} />{savingStatusPatientId === patient.id ? "Atualizando..." : nextStatus === "ACTIVE" ? "Ativar" : "Inativar"}
@@ -601,11 +678,20 @@ export function PacientesPage() {
               ) : null}
               {editingPatient ? (
                 <label className="patient-form-full">
-                  <span>Clínica do paciente</span>
+                  <span className="field-label-with-tooltip">
+                    Clínica do paciente
+                    <span className="permission-tooltip" title={patientClinicEditTooltip}>
+                      <button aria-label={patientClinicEditTooltip} className="field-label-tooltip-button" type="button">
+                        <CircleAlert aria-hidden="true" size={15} />
+                      </button>
+                    </span>
+                  </span>
                   <select onChange={(event) => setPatientForm((form) => ({ ...form, clinicId: event.target.value }))} required value={patientForm.clinicId}>
                     <option value="">Selecione a clínica</option>
                     {availablePatientClinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</option>)}
                   </select>
+                  {isChangingPatientClinic && isLoadingPatientTransferPreview ? <small className="patient-clinic-transfer-warning">Verificando registros em aberto na clínica atual...</small> : null}
+                  {isChangingPatientClinic && patientTransferPreviewMessage ? <small className="patient-clinic-transfer-warning">{patientTransferPreviewMessage}</small> : null}
                 </label>
               ) : null}
               <label><span>Nome completo</span><input autoFocus onChange={(event) => setPatientForm((form) => ({ ...form, name: event.target.value }))} required value={patientForm.name} /></label>
@@ -614,7 +700,7 @@ export function PacientesPage() {
               <label><span>RG</span><input onChange={(event) => setPatientForm((form) => ({ ...form, rg: event.target.value }))} placeholder="RG" value={patientForm.rg} /></label>
               <label className="patient-form-full"><span>Documento complementar</span><input onChange={(event) => setPatientForm((form) => ({ ...form, document: event.target.value }))} placeholder="Outro documento" value={patientForm.document} /></label>
               <div className="confirmation-modal-actions patient-form-full">
-                <button className="secondary-button" disabled={isSavingPatient} onClick={() => { setIsPatientModalOpen(false); setEditingPatientClinicId(""); }} type="button">Cancelar</button>
+                <button className="secondary-button" disabled={isSavingPatient} onClick={() => { setIsPatientModalOpen(false); setEditingPatientClinicId(""); setPatientTransferPreview(null); }} type="button">Cancelar</button>
                 <button className="primary-button" disabled={isSavingPatient || !patientForm.name.trim() || !patientForm.clinicId} type="submit">{isSavingPatient ? "Salvando..." : "Salvar paciente"}</button>
               </div>
             </form>

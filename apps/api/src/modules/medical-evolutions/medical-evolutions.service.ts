@@ -263,7 +263,7 @@ export class MedicalEvolutionsService {
   }
 
   private async ensurePatientInClinic(patientId: string, clinicId: string) {
-    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, clinicId, status: "ACTIVE" }, select: { id: true } });
+    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, status: "ACTIVE", clinics: { some: { clinicId, status: "ACTIVE" } } }, select: { id: true } });
 
     if (!patient) {
       throw new NotFoundException("Paciente não encontrado.");
@@ -273,16 +273,22 @@ export class MedicalEvolutionsService {
   private async resolvePatientClinicIdForWrite(user: AuthenticatedUser, patientId: string) {
     const patient = await this.prisma.patient.findFirst({
       where: { id: patientId, status: "ACTIVE" },
-      select: { clinicId: true }
+      select: { clinicId: true, clinics: { where: { status: "ACTIVE" }, select: { clinicId: true } } }
     });
 
     if (!patient) throw new NotFoundException("Paciente não encontrado.");
-    if (!user.availableClinicIds.includes(patient.clinicId)) throw new BadRequestException("Paciente vinculado a uma clínica fora do escopo do usuário.");
-    return patient.clinicId;
+    if (user.availableClinicIds.includes(patient.clinicId)) return patient.clinicId;
+
+    const currentClinicIsAvailable = patient.clinics.some((clinicLink) => clinicLink.clinicId === patient.clinicId && user.availableClinicIds.includes(clinicLink.clinicId));
+    if (currentClinicIsAvailable) return patient.clinicId;
+
+    const fallbackClinicId = patient.clinics.find((clinicLink) => user.availableClinicIds.includes(clinicLink.clinicId))?.clinicId;
+    if (!fallbackClinicId) throw new BadRequestException("Paciente vinculado a uma clínica fora do escopo do usuário.");
+    return fallbackClinicId;
   }
 
   private async ensurePatientInAnyClinic(patientId: string, clinicIds: string[]) {
-    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, clinicId: { in: clinicIds }, status: "ACTIVE" }, select: { clinicId: true } });
+    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, status: "ACTIVE", OR: [{ clinics: { some: { clinicId: { in: clinicIds }, status: "ACTIVE" } } }, { clinicId: { in: clinicIds } }] }, select: { clinicId: true } });
 
     if (!patient) {
       throw new NotFoundException("Paciente não encontrado.");

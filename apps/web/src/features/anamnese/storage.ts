@@ -101,6 +101,22 @@ function invalidatePatientCaches(token: string, patientId?: string | null) {
   }
 }
 
+export function invalidateAnamneseCachesForPatientTransfer(token: string, patientId?: string | null) {
+  for (const key of anamneseRecordsCache.keys()) {
+    if (key.startsWith(`${token}:records:`)) {
+      anamneseRecordsCache.delete(key);
+    }
+  }
+
+  for (const key of anamneseRecordCache.keys()) {
+    if (key.startsWith(`${token}:record:`)) {
+      anamneseRecordCache.delete(key);
+    }
+  }
+
+  invalidatePatientCaches(token, patientId);
+}
+
 async function apiRequest<T>(token: string, path: string, options: RequestInit = {}) {
   let response: Response;
 

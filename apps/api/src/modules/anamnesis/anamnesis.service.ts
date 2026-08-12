@@ -832,12 +832,18 @@ export class AnamnesisService {
   private async resolvePatientClinicIdForRecord(user: AuthenticatedUser, patientId: string) {
     const patient = await this.prisma.patient.findFirst({
       where: { id: patientId, status: "ACTIVE" },
-      select: { clinicId: true }
+      select: { clinicId: true, clinics: { where: { status: "ACTIVE" }, select: { clinicId: true } } }
     });
 
     if (!patient) throw new NotFoundException("Paciente não encontrado.");
-    if (!user.availableClinicIds.includes(patient.clinicId)) throw new BadRequestException("Paciente vinculado a uma clínica fora do escopo do usuário.");
-    return patient.clinicId;
+    if (user.availableClinicIds.includes(patient.clinicId)) return patient.clinicId;
+
+    const currentClinicIsAvailable = patient.clinics.some((clinicLink) => clinicLink.clinicId === patient.clinicId && user.availableClinicIds.includes(clinicLink.clinicId));
+    if (currentClinicIsAvailable) return patient.clinicId;
+
+    const fallbackClinicId = patient.clinics.find((clinicLink) => user.availableClinicIds.includes(clinicLink.clinicId))?.clinicId;
+    if (!fallbackClinicId) throw new BadRequestException("Paciente vinculado a uma clínica fora do escopo do usuário.");
+    return fallbackClinicId;
   }
 
   private async writeAuditLog(userId: string, clinicId: string, action: string, entityId: string, beforeData: unknown, afterData: unknown) {
@@ -857,7 +863,7 @@ export class AnamnesisService {
   }
 
   private async ensurePatientInClinic(patientId: string, clinicId: string) {
-    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, clinicId, status: "ACTIVE" }, select: { id: true } });
+    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, status: "ACTIVE", OR: [{ clinics: { some: { clinicId, status: "ACTIVE" } } }, { clinicId }] }, select: { id: true } });
     if (!patient) throw new NotFoundException("Paciente não encontrado.");
   }
 

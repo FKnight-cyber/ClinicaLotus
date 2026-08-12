@@ -99,6 +99,22 @@ function invalidateEvolutions(token: string, patientId: string) {
   }
 }
 
+export function invalidateProntuarioCachesForPatientTransfer(token: string, patientId?: string | null) {
+  for (const key of patientsCache.keys()) {
+    if (key.startsWith(`${token}:prontuario-patients:`)) {
+      patientsCache.delete(key);
+    }
+  }
+
+  if (!patientId) return;
+
+  for (const key of evolutionsCache.keys()) {
+    if (key.startsWith(`${token}:medical-evolutions:`) && key.includes(`:${patientId}:`)) {
+      evolutionsCache.delete(key);
+    }
+  }
+}
+
 async function apiRequest<T>(token: string, path: string, options: RequestInit = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
