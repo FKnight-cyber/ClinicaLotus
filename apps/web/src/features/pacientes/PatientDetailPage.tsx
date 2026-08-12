@@ -15,6 +15,7 @@ type PatientDetail = {
   name: string;
   status: PatientStatus;
   clinics: PatientClinicLink[];
+  clinicHistory?: PatientClinicStay[];
   admissionDate?: string | null;
   dischargeDate?: string | null;
   birthDate?: string | null;
@@ -40,6 +41,15 @@ type PatientClinicLink = {
     code?: string | null;
     status: "ACTIVE" | "INACTIVE";
   };
+};
+
+type PatientClinicStay = {
+  id: string;
+  clinicId: string;
+  status: "ACTIVE" | "DISCHARGED";
+  admissionDate: string;
+  dischargeDate?: string | null;
+  clinic: PatientClinicLink["clinic"];
 };
 
 type ClinicalDocumentSummary = {
@@ -153,11 +163,24 @@ function isCurrentClinicContext(clinicLink: PatientClinicLink, currentClinicId?:
   return Boolean(currentClinicId) && clinicLink.clinicId === currentClinicId;
 }
 
-function buildClinicHistorySummary(clinics: PatientClinicLink[]) {
-  if (clinics.length === 0) return "Sem passagens registradas.";
-  return clinics
-    .map((clinicLink) => `${formatClinicLabel(clinicLink)} desde ${formatDate(clinicLink.firstSeenAt)}`)
-    .join(" | ");
+function getClinicStayStatusLabel(status: PatientClinicStay["status"]) {
+  return status === "ACTIVE" ? "Em atendimento" : "Alta";
+}
+
+function getClinicStayStatusClass(status: PatientClinicStay["status"]) {
+  return status === "ACTIVE" ? "is-finalized" : "is-inactive";
+}
+
+function buildClinicHistory(patient: PatientDetail): PatientClinicStay[] {
+  if (patient.clinicHistory?.length) return patient.clinicHistory;
+  return patient.clinics.map((clinicLink) => ({
+    id: `${clinicLink.clinicId}-${clinicLink.firstSeenAt}`,
+    clinicId: clinicLink.clinicId,
+    status: clinicLink.status === "ACTIVE" ? "ACTIVE" : "DISCHARGED",
+    admissionDate: clinicLink.firstSeenAt,
+    dischargeDate: clinicLink.lastSeenAt,
+    clinic: clinicLink.clinic
+  }));
 }
 
 function buildPatientDetailPath(patientId: string, clinicId?: string) {
@@ -284,7 +307,7 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
   const anamnesePermissionTooltip = "Você não tem permissão para ver anamnese do paciente";
   const activeOperationalClinicId = patient.clinics.find((clinicLink) => clinicLink.status === "ACTIVE")?.clinicId ?? patient.clinics[0]?.clinicId;
   const linkedClinic = patient.clinics[0] ?? null;
-  const clinicHistorySummary = buildClinicHistorySummary(patient.clinics);
+  const clinicHistory = buildClinicHistory(patient);
   const canGenerateSelectedReport = reportOptions.includePsychologicalPart || reportOptions.includeMedicalPart;
 
   return (
@@ -319,7 +342,6 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
             <div><dt>Nome</dt><dd>{patient.name}</dd></div>
             <div><dt>Data de admissão</dt><dd>{formatDate(patient.admissionDate)}</dd></div>
             <div><dt>Dia da alta</dt><dd>{formatDate(patient.dischargeDate)}</dd></div>
-            <div><dt>Histórico de clínicas</dt><dd>{clinicHistorySummary}</dd></div>
             <div><dt>Nascimento</dt><dd>{formatDate(patient.birthDate)}</dd></div>
             <div><dt>Documentos</dt><dd>{formatDocuments(patient)}</dd></div>
             <div><dt>Cadastrado em</dt><dd>{formatDateTime(patient.createdAt)}</dd></div>
@@ -372,6 +394,44 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
           </div>
         </section>
       </div>
+
+      <section className="plain-panel patient-history-panel patient-clinic-history-panel">
+        <div className="access-card-heading">
+          <div>
+            <h3>Histórico de clínicas</h3>
+            <p>Passagens do paciente por clínica, com entrada, alta e situação do ciclo.</p>
+          </div>
+          <Building2 aria-hidden="true" size={22} />
+        </div>
+        <div className="records-table-shell patient-detail-table-shell">
+          <table className="records-table patient-detail-history-table patient-clinic-history-table">
+            <thead>
+              <tr>
+                <th>Clínica</th>
+                <th>Entrada</th>
+                <th>Alta</th>
+                <th>Status</th>
+                <th>Observação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {clinicHistory.length === 0 ? (
+                <tr><td colSpan={5}>Nenhuma passagem por clínica registrada.</td></tr>
+              ) : clinicHistory.map((clinicStay) => (
+                <tr key={clinicStay.id}>
+                  <td><strong>{formatClinicLabel({ clinicId: clinicStay.clinicId, status: "ACTIVE", firstSeenAt: clinicStay.admissionDate, lastSeenAt: clinicStay.dischargeDate, clinic: clinicStay.clinic })}</strong></td>
+                  <td>{formatDate(clinicStay.admissionDate)}</td>
+                  <td>{formatDate(clinicStay.dischargeDate)}</td>
+                  <td><span className={`table-status ${getClinicStayStatusClass(clinicStay.status)}`}>{getClinicStayStatusLabel(clinicStay.status)}</span></td>
+                  <td className="patient-history-summary">
+                    {clinicStay.clinicId === activeOperationalClinicId ? "Clínica operacional atual" : clinicStay.clinic.status === "INACTIVE" ? "Clínica inativa" : "Histórico"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <section className="plain-panel patient-history-panel">
         <div className="access-card-heading">

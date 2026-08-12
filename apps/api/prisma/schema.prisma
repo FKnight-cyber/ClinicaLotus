@@ -38,6 +38,11 @@ enum PatientClinicStatus {
   INACTIVE
 }
 
+enum PatientClinicStayStatus {
+  ACTIVE
+  DISCHARGED
+}
+
 enum AnamnesisStatus {
   DRAFT
   FINALIZED
@@ -118,6 +123,7 @@ model Clinic {
   users     UserClinic[]
   patients  Patient[]
   patientLinks PatientClinic[]
+  patientStays PatientClinicStay[]
   accessGroups AccessGroupClinic[]
   anamnesisRecords AnamnesisRecord[]
   medicalRecordEntries MedicalRecordEntry[]
@@ -226,6 +232,7 @@ model Patient {
   updatedAt       DateTime          @updatedAt
   clinic          Clinic            @relation(fields: [clinicId], references: [id])
   clinics         PatientClinic[]
+  clinicStays     PatientClinicStay[]
   anamnesisRecord AnamnesisRecord[]
   medicalRecordEntries MedicalRecordEntry[]
   medicalEvolutions MedicalEvolution[]
@@ -246,6 +253,23 @@ model PatientClinic {
 
   @@id([patientId, clinicId])
   @@index([clinicId, status])
+}
+
+model PatientClinicStay {
+  id            String                  @id @default(uuid())
+  patientId     String
+  clinicId      String
+  status        PatientClinicStayStatus @default(ACTIVE)
+  admissionDate DateTime                @default(now())
+  dischargeDate DateTime?
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  patient       Patient                 @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  clinic        Clinic                  @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, status, admissionDate])
+  @@index([clinicId, status, admissionDate])
 }
 
 model AnamnesisTemplate {

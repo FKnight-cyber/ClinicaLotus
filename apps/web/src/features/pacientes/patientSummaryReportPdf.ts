@@ -28,6 +28,19 @@ type PatientSummaryReport = {
       status: "ACTIVE" | "INACTIVE";
     };
   }>;
+  clinicHistory?: Array<{
+    id: string;
+    clinicId: string;
+    status: "ACTIVE" | "DISCHARGED";
+    admissionDate: string;
+    dischargeDate?: string | null;
+    clinic: {
+      id: string;
+      name: string;
+      code?: string | null;
+      status: "ACTIVE" | "INACTIVE";
+    };
+  }>;
   birthDate?: string | null;
   document?: string | null;
   cpf?: string | null;
@@ -135,11 +148,20 @@ function formatClinicLinkLabel(clinicLink: PatientSummaryReport["clinics"][numbe
   return clinicLink.clinic.code ? `${clinicLink.clinic.name} (${clinicLink.clinic.code})` : clinicLink.clinic.name;
 }
 
-function buildClinicHistorySummary(patient: PatientSummaryReport) {
-  if (patient.clinics.length === 0) return "Sem passagens registradas.";
-  return patient.clinics
-    .map((clinicLink) => `${formatClinicLinkLabel(clinicLink)} desde ${formatDate(clinicLink.firstSeenAt)}`)
-    .join(" | ");
+function getClinicHistory(patient: PatientSummaryReport) {
+  if (patient.clinicHistory?.length) return patient.clinicHistory;
+  return patient.clinics.map((clinicLink) => ({
+    id: `${clinicLink.clinicId}-${clinicLink.firstSeenAt}`,
+    clinicId: clinicLink.clinicId,
+    status: clinicLink.status === "ACTIVE" ? "ACTIVE" as const : "DISCHARGED" as const,
+    admissionDate: clinicLink.firstSeenAt,
+    dischargeDate: clinicLink.lastSeenAt,
+    clinic: clinicLink.clinic
+  }));
+}
+
+function getClinicStayStatusLabel(status: "ACTIVE" | "DISCHARGED") {
+  return status === "ACTIVE" ? "Em atendimento" : "Alta";
 }
 
 function svgToPngDataUrl(svg: string, width: number, height: number) {
@@ -273,11 +295,35 @@ export async function downloadPatientSummaryReportPdf(patient: PatientSummaryRep
     ["Nascimento / idade", `${formatDate(patient.birthDate)} / ${getAge(patient)}`],
     ["Data de admissão", formatDate(patient.admissionDate)],
     ["Dia da alta", formatDate(patient.dischargeDate)],
-    ["Histórico de clínicas", buildClinicHistorySummary(patient)],
     ["Documentos", formatDocuments(patient)],
     ["Cadastro", formatDateTime(patient.createdAt)],
     ["Última atualização", formatDateTime(patient.updatedAt)]
   ], y + 3) + 9;
+
+  y = drawSectionTitle(doc, "Histórico de clínicas", y);
+  autoTable(doc, {
+    head: [["Clínica", "Entrada", "Alta", "Status"]],
+    body: getClinicHistory(patient).length > 0
+      ? getClinicHistory(patient).map((clinicStay) => [
+        formatClinicLinkLabel({ clinicId: clinicStay.clinicId, status: clinicStay.status === "ACTIVE" ? "ACTIVE" : "INACTIVE", firstSeenAt: clinicStay.admissionDate, lastSeenAt: clinicStay.dischargeDate, clinic: clinicStay.clinic }),
+        formatDate(clinicStay.admissionDate),
+        formatDate(clinicStay.dischargeDate),
+        getClinicStayStatusLabel(clinicStay.status)
+      ])
+      : [["-", "-", "-", "Nenhuma passagem registrada"]],
+    startY: y + 3,
+    theme: "striped",
+    margin: { left: margin, right: margin },
+    styles: { font: "helvetica", fontSize: 7.8, cellPadding: 2, overflow: "linebreak" },
+    headStyles: { fillColor: [23, 49, 43], textColor: [255, 255, 255] },
+    columnStyles: {
+      0: { cellWidth: contentWidth - 82 },
+      1: { cellWidth: 25 },
+      2: { cellWidth: 25 },
+      3: { cellWidth: 32 }
+    }
+  });
+  y = ((doc as JsPdfWithAutoTable).lastAutoTable?.finalY ?? y) + 9;
 
   const summaryRows: string[][] = [];
   if (includePsychologicalPart) {

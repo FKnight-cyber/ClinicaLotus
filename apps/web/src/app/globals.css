@@ -3112,6 +3112,19 @@ td input {
   min-width: 980px;
 }
 
+.patient-clinic-history-table {
+  min-width: 720px;
+}
+
+.patient-clinic-history-table th:nth-child(2),
+.patient-clinic-history-table th:nth-child(3),
+.patient-clinic-history-table th:nth-child(4),
+.patient-clinic-history-table td:nth-child(2),
+.patient-clinic-history-table td:nth-child(3),
+.patient-clinic-history-table td:nth-child(4) {
+  white-space: nowrap;
+}
+
 .patient-history-summary {
   color: var(--muted);
   line-height: 1.45;

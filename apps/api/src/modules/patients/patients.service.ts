@@ -30,6 +30,25 @@ type PatientMutationFlags = {
   transferSummary?: PatientTransferSummary | null;
 };
 
+type PatientClinicRecord = {
+  clinicId: string;
+  status: "ACTIVE" | "INACTIVE";
+  firstSeenAt: Date;
+  lastSeenAt: Date | null;
+  clinic: { id: string; name: string; code: string | null; status: "ACTIVE" | "INACTIVE" };
+};
+
+type PatientClinicStayRecord = {
+  id: string;
+  clinicId: string;
+  status: "ACTIVE" | "DISCHARGED";
+  admissionDate: Date;
+  dischargeDate: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  clinic: { id: string; name: string; code: string | null; status: "ACTIVE" | "INACTIVE" };
+};
+
 const defaultListLimit = 5;
 const maxListLimit = 100;
 const patientClinicStatuses = new Set(["ACTIVE", "INACTIVE"]);
@@ -64,6 +83,22 @@ function parseIsoDateRange(value?: string) {
   return { gte: startAt, lt: endAt };
 }
 
+function parseIsoDateValue(value: string | null | undefined) {
+  if (value === undefined) return undefined;
+  const normalizedValue = value?.trim();
+  if (!normalizedValue) return null;
+
+  const parsedDate = new Date(`${normalizedValue}T00:00:00`);
+  if (Number.isNaN(parsedDate.getTime())) throw new BadRequestException("Data inválida para o paciente.");
+  return parsedDate;
+}
+
+function todayAtStartOfDay() {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
 @Injectable()
 export class PatientsService {
   constructor(
@@ -81,23 +116,28 @@ export class PatientsService {
     const dischargeDate = parseIsoDateRange(options?.dischargeDate);
     const cacheKey = `patients:list:${clinicScopeKey}:${normalizedSearch ? normalizedSearch.toLowerCase() : "all"}:${options?.status === "ALL" ? "all" : status ?? "all"}:${options?.admissionDate?.trim() || "all"}:${options?.dischargeDate?.trim() || "all"}:${pagination ? `${pagination.limit}:${pagination.offset}` : "legacy"}`;
 
-    const where: Prisma.PatientWhereInput = {
+    const whereConditions: Prisma.PatientWhereInput[] = [{
       OR: [
         { clinics: { some: { clinicId: { in: clinicIds }, ...(status ? { status } : {}) } } },
+        { clinicStays: { some: { clinicId: { in: clinicIds } } } },
         { clinicId: { in: clinicIds } }
-      ],
-      ...(status ? { status } : {}),
-      ...(admissionDate ? { admissionDate } : {}),
-      ...(dischargeDate ? { dischargeDate } : {}),
-      ...(normalizedSearch ? {
+      ]
+    }];
+    if (status) whereConditions.push({ status });
+    if (admissionDate) whereConditions.push({ OR: [{ clinicStays: { some: { clinicId: { in: clinicIds }, admissionDate } } }, { admissionDate }] });
+    if (dischargeDate) whereConditions.push({ OR: [{ clinicStays: { some: { clinicId: { in: clinicIds }, dischargeDate } } }, { dischargeDate }] });
+    if (normalizedSearch) {
+      whereConditions.push({
         OR: [
           { name: { contains: normalizedSearch, mode: "insensitive" as const } },
           { document: { contains: normalizedSearch, mode: "insensitive" as const } },
           { cpf: { contains: normalizedSearch, mode: "insensitive" as const } },
           { rg: { contains: normalizedSearch, mode: "insensitive" as const } }
         ]
-      } : {})
-    };
+      });
+    }
+
+    const where: Prisma.PatientWhereInput = { AND: whereConditions };
 
     if (pagination) {
       return this.cache.getOrSet(cacheKey, 15 * 1000, async () => {
@@ -150,6 +190,8 @@ export class PatientsService {
     const cpf = dto.cpf?.trim() || null;
     const rg = dto.rg?.trim() || null;
     const document = dto.document?.trim() || null;
+    const admissionDate = parseIsoDateValue(dto.admissionDate) ?? todayAtStartOfDay();
+    const dischargeDate = parseIsoDateValue(dto.dischargeDate) ?? null;
     const documentMatches = [
       ...(cpf ? [{ cpf }] : []),
       ...(rg ? [{ rg }] : []),
@@ -159,31 +201,27 @@ export class PatientsService {
       const existingPatient = documentMatches.length > 0 ? await tx.patient.findFirst({
         where: { OR: documentMatches },
         orderBy: { createdAt: "asc" },
-        include: { clinics: true }
+        include: { clinics: true, clinicStays: true }
       }) : null;
 
       if (existingPatient) {
         const existingClinicLink = existingPatient.clinics.find((clinicLink) => clinicLink.clinicId === clinicId);
+        const activeStayInClinic = existingPatient.clinicStays.find((clinicStay) => clinicStay.clinicId === clinicId && clinicStay.status === "ACTIVE");
 
-        if (existingPatient.clinicId === clinicId && existingPatient.status === "ACTIVE" && existingClinicLink?.status === "ACTIVE") {
+        if (existingPatient.clinicId === clinicId && existingPatient.status === "ACTIVE" && existingClinicLink?.status === "ACTIVE" && activeStayInClinic) {
           return { ...existingPatient, linkedExisting: false, existingInClinic: true, transferSummary: null };
         }
 
-        const transferSummary = await this.transferPatientClinicContext(tx, existingPatient.id, existingPatient.clinicId, clinicId);
-        if (existingPatient.clinicId !== clinicId) {
-          await tx.patientClinic.updateMany({
-            where: { patientId: existingPatient.id, clinicId: existingPatient.clinicId },
-            data: { status: "INACTIVE", lastSeenAt: new Date() }
-          });
-        }
+        const transferSummary = await this.transferPatientClinicContext(tx, existingPatient.id, existingPatient.clinicId, clinicId, todayAtStartOfDay());
+        await this.createPatientClinicStay(tx, existingPatient.id, clinicId, admissionDate, dischargeDate);
         await tx.patient.update({
           where: { id: existingPatient.id },
           data: {
             clinicId,
             status: "ACTIVE",
             ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
-            ...(dto.admissionDate !== undefined ? { admissionDate: dto.admissionDate ? new Date(`${dto.admissionDate}T00:00:00`) : null } : {}),
-            ...(dto.dischargeDate !== undefined ? { dischargeDate: dto.dischargeDate ? new Date(`${dto.dischargeDate}T00:00:00`) : null } : {}),
+            admissionDate,
+            dischargeDate,
             ...(dto.birthDate !== undefined ? { birthDate: dto.birthDate ? new Date(`${dto.birthDate}T00:00:00`) : null } : {}),
             document,
             cpf,
@@ -193,8 +231,8 @@ export class PatientsService {
 
         await tx.patientClinic.upsert({
           where: { patientId_clinicId: { patientId: existingPatient.id, clinicId } },
-          update: { status: "ACTIVE", lastSeenAt: new Date() },
-          create: { patientId: existingPatient.id, clinicId, status: "ACTIVE", lastSeenAt: new Date() }
+          update: { status: dischargeDate ? "INACTIVE" : "ACTIVE", lastSeenAt: dischargeDate ?? admissionDate },
+          create: { patientId: existingPatient.id, clinicId, status: dischargeDate ? "INACTIVE" : "ACTIVE", firstSeenAt: admissionDate, lastSeenAt: dischargeDate ?? admissionDate }
         });
 
         return { ...existingPatient, linkedExisting: !existingClinicLink, existingInClinic: Boolean(existingClinicLink), transferSummary };
@@ -204,14 +242,17 @@ export class PatientsService {
         data: {
           name: dto.name.trim(),
           clinicId,
-          admissionDate: dto.admissionDate ? new Date(`${dto.admissionDate}T00:00:00`) : null,
-          dischargeDate: dto.dischargeDate ? new Date(`${dto.dischargeDate}T00:00:00`) : null,
+          admissionDate,
+          dischargeDate,
           birthDate: dto.birthDate ? new Date(`${dto.birthDate}T00:00:00`) : null,
           document,
           cpf,
           rg,
           clinics: {
-            create: { clinicId, status: "ACTIVE", lastSeenAt: new Date() }
+            create: { clinicId, status: dischargeDate ? "INACTIVE" : "ACTIVE", firstSeenAt: admissionDate, lastSeenAt: dischargeDate ?? admissionDate }
+          },
+          clinicStays: {
+            create: { clinicId, status: dischargeDate ? "DISCHARGED" : "ACTIVE", admissionDate, dischargeDate }
           }
         }
       });
@@ -244,11 +285,20 @@ export class PatientsService {
 
     return this.cache.getOrSet(cacheKey, 15 * 1000, async () => {
       const patient = await this.prisma.patient.findFirst({
-        where: { id: patientId, clinics: { some: { clinicId: { in: clinicIds } } } },
+        where: {
+          id: patientId,
+          OR: [
+            { clinics: { some: { clinicId: { in: clinicIds } } } },
+            { clinicStays: { some: { clinicId: { in: clinicIds } } } },
+            { clinicId: { in: clinicIds } }
+          ]
+        },
         include: this.patientInclude(clinicIds)
       });
 
       if (!patient) throw new NotFoundException("Paciente não encontrado.");
+      const clinicHistory = this.resolvePatientClinicStays(patient, clinicIds);
+      const currentStay = this.resolveCurrentPatientStay(patient, clinicHistory);
 
       const [anamneses, evolutions] = await Promise.all([
         this.prisma.anamnesisRecord.findMany({
@@ -291,9 +341,10 @@ export class PatientsService {
         name: patient.name,
         status: patient.status,
         globalStatus: patient.status,
-        admissionDate: patient.admissionDate?.toISOString() ?? null,
-        dischargeDate: patient.dischargeDate?.toISOString() ?? null,
+        admissionDate: currentStay?.admissionDate.toISOString() ?? patient.admissionDate?.toISOString() ?? null,
+        dischargeDate: currentStay?.dischargeDate?.toISOString() ?? patient.dischargeDate?.toISOString() ?? null,
         clinics: patient.clinics.map((clinicLink) => this.toPatientClinicLink(clinicLink)),
+        clinicHistory: clinicHistory.map((clinicStay) => this.toPatientClinicStay(clinicStay)),
         birthDate: patient.birthDate?.toISOString() ?? null,
         document: patient.document,
         cpf: patient.cpf,
@@ -333,18 +384,24 @@ export class PatientsService {
     const beforeData = await this.findPatientOrThrow(patientId, await this.resolveScopedClinicIds(user, requestedClinicId));
     const sourceClinicId = beforeData.clinicId;
     const targetClinicId = dto.clinicId?.trim() ? this.resolveWriteClinicId(user, dto.clinicId) : sourceClinicId;
+    const parsedAdmissionDate = parseIsoDateValue(dto.admissionDate);
+    const parsedDischargeDate = parseIsoDateValue(dto.dischargeDate);
     const transferSummary = await this.prisma.$transaction(async (tx) => {
-      const summary = await this.transferPatientClinicContext(tx, patientId, sourceClinicId, targetClinicId);
-      if (targetClinicId !== sourceClinicId) {
-        await tx.patientClinic.updateMany({
-          where: { patientId, clinicId: sourceClinicId },
-          data: { status: "INACTIVE", lastSeenAt: new Date() }
+      const isClinicTransfer = targetClinicId !== sourceClinicId;
+      const targetAdmissionDate = isClinicTransfer ? parsedAdmissionDate ?? todayAtStartOfDay() : parsedAdmissionDate;
+      const sourceDischargeDate = isClinicTransfer ? parsedDischargeDate ?? todayAtStartOfDay() : parsedDischargeDate;
+      const summary = await this.transferPatientClinicContext(tx, patientId, sourceClinicId, targetClinicId, sourceDischargeDate ?? todayAtStartOfDay());
+      const syncedStay = isClinicTransfer
+        ? await this.createPatientClinicStay(tx, patientId, targetClinicId, targetAdmissionDate ?? todayAtStartOfDay(), null)
+        : await this.syncCurrentClinicStay(tx, patientId, targetClinicId, {
+          admissionDate: targetAdmissionDate,
+          dischargeDate: parsedDischargeDate,
+          fallbackAdmissionDate: beforeData.admissionDate ?? beforeData.createdAt
         });
-      }
       await tx.patientClinic.upsert({
         where: { patientId_clinicId: { patientId, clinicId: targetClinicId } },
-        update: { status: beforeData.status, lastSeenAt: new Date() },
-        create: { patientId, clinicId: targetClinicId, status: beforeData.status, lastSeenAt: new Date() }
+        update: { status: syncedStay.dischargeDate ? "INACTIVE" : "ACTIVE", lastSeenAt: syncedStay.dischargeDate ?? syncedStay.admissionDate },
+        create: { patientId, clinicId: targetClinicId, status: syncedStay.dischargeDate ? "INACTIVE" : "ACTIVE", firstSeenAt: syncedStay.admissionDate, lastSeenAt: syncedStay.dischargeDate ?? syncedStay.admissionDate }
       });
 
       await tx.patient.update({
@@ -353,8 +410,8 @@ export class PatientsService {
           clinicId: targetClinicId,
           status: beforeData.status,
           ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
-          ...(dto.admissionDate !== undefined ? { admissionDate: dto.admissionDate ? new Date(`${dto.admissionDate}T00:00:00`) : null } : {}),
-          ...(dto.dischargeDate !== undefined ? { dischargeDate: dto.dischargeDate ? new Date(`${dto.dischargeDate}T00:00:00`) : null } : {}),
+          ...(dto.admissionDate !== undefined || isClinicTransfer ? { admissionDate: syncedStay.admissionDate } : {}),
+          ...(dto.dischargeDate !== undefined || isClinicTransfer ? { dischargeDate: syncedStay.dischargeDate } : {}),
           ...(dto.birthDate !== undefined ? { birthDate: dto.birthDate ? new Date(`${dto.birthDate}T00:00:00`) : null } : {}),
           ...(dto.document !== undefined ? { document: dto.document?.trim() || null } : {}),
           ...(dto.cpf !== undefined ? { cpf: dto.cpf?.trim() || null } : {}),
@@ -375,16 +432,33 @@ export class PatientsService {
 
   async updateStatus(user: AuthenticatedUser, patientId: string, status: PatientStatus, requestedClinicId?: string) {
     const beforeData = await this.findPatientOrThrow(patientId, await this.resolveScopedClinicIds(user, requestedClinicId));
-    await this.prisma.$transaction([
-      this.prisma.patient.update({
+    const cycleDate = todayAtStartOfDay();
+    await this.prisma.$transaction(async (tx) => {
+      let activeStayAdmissionDate = beforeData.admissionDate ?? cycleDate;
+      if (status === "ACTIVE") {
+        const activeStay = await tx.patientClinicStay.findFirst({ where: { patientId, clinicId: beforeData.clinicId, status: "ACTIVE" } });
+        const nextActiveStay = activeStay ?? await this.createPatientClinicStay(tx, patientId, beforeData.clinicId, cycleDate, null);
+        activeStayAdmissionDate = nextActiveStay.admissionDate;
+        await tx.patientClinic.upsert({
+          where: { patientId_clinicId: { patientId, clinicId: beforeData.clinicId } },
+          update: { status: "ACTIVE", lastSeenAt: activeStayAdmissionDate },
+          create: { patientId, clinicId: beforeData.clinicId, status: "ACTIVE", firstSeenAt: activeStayAdmissionDate, lastSeenAt: activeStayAdmissionDate }
+        });
+      } else {
+        await this.closeActiveClinicStays(tx, patientId, beforeData.clinicId, beforeData.dischargeDate ?? cycleDate);
+        await tx.patientClinic.updateMany({
+          where: { patientId, clinicId: beforeData.clinicId },
+          data: { status: "INACTIVE", lastSeenAt: beforeData.dischargeDate ?? cycleDate }
+        });
+      }
+
+      await tx.patient.update({
         where: { id: patientId },
-        data: { status }
-      }),
-      this.prisma.patientClinic.updateMany({
-        where: { patientId },
-        data: { status }
+        data: status === "ACTIVE"
+          ? { status, admissionDate: activeStayAdmissionDate, dischargeDate: null }
+          : { status, dischargeDate: beforeData.dischargeDate ?? cycleDate }
       })
-    ]);
+    });
     const patient = await this.getPatientStatusResponse(patientId, beforeData.clinicId);
 
     this.invalidatePatientCaches(patient.id, beforeData.clinicId);
@@ -474,6 +548,7 @@ export class PatientsService {
         id: patientId,
         OR: [
           { clinics: { some: { clinicId: { in: clinicIds } } } },
+          { clinicStays: { some: { clinicId: { in: clinicIds } } } },
           { clinicId: { in: clinicIds } }
         ]
       },
@@ -500,6 +575,35 @@ export class PatientsService {
     };
   }
 
+  private toPatientClinicStay(clinicStay: PatientClinicStayRecord) {
+    return {
+      id: clinicStay.id,
+      clinicId: clinicStay.clinicId,
+      status: clinicStay.status,
+      admissionDate: clinicStay.admissionDate.toISOString(),
+      dischargeDate: clinicStay.dischargeDate?.toISOString() ?? null,
+      createdAt: clinicStay.createdAt.toISOString(),
+      updatedAt: clinicStay.updatedAt.toISOString(),
+      clinic: clinicStay.clinic
+    };
+  }
+
+  private resolvePatientClinicStays(patient: { clinicId: string; clinicStays: PatientClinicStayRecord[] }, scopedClinicIds?: string[]) {
+    const visibleStays = scopedClinicIds ? patient.clinicStays.filter((clinicStay) => scopedClinicIds.includes(clinicStay.clinicId)) : patient.clinicStays;
+    return [...visibleStays].sort((leftStay, rightStay) => {
+      if (leftStay.status === "ACTIVE" && rightStay.status !== "ACTIVE") return -1;
+      if (rightStay.status === "ACTIVE" && leftStay.status !== "ACTIVE") return 1;
+      return rightStay.admissionDate.getTime() - leftStay.admissionDate.getTime();
+    });
+  }
+
+  private resolveCurrentPatientStay(patient: { clinicId: string }, clinicStays: PatientClinicStayRecord[]) {
+    return clinicStays.find((clinicStay) => clinicStay.clinicId === patient.clinicId && clinicStay.status === "ACTIVE")
+      ?? clinicStays.find((clinicStay) => clinicStay.status === "ACTIVE")
+      ?? clinicStays[0]
+      ?? null;
+  }
+
   private toPatientListItem(patient: {
     id: string;
     name: string;
@@ -514,13 +618,8 @@ export class PatientsService {
     createdAt: Date;
     updatedAt: Date;
     clinic: { id: string; name: string; code: string | null; status: "ACTIVE" | "INACTIVE" };
-    clinics: Array<{
-      clinicId: string;
-      status: "ACTIVE" | "INACTIVE";
-      firstSeenAt: Date;
-      lastSeenAt: Date | null;
-      clinic: { id: string; name: string; code: string | null; status: "ACTIVE" | "INACTIVE" };
-    }>;
+    clinics: PatientClinicRecord[];
+    clinicStays: PatientClinicStayRecord[];
   }, scopedClinicIds?: string[], flags?: PatientMutationFlags) {
     const visibleClinics = scopedClinicIds ? patient.clinics.filter((clinicLink) => scopedClinicIds.includes(clinicLink.clinicId)) : patient.clinics;
     const resolvedClinics = visibleClinics.length > 0 ? visibleClinics : [{
@@ -538,13 +637,15 @@ export class PatientsService {
       return new Date(rightClinic.lastSeenAt ?? rightClinic.firstSeenAt).getTime() - new Date(leftClinic.lastSeenAt ?? leftClinic.firstSeenAt).getTime();
     });
     if (scopedClinicIds && resolvedClinics.length === 0) throw new NotFoundException("Paciente não encontrado.");
+    const clinicHistory = this.resolvePatientClinicStays(patient, scopedClinicIds);
+    const currentStay = this.resolveCurrentPatientStay(patient, clinicHistory);
     return {
       id: patient.id,
       name: patient.name,
       status: patient.status,
       globalStatus: patient.status,
-      admissionDate: patient.admissionDate?.toISOString() ?? null,
-      dischargeDate: patient.dischargeDate?.toISOString() ?? null,
+      admissionDate: currentStay?.admissionDate.toISOString() ?? patient.admissionDate?.toISOString() ?? null,
+      dischargeDate: currentStay?.dischargeDate?.toISOString() ?? patient.dischargeDate?.toISOString() ?? null,
       birthDate: patient.birthDate?.toISOString() ?? null,
       document: patient.document,
       cpf: patient.cpf,
@@ -552,6 +653,7 @@ export class PatientsService {
       createdAt: patient.createdAt.toISOString(),
       updatedAt: patient.updatedAt.toISOString(),
       clinics: resolvedClinics.map((clinicLink) => this.toPatientClinicLink(clinicLink)),
+      clinicHistory: clinicHistory.map((clinicStay) => this.toPatientClinicStay(clinicStay)),
       ...(flags?.linkedExisting !== undefined ? { linkedExisting: flags.linkedExisting } : {}),
       ...(flags?.existingInClinic !== undefined ? { existingInClinic: flags.existingInClinic } : {}),
       ...(flags?.transferSummary !== undefined ? { transferSummary: flags.transferSummary } : {})
@@ -569,12 +671,12 @@ export class PatientsService {
   }
 
   private async ensurePatientInClinic(patientId: string, clinicId: string) {
-    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, status: "ACTIVE", OR: [{ clinics: { some: { clinicId, status: "ACTIVE" } } }, { clinicId }] }, select: { id: true } });
+    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, status: "ACTIVE", OR: [{ clinics: { some: { clinicId, status: "ACTIVE" } } }, { clinicStays: { some: { clinicId, status: "ACTIVE" } } }, { clinicId }] }, select: { id: true } });
     if (!patient) throw new NotFoundException("Paciente não encontrado.");
   }
 
   private async ensurePatientInAnyClinic(patientId: string, clinicIds: string[]) {
-    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, status: "ACTIVE", OR: [{ clinics: { some: { clinicId: { in: clinicIds }, status: "ACTIVE" } } }, { clinicId: { in: clinicIds } }] }, select: { clinicId: true } });
+    const patient = await this.prisma.patient.findFirst({ where: { id: patientId, status: "ACTIVE", OR: [{ clinics: { some: { clinicId: { in: clinicIds }, status: "ACTIVE" } } }, { clinicStays: { some: { clinicId: { in: clinicIds }, status: "ACTIVE" } } }, { clinicId: { in: clinicIds } }] }, select: { clinicId: true } });
     if (!patient) throw new NotFoundException("Paciente não encontrado.");
   }
 
@@ -585,18 +687,24 @@ export class PatientsService {
         where: clinicIds ? { clinicId: { in: clinicIds } } : undefined,
         orderBy: [{ firstSeenAt: "asc" }],
         include: { clinic: { select: { id: true, name: true, code: true, status: true } } }
+      },
+      clinicStays: {
+        where: clinicIds ? { clinicId: { in: clinicIds } } : undefined,
+        orderBy: [{ admissionDate: "desc" }, { createdAt: "desc" }],
+        include: { clinic: { select: { id: true, name: true, code: true, status: true } } }
       }
     } satisfies Prisma.PatientInclude;
   }
 
-  private async transferPatientClinicContext(tx: Prisma.TransactionClient, patientId: string, sourceClinicId: string, targetClinicId: string): Promise<PatientTransferSummary | null> {
+  private async transferPatientClinicContext(tx: Prisma.TransactionClient, patientId: string, sourceClinicId: string, targetClinicId: string, sourceDischargeDate: Date): Promise<PatientTransferSummary | null> {
     if (sourceClinicId === targetClinicId) return null;
 
     await tx.patientClinic.upsert({
       where: { patientId_clinicId: { patientId, clinicId: sourceClinicId } },
-      update: { lastSeenAt: new Date() },
-      create: { patientId, clinicId: sourceClinicId, status: "ACTIVE", lastSeenAt: new Date() }
+      update: { status: "INACTIVE", lastSeenAt: sourceDischargeDate },
+      create: { patientId, clinicId: sourceClinicId, status: "INACTIVE", lastSeenAt: sourceDischargeDate }
     });
+    await this.closeActiveClinicStays(tx, patientId, sourceClinicId, sourceDischargeDate);
 
     const [anamnesisTransfer, evolutionTransfer] = await Promise.all([
       tx.anamnesisRecord.updateMany({
@@ -615,6 +723,59 @@ export class PatientsService {
       draftAnamnesesTransferred: anamnesisTransfer.count,
       draftEvolutionsTransferred: evolutionTransfer.count
     };
+  }
+
+  private async closeActiveClinicStays(tx: Prisma.TransactionClient, patientId: string, clinicId: string, dischargeDate: Date) {
+    await tx.patientClinicStay.updateMany({
+      where: { patientId, clinicId, status: "ACTIVE" },
+      data: { status: "DISCHARGED", dischargeDate }
+    });
+  }
+
+  private async createPatientClinicStay(tx: Prisma.TransactionClient, patientId: string, clinicId: string, admissionDate: Date, dischargeDate: Date | null) {
+    if (!dischargeDate) {
+      await tx.patientClinicStay.updateMany({
+        where: { patientId, status: "ACTIVE" },
+        data: { status: "DISCHARGED", dischargeDate: admissionDate }
+      });
+    }
+
+    return tx.patientClinicStay.create({
+      data: {
+        patientId,
+        clinicId,
+        status: dischargeDate ? "DISCHARGED" : "ACTIVE",
+        admissionDate,
+        dischargeDate
+      }
+    });
+  }
+
+  private async syncCurrentClinicStay(tx: Prisma.TransactionClient, patientId: string, clinicId: string, options: { admissionDate?: Date | null; dischargeDate?: Date | null; fallbackAdmissionDate: Date }) {
+    const latestStay = await tx.patientClinicStay.findFirst({
+      where: { patientId, clinicId },
+      orderBy: [{ admissionDate: "desc" }, { createdAt: "desc" }]
+    });
+    const admissionDate = options.admissionDate ?? latestStay?.admissionDate ?? options.fallbackAdmissionDate;
+    const dischargeDate = options.dischargeDate === undefined ? latestStay?.dischargeDate ?? null : options.dischargeDate;
+
+    if (!dischargeDate) {
+      await tx.patientClinicStay.updateMany({
+        where: { patientId, status: "ACTIVE", ...(latestStay ? { id: { not: latestStay.id } } : {}) },
+        data: { status: "DISCHARGED", dischargeDate: admissionDate }
+      });
+    }
+
+    if (!latestStay) return this.createPatientClinicStay(tx, patientId, clinicId, admissionDate, dischargeDate);
+
+    return tx.patientClinicStay.update({
+      where: { id: latestStay.id },
+      data: {
+        admissionDate,
+        dischargeDate,
+        status: dischargeDate ? "DISCHARGED" : "ACTIVE"
+      }
+    });
   }
 
   private resolveDefaultClinicId(user: AuthenticatedUser) {
