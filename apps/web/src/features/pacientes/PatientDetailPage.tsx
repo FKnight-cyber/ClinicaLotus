@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, ArrowLeft, Building2, CalendarClock, ClipboardList, FileDown, FileText, ToggleLeft, ToggleRight, UserRound } from "lucide-react";
+import { Activity, ArrowLeft, Building2, CalendarClock, ClipboardList, FileDown, FileText, ToggleLeft, ToggleRight, UserRound, X } from "lucide-react";
 import Link from "next/link";
 import { useShellTitle } from "@/components/shell/AppShell";
 import { useAuth } from "@/features/auth/AuthProvider";
@@ -15,6 +15,8 @@ type PatientDetail = {
   name: string;
   status: PatientStatus;
   clinics: PatientClinicLink[];
+  admissionDate?: string | null;
+  dischargeDate?: string | null;
   birthDate?: string | null;
   document?: string | null;
   cpf?: string | null;
@@ -48,6 +50,11 @@ type ClinicalDocumentSummary = {
   contentHash: string;
   emittedAt: string;
   patientId?: string | null;
+};
+
+type PatientReportOptions = {
+  includePsychologicalPart: boolean;
+  includeMedicalPart: boolean;
 };
 
 type PatientAnamnesis = {
@@ -146,6 +153,13 @@ function isCurrentClinicContext(clinicLink: PatientClinicLink, currentClinicId?:
   return Boolean(currentClinicId) && clinicLink.clinicId === currentClinicId;
 }
 
+function buildClinicHistorySummary(clinics: PatientClinicLink[]) {
+  if (clinics.length === 0) return "Sem passagens registradas.";
+  return clinics
+    .map((clinicLink) => `${formatClinicLabel(clinicLink)} desde ${formatDate(clinicLink.firstSeenAt)}`)
+    .join(" | ");
+}
+
 function buildPatientDetailPath(patientId: string, clinicId?: string) {
   const params = new URLSearchParams();
   if (clinicId) params.set("clinicId", clinicId);
@@ -165,6 +179,8 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingStatus, setIsSavingStatus] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [isReportOptionsOpen, setIsReportOptionsOpen] = useState(false);
+  const [reportOptions, setReportOptions] = useState<PatientReportOptions>({ includePsychologicalPart: true, includeMedicalPart: canReadEvolutions });
 
   useEffect(() => {
     if (!token || !canReadPatients) return;
@@ -188,6 +204,13 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
       isCurrent = false;
     };
   }, [token, canReadPatients, clinicId, patientId]);
+
+  useEffect(() => {
+    setReportOptions((currentOptions) => ({
+      includePsychologicalPart: currentOptions.includePsychologicalPart,
+      includeMedicalPart: canReadEvolutions ? currentOptions.includeMedicalPart : false
+    }));
+  }, [canReadEvolutions]);
 
   const latestEvolution = canReadEvolutions ? patient?.evolutions.find((evolution) => evolution.status === "finalized") ?? patient?.evolutions[0] ?? null : null;
   const latestAnamnesis = patient?.anamneses.find((anamnesis) => anamnesis.status === "finalized") ?? patient?.anamneses[0] ?? null;
@@ -235,8 +258,9 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
         code: document.code,
         emittedAt: document.emittedAt,
         emittedBy: user ? { name: user.name, login: user.login } : null
-      });
+      }, reportOptions);
       setMessage(`Relatório ${document.code} gerado.`);
+      setIsReportOptionsOpen(false);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível gerar o relatório do paciente.");
     } finally {
@@ -260,6 +284,8 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
   const anamnesePermissionTooltip = "Você não tem permissão para ver anamnese do paciente";
   const activeOperationalClinicId = patient.clinics.find((clinicLink) => clinicLink.status === "ACTIVE")?.clinicId ?? patient.clinics[0]?.clinicId;
   const linkedClinic = patient.clinics[0] ?? null;
+  const clinicHistorySummary = buildClinicHistorySummary(patient.clinics);
+  const canGenerateSelectedReport = reportOptions.includePsychologicalPart || reportOptions.includeMedicalPart;
 
   return (
     <section className="user-detail-page patient-detail-page">
@@ -272,7 +298,7 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
           </button>
         ) : null}
         {canGenerateReport ? (
-          <button className="secondary-button" disabled={isGeneratingReport} onClick={handleDownloadReport} type="button">
+          <button className="secondary-button" disabled={isGeneratingReport} onClick={() => setIsReportOptionsOpen(true)} type="button">
             <FileDown aria-hidden="true" size={17} />{isGeneratingReport ? "Gerando..." : "Baixar relatório"}
           </button>
         ) : null}
@@ -291,6 +317,9 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
           </div>
           <dl className="patient-detail-fields">
             <div><dt>Nome</dt><dd>{patient.name}</dd></div>
+            <div><dt>Data de admissão</dt><dd>{formatDate(patient.admissionDate)}</dd></div>
+            <div><dt>Dia da alta</dt><dd>{formatDate(patient.dischargeDate)}</dd></div>
+            <div><dt>Histórico de clínicas</dt><dd>{clinicHistorySummary}</dd></div>
             <div><dt>Nascimento</dt><dd>{formatDate(patient.birthDate)}</dd></div>
             <div><dt>Documentos</dt><dd>{formatDocuments(patient)}</dd></div>
             <div><dt>Cadastrado em</dt><dd>{formatDateTime(patient.createdAt)}</dd></div>
@@ -427,6 +456,39 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
           </table>
         </div>
       </section>
+
+      {isReportOptionsOpen ? (
+        <div className="confirmation-modal-layer" role="presentation">
+          <button aria-label="Cancelar geração do relatório" className="confirmation-modal-backdrop" onClick={() => setIsReportOptionsOpen(false)} type="button" />
+          <section aria-labelledby="patient-report-modal-title" aria-modal="true" className="confirmation-modal-panel report-options-modal-panel" role="dialog">
+            <div className="confirmation-modal-heading">
+              <span className="confirmation-modal-icon is-primary"><FileDown aria-hidden="true" size={20} /></span>
+              <div>
+                <span className="eyebrow">Relatório do paciente</span>
+                <h3 id="patient-report-modal-title">Escolha o que deve entrar no relatório</h3>
+              </div>
+              <button className="icon-button" onClick={() => setIsReportOptionsOpen(false)} title="Fechar" type="button"><X aria-hidden="true" size={18} /></button>
+            </div>
+            <p>Os dados cadastrais, incluindo admissão, alta e histórico de clínicas, sempre serão incluídos. Selecione abaixo quais partes clínicas devem compor o PDF.</p>
+            <div className="access-checklist compact-checklist report-options-checklist">
+              <label className="choice-pill">
+                <input checked={reportOptions.includePsychologicalPart} onChange={(event) => setReportOptions((currentOptions) => ({ ...currentOptions, includePsychologicalPart: event.target.checked }))} type="checkbox" />
+                <strong>Parte psicológica / acolhimento</strong>
+                <span>Inclui histórico de anamneses e o resumo vinculado ao acolhimento.</span>
+              </label>
+              <label className="choice-pill">
+                <input checked={reportOptions.includeMedicalPart} disabled={!canReadEvolutions} onChange={(event) => setReportOptions((currentOptions) => ({ ...currentOptions, includeMedicalPart: event.target.checked }))} type="checkbox" />
+                <strong>Parte médica</strong>
+                <span>{canReadEvolutions ? "Inclui evoluções finalizadas e o resumo médico do paciente." : "Seu usuário não possui permissão para incluir evoluções no relatório."}</span>
+              </label>
+            </div>
+            <div className="confirmation-modal-actions">
+              <button className="secondary-button" disabled={isGeneratingReport} onClick={() => setIsReportOptionsOpen(false)} type="button">Cancelar</button>
+              <button className="primary-button" disabled={isGeneratingReport || !canGenerateSelectedReport} onClick={handleDownloadReport} type="button">{isGeneratingReport ? "Gerando..." : "Gerar relatório"}</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }

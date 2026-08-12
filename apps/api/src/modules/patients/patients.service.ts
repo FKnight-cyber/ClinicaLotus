@@ -13,6 +13,8 @@ type ListQueryOptions = {
   status?: string;
   limit?: string;
   offset?: string;
+  admissionDate?: string;
+  dischargeDate?: string;
 };
 
 type PatientTransferSummary = {
@@ -49,6 +51,19 @@ function parsePaginationOptions(options?: ListQueryOptions) {
   };
 }
 
+function parseIsoDateRange(value?: string) {
+  const normalizedValue = value?.trim();
+  if (!normalizedValue) return undefined;
+
+  const startAt = new Date(`${normalizedValue}T00:00:00`);
+  if (Number.isNaN(startAt.getTime())) return undefined;
+
+  const endAt = new Date(startAt);
+  endAt.setDate(endAt.getDate() + 1);
+
+  return { gte: startAt, lt: endAt };
+}
+
 @Injectable()
 export class PatientsService {
   constructor(
@@ -62,7 +77,9 @@ export class PatientsService {
     const normalizedSearch = search?.trim();
     const status = parsePatientStatusFilter(options?.status);
     const pagination = parsePaginationOptions(options);
-    const cacheKey = `patients:list:${clinicScopeKey}:${normalizedSearch ? normalizedSearch.toLowerCase() : "all"}:${options?.status === "ALL" ? "all" : status ?? "all"}:${pagination ? `${pagination.limit}:${pagination.offset}` : "legacy"}`;
+    const admissionDate = parseIsoDateRange(options?.admissionDate);
+    const dischargeDate = parseIsoDateRange(options?.dischargeDate);
+    const cacheKey = `patients:list:${clinicScopeKey}:${normalizedSearch ? normalizedSearch.toLowerCase() : "all"}:${options?.status === "ALL" ? "all" : status ?? "all"}:${options?.admissionDate?.trim() || "all"}:${options?.dischargeDate?.trim() || "all"}:${pagination ? `${pagination.limit}:${pagination.offset}` : "legacy"}`;
 
     const where: Prisma.PatientWhereInput = {
       OR: [
@@ -70,6 +87,8 @@ export class PatientsService {
         { clinicId: { in: clinicIds } }
       ],
       ...(status ? { status } : {}),
+      ...(admissionDate ? { admissionDate } : {}),
+      ...(dischargeDate ? { dischargeDate } : {}),
       ...(normalizedSearch ? {
         OR: [
           { name: { contains: normalizedSearch, mode: "insensitive" as const } },
@@ -163,6 +182,8 @@ export class PatientsService {
             clinicId,
             status: "ACTIVE",
             ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+            ...(dto.admissionDate !== undefined ? { admissionDate: dto.admissionDate ? new Date(`${dto.admissionDate}T00:00:00`) : null } : {}),
+            ...(dto.dischargeDate !== undefined ? { dischargeDate: dto.dischargeDate ? new Date(`${dto.dischargeDate}T00:00:00`) : null } : {}),
             ...(dto.birthDate !== undefined ? { birthDate: dto.birthDate ? new Date(`${dto.birthDate}T00:00:00`) : null } : {}),
             document,
             cpf,
@@ -183,6 +204,8 @@ export class PatientsService {
         data: {
           name: dto.name.trim(),
           clinicId,
+          admissionDate: dto.admissionDate ? new Date(`${dto.admissionDate}T00:00:00`) : null,
+          dischargeDate: dto.dischargeDate ? new Date(`${dto.dischargeDate}T00:00:00`) : null,
           birthDate: dto.birthDate ? new Date(`${dto.birthDate}T00:00:00`) : null,
           document,
           cpf,
@@ -268,6 +291,8 @@ export class PatientsService {
         name: patient.name,
         status: patient.status,
         globalStatus: patient.status,
+        admissionDate: patient.admissionDate?.toISOString() ?? null,
+        dischargeDate: patient.dischargeDate?.toISOString() ?? null,
         clinics: patient.clinics.map((clinicLink) => this.toPatientClinicLink(clinicLink)),
         birthDate: patient.birthDate?.toISOString() ?? null,
         document: patient.document,
@@ -328,6 +353,8 @@ export class PatientsService {
           clinicId: targetClinicId,
           status: beforeData.status,
           ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+          ...(dto.admissionDate !== undefined ? { admissionDate: dto.admissionDate ? new Date(`${dto.admissionDate}T00:00:00`) : null } : {}),
+          ...(dto.dischargeDate !== undefined ? { dischargeDate: dto.dischargeDate ? new Date(`${dto.dischargeDate}T00:00:00`) : null } : {}),
           ...(dto.birthDate !== undefined ? { birthDate: dto.birthDate ? new Date(`${dto.birthDate}T00:00:00`) : null } : {}),
           ...(dto.document !== undefined ? { document: dto.document?.trim() || null } : {}),
           ...(dto.cpf !== undefined ? { cpf: dto.cpf?.trim() || null } : {}),
@@ -478,6 +505,8 @@ export class PatientsService {
     name: string;
     status: PatientStatus;
     clinicId: string;
+    admissionDate: Date | null;
+    dischargeDate: Date | null;
     birthDate: Date | null;
     document: string | null;
     cpf: string | null;
@@ -514,6 +543,8 @@ export class PatientsService {
       name: patient.name,
       status: patient.status,
       globalStatus: patient.status,
+      admissionDate: patient.admissionDate?.toISOString() ?? null,
+      dischargeDate: patient.dischargeDate?.toISOString() ?? null,
       birthDate: patient.birthDate?.toISOString() ?? null,
       document: patient.document,
       cpf: patient.cpf,

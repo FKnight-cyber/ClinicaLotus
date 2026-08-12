@@ -1,0 +1,3 @@
+ALTER TABLE "Patient"
+  ADD COLUMN IF NOT EXISTS "admissionDate" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "dischargeDate" TIMESTAMP(3);

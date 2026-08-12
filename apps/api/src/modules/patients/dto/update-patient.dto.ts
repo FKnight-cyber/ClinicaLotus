@@ -12,6 +12,14 @@ export class UpdatePatientDto {
 
   @IsOptional()
   @IsISO8601()
+  admissionDate?: string | null;
+
+  @IsOptional()
+  @IsISO8601()
+  dischargeDate?: string | null;
+
+  @IsOptional()
+  @IsISO8601()
   birthDate?: string | null;
 
   @IsOptional()

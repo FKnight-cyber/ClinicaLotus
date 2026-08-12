@@ -2638,6 +2638,19 @@ td input {
   justify-content: flex-end;
 }
 
+.report-options-modal-panel {
+  max-width: 620px;
+  width: min(620px, 100%);
+}
+
+.report-options-checklist {
+  gap: 10px;
+}
+
+.report-options-checklist .choice-pill {
+  width: 100%;
+}
+
 .evolution-modal-panel {
   max-height: calc(100vh - 44px);
   max-width: 860px;

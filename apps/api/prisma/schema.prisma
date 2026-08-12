@@ -216,6 +216,8 @@ model Patient {
   name            String
   status          PatientStatus     @default(ACTIVE)
   clinicId        String
+  admissionDate   DateTime?
+  dischargeDate   DateTime?
   birthDate       DateTime?
   document        String?
   cpf             String?

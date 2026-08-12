@@ -7,6 +7,14 @@ export class CreatePatientDto {
 
   @IsOptional()
   @IsISO8601()
+  admissionDate?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  dischargeDate?: string;
+
+  @IsOptional()
+  @IsISO8601()
   birthDate?: string;
 
   @IsOptional()

@@ -14,6 +14,20 @@ type PatientSummaryReport = {
   id: string;
   name: string;
   status: "ACTIVE" | "INACTIVE";
+  admissionDate?: string | null;
+  dischargeDate?: string | null;
+  clinics: Array<{
+    clinicId: string;
+    status: "ACTIVE" | "INACTIVE";
+    firstSeenAt: string;
+    lastSeenAt?: string | null;
+    clinic: {
+      id: string;
+      name: string;
+      code?: string | null;
+      status: "ACTIVE" | "INACTIVE";
+    };
+  }>;
   birthDate?: string | null;
   document?: string | null;
   cpf?: string | null;
@@ -52,6 +66,11 @@ type PatientSummaryReportDocument = {
     name?: string | null;
     login?: string | null;
   } | null;
+};
+
+type PatientSummaryReportOptions = {
+  includePsychologicalPart?: boolean;
+  includeMedicalPart?: boolean;
 };
 
 const margin = 14;
@@ -110,6 +129,17 @@ function getEvolutionResponsible(evolution: PatientSummaryReport["evolutions"][n
 function normalizeText(text: string, maxLength = 620) {
   const normalizedText = text.replace(/\s+/g, " ").trim();
   return normalizedText.length > maxLength ? `${normalizedText.slice(0, maxLength - 3)}...` : normalizedText || "-";
+}
+
+function formatClinicLinkLabel(clinicLink: PatientSummaryReport["clinics"][number]) {
+  return clinicLink.clinic.code ? `${clinicLink.clinic.name} (${clinicLink.clinic.code})` : clinicLink.clinic.name;
+}
+
+function buildClinicHistorySummary(patient: PatientSummaryReport) {
+  if (patient.clinics.length === 0) return "Sem passagens registradas.";
+  return patient.clinics
+    .map((clinicLink) => `${formatClinicLinkLabel(clinicLink)} desde ${formatDate(clinicLink.firstSeenAt)}`)
+    .join(" | ");
 }
 
 function svgToPngDataUrl(svg: string, width: number, height: number) {
@@ -223,62 +253,83 @@ function drawGeneratedNotice(doc: jsPDF, patient: PatientSummaryReport, document
   doc.text(doc.splitTextToSize(notice, contentWidth), margin, y);
 }
 
-export async function downloadPatientSummaryReportPdf(patient: PatientSummaryReport, document: PatientSummaryReportDocument = {}) {
+export async function downloadPatientSummaryReportPdf(patient: PatientSummaryReport, document: PatientSummaryReportDocument = {}, options: PatientSummaryReportOptions = {}) {
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
   await drawHeader(doc, document.code);
 
   const finalizedEvolutions = patient.evolutions.filter((evolution) => evolution.status === "finalized");
   const latestFinalizedEvolution = finalizedEvolutions[0] ?? null;
   const latestFinalizedAnamnesis = patient.anamneses.find((anamnesis) => anamnesis.status === "finalized") ?? null;
+  const includePsychologicalPart = options.includePsychologicalPart ?? true;
+  const includeMedicalPart = options.includeMedicalPart ?? true;
+  const currentClinic = patient.clinics.find((clinicLink) => clinicLink.status === "ACTIVE") ?? patient.clinics[0] ?? null;
   let y = margin + 44;
 
   y = drawSectionTitle(doc, "Identificação", y);
   y = drawKeyValueTable(doc, [
     ["Paciente", patient.name],
     ["Status cadastral", patient.status === "ACTIVE" ? "Ativo" : "Inativo"],
+    ["Clínica operacional atual", currentClinic ? formatClinicLinkLabel(currentClinic) : "Não informada"],
     ["Nascimento / idade", `${formatDate(patient.birthDate)} / ${getAge(patient)}`],
+    ["Data de admissão", formatDate(patient.admissionDate)],
+    ["Dia da alta", formatDate(patient.dischargeDate)],
+    ["Histórico de clínicas", buildClinicHistorySummary(patient)],
     ["Documentos", formatDocuments(patient)],
     ["Cadastro", formatDateTime(patient.createdAt)],
     ["Última atualização", formatDateTime(patient.updatedAt)]
   ], y + 3) + 9;
 
-  y = drawSectionTitle(doc, "Resumo clínico", y);
-  y = drawKeyValueTable(doc, [
-    ["Anamneses", `${patient.anamneses.length} registro(s): ${countByStatus(patient.anamneses, "finalized")} finalizada(s), ${countByStatus(patient.anamneses, "draft")} rascunho(s), ${countByStatus(patient.anamneses, "canceled")} cancelada(s)`],
-    ["Evoluções", `${patient.evolutions.length} registro(s): ${countByStatus(patient.evolutions, "finalized")} finalizada(s), ${countByStatus(patient.evolutions, "draft")} rascunho(s), ${countByStatus(patient.evolutions, "canceled")} cancelada(s)`],
-    ["Última anamnese finalizada", latestFinalizedAnamnesis ? `${latestFinalizedAnamnesis.code} em ${formatDateTime(latestFinalizedAnamnesis.finalizedAt)}` : "Sem registro finalizado"],
-    ["Última evolução finalizada", latestFinalizedEvolution ? `${formatDateTime(latestFinalizedEvolution.evolutionDate)} - ${latestFinalizedEvolution.professionalArea ?? "Sem área"}` : "Sem registro finalizado"]
-  ], y + 3) + 9;
+  const summaryRows: string[][] = [];
+  if (includePsychologicalPart) {
+    summaryRows.push(
+      ["Anamneses", `${patient.anamneses.length} registro(s): ${countByStatus(patient.anamneses, "finalized")} finalizada(s), ${countByStatus(patient.anamneses, "draft")} rascunho(s), ${countByStatus(patient.anamneses, "canceled")} cancelada(s)`],
+      ["Última anamnese finalizada", latestFinalizedAnamnesis ? `${latestFinalizedAnamnesis.code} em ${formatDateTime(latestFinalizedAnamnesis.finalizedAt)}` : "Sem registro finalizado"]
+    );
+  }
+  if (includeMedicalPart) {
+    summaryRows.push(
+      ["Evoluções", `${patient.evolutions.length} registro(s): ${countByStatus(patient.evolutions, "finalized")} finalizada(s), ${countByStatus(patient.evolutions, "draft")} rascunho(s), ${countByStatus(patient.evolutions, "canceled")} cancelada(s)`],
+      ["Última evolução finalizada", latestFinalizedEvolution ? `${formatDateTime(latestFinalizedEvolution.evolutionDate)} - ${latestFinalizedEvolution.professionalArea ?? "Sem área"}` : "Sem registro finalizado"]
+    );
+  }
+  if (summaryRows.length > 0) {
+    y = drawSectionTitle(doc, "Resumo clínico", y);
+    y = drawKeyValueTable(doc, summaryRows, y + 3) + 9;
+  }
 
-  y = drawSectionTitle(doc, "Histórico de anamneses", y);
-  autoTable(doc, {
-    head: [["Código", "Status", "Finalização", "Atualização"]],
-    body: patient.anamneses.length > 0 ? patient.anamneses.map((anamnesis) => [anamnesis.code, getStatusLabel(anamnesis.status), formatDateTime(anamnesis.finalizedAt), formatDateTime(anamnesis.updatedAt)]) : [["-", "Nenhuma anamnese vinculada", "-", "-"]],
-    startY: y + 3,
-    theme: "striped",
-    margin: { left: margin, right: margin },
-    styles: { font: "helvetica", fontSize: 7.8, cellPadding: 2, overflow: "linebreak" },
-    headStyles: { fillColor: [23, 49, 43], textColor: [255, 255, 255] }
-  });
-  y = ((doc as JsPdfWithAutoTable).lastAutoTable?.finalY ?? y) + 9;
+  if (includePsychologicalPart) {
+    y = drawSectionTitle(doc, "Parte psicológica / acolhimento", y);
+    autoTable(doc, {
+      head: [["Código", "Status", "Finalização", "Atualização"]],
+      body: patient.anamneses.length > 0 ? patient.anamneses.map((anamnesis) => [anamnesis.code, getStatusLabel(anamnesis.status), formatDateTime(anamnesis.finalizedAt), formatDateTime(anamnesis.updatedAt)]) : [["-", "Nenhuma anamnese vinculada", "-", "-"]],
+      startY: y + 3,
+      theme: "striped",
+      margin: { left: margin, right: margin },
+      styles: { font: "helvetica", fontSize: 7.8, cellPadding: 2, overflow: "linebreak" },
+      headStyles: { fillColor: [23, 49, 43], textColor: [255, 255, 255] }
+    });
+    y = ((doc as JsPdfWithAutoTable).lastAutoTable?.finalY ?? y) + 9;
+  }
 
-  y = drawSectionTitle(doc, "Evoluções finalizadas", y);
-  autoTable(doc, {
-    head: [["Data", "Área", "Responsável", "Síntese"]],
-    body: finalizedEvolutions.length > 0 ? finalizedEvolutions.map((evolution) => [formatDateTime(evolution.evolutionDate), evolution.professionalArea ?? "Sem área", getEvolutionResponsible(evolution), normalizeText(evolution.text)]) : [["-", "-", "-", "Nenhuma evolução finalizada disponível para o relatório"]],
-    startY: y + 3,
-    theme: "striped",
-    margin: { left: margin, right: margin },
-    styles: { font: "helvetica", fontSize: 7.6, cellPadding: 2, overflow: "linebreak", valign: "top" },
-    headStyles: { fillColor: [23, 49, 43], textColor: [255, 255, 255] },
-    columnStyles: {
-      0: { cellWidth: 28 },
-      1: { cellWidth: 30 },
-      2: { cellWidth: 40 },
-      3: { cellWidth: contentWidth - 98 }
-    }
-  });
-  y = ((doc as JsPdfWithAutoTable).lastAutoTable?.finalY ?? y) + 10;
+  if (includeMedicalPart) {
+    y = drawSectionTitle(doc, "Parte médica", y);
+    autoTable(doc, {
+      head: [["Data", "Área", "Responsável", "Síntese"]],
+      body: finalizedEvolutions.length > 0 ? finalizedEvolutions.map((evolution) => [formatDateTime(evolution.evolutionDate), evolution.professionalArea ?? "Sem área", getEvolutionResponsible(evolution), normalizeText(evolution.text)]) : [["-", "-", "-", "Nenhuma evolução finalizada disponível para o relatório"]],
+      startY: y + 3,
+      theme: "striped",
+      margin: { left: margin, right: margin },
+      styles: { font: "helvetica", fontSize: 7.6, cellPadding: 2, overflow: "linebreak", valign: "top" },
+      headStyles: { fillColor: [23, 49, 43], textColor: [255, 255, 255] },
+      columnStyles: {
+        0: { cellWidth: 28 },
+        1: { cellWidth: 30 },
+        2: { cellWidth: 40 },
+        3: { cellWidth: contentWidth - 98 }
+      }
+    });
+    y = ((doc as JsPdfWithAutoTable).lastAutoTable?.finalY ?? y) + 10;
+  }
 
   if (y > pageHeight - 30) {
     doc.addPage();

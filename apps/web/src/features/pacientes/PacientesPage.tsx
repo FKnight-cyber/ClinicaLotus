@@ -22,6 +22,8 @@ type Patient = {
   name: string;
   status: PatientStatus;
   clinics?: Array<{ clinicId: string; status: PatientStatus; clinic: PatientClinicFilter }>;
+  admissionDate?: string | null;
+  dischargeDate?: string | null;
   birthDate?: string | null;
   document?: string | null;
   cpf?: string | null;
@@ -40,6 +42,8 @@ type Patient = {
 
 type PatientFormState = {
   name: string;
+  admissionDate: string;
+  dischargeDate: string;
   birthDate: string;
   document: string;
   cpf: string;
@@ -52,6 +56,15 @@ type PaginatedPatients = {
   limit: number;
   offset: number;
   total: number;
+};
+
+type StoredPatientFilters = {
+  clinicId: string;
+  search: string;
+  status: PatientStatus | "";
+  admissionDate: string;
+  dischargeDate: string;
+  limit: number;
 };
 
 type PatientTransferPreview = {
@@ -73,6 +86,8 @@ const patientClinicEditTooltip = "Ao trocar a clínica atual do paciente, os reg
 
 const emptyPatientForm: PatientFormState = {
   name: "",
+  admissionDate: "",
+  dischargeDate: "",
   birthDate: "",
   document: "",
   cpf: "",
@@ -115,19 +130,25 @@ function normalizePatientClinicId(value: unknown) {
   return typeof value === "string" ? value : "";
 }
 
+function normalizePatientDateFilter(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
 function readStoredPatientFilters() {
-  const defaultFilters = { clinicId: "", search: "", status: "ACTIVE" as PatientStatus | "", limit: DEFAULT_PATIENT_LIMIT };
+  const defaultFilters: StoredPatientFilters = { clinicId: "", search: "", status: "ACTIVE", admissionDate: "", dischargeDate: "", limit: DEFAULT_PATIENT_LIMIT };
   if (typeof window === "undefined") return defaultFilters;
 
   try {
     const storedFilters = window.localStorage.getItem(PATIENT_FILTERS_STORAGE_KEY);
     if (!storedFilters) return defaultFilters;
-    const parsedFilters = JSON.parse(storedFilters) as { clinicId?: unknown; search?: unknown; status?: unknown; limit?: unknown };
+    const parsedFilters = JSON.parse(storedFilters) as { clinicId?: unknown; search?: unknown; status?: unknown; admissionDate?: unknown; dischargeDate?: unknown; limit?: unknown };
 
     return {
       clinicId: normalizePatientClinicId(parsedFilters.clinicId),
       search: typeof parsedFilters.search === "string" ? parsedFilters.search : "",
       status: normalizePatientStatus(parsedFilters.status || "ACTIVE"),
+      admissionDate: normalizePatientDateFilter(parsedFilters.admissionDate),
+      dischargeDate: normalizePatientDateFilter(parsedFilters.dischargeDate),
       limit: normalizePatientLimit(parsedFilters.limit)
     };
   } catch {
@@ -136,21 +157,23 @@ function readStoredPatientFilters() {
   }
 }
 
-function writeStoredPatientFilters(search: string, status: PatientStatus | "", limit: number, clinicId: string) {
-  window.localStorage.setItem(PATIENT_FILTERS_STORAGE_KEY, JSON.stringify({ clinicId, search, status, limit }));
+function writeStoredPatientFilters(filters: StoredPatientFilters) {
+  window.localStorage.setItem(PATIENT_FILTERS_STORAGE_KEY, JSON.stringify(filters));
 }
 
-function buildPatientsPath(limit: number, offset: number, search: string, status: string, clinicId: string) {
+function buildPatientsPath(limit: number, offset: number, search: string, status: string, clinicId: string, admissionDate: string, dischargeDate: string) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   const normalizedSearch = search.trim();
   if (normalizedSearch) params.set("search", normalizedSearch);
   if (clinicId) params.set("clinicId", clinicId);
+  if (admissionDate) params.set("admissionDate", admissionDate);
+  if (dischargeDate) params.set("dischargeDate", dischargeDate);
   params.set("status", status || "ALL");
   return `/api/patients?${params.toString()}`;
 }
 
-function buildPatientsCacheKey(limit: number, offset: number, search: string, status: string, clinicId: string) {
-  return `${limit}:${offset}:${search.trim().toLowerCase()}:${status}:${clinicId}`;
+function buildPatientsCacheKey(limit: number, offset: number, search: string, status: string, clinicId: string, admissionDate: string, dischargeDate: string) {
+  return `${limit}:${offset}:${search.trim().toLowerCase()}:${status}:${clinicId}:${admissionDate}:${dischargeDate}`;
 }
 
 function buildPatientDetailHref(patientId: string, clinicId: string) {
@@ -163,6 +186,8 @@ function buildPatientDetailHref(patientId: string, clinicId: string) {
 function toPatientPayload(form: PatientFormState) {
   return {
     name: form.name.trim(),
+    admissionDate: form.admissionDate || undefined,
+    dischargeDate: form.dischargeDate || undefined,
     birthDate: form.birthDate || undefined,
     document: form.document.trim() || undefined,
     cpf: form.cpf.trim() || undefined,
@@ -174,6 +199,8 @@ function toPatientPayload(form: PatientFormState) {
 function getPatientForm(patient: Patient): PatientFormState {
   return {
     name: patient.name,
+    admissionDate: patient.admissionDate ? patient.admissionDate.slice(0, 10) : "",
+    dischargeDate: patient.dischargeDate ? patient.dischargeDate.slice(0, 10) : "",
     birthDate: patient.birthDate ? patient.birthDate.slice(0, 10) : "",
     document: patient.document ?? "",
     cpf: patient.cpf ?? "",
@@ -194,6 +221,11 @@ function formatPatientDocuments(patient: Patient) {
 
 function formatBirthDate(value?: string | null) {
   if (!value) return "Nascimento não informado";
+  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(value));
+}
+
+function formatPatientDate(value?: string | null, fallback = "Não informado") {
+  if (!value) return fallback;
   return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(value));
 }
 
@@ -271,9 +303,13 @@ export function PacientesPage() {
   const [debouncedPatientSearch, setDebouncedPatientSearch] = useState(initialPatientFilters.search);
   const [selectedPatientClinicId, setSelectedPatientClinicId] = useState(initialPatientFilters.clinicId);
   const [selectedPatientStatus, setSelectedPatientStatus] = useState<PatientStatus | "">(initialPatientFilters.status);
+  const [selectedAdmissionDate, setSelectedAdmissionDate] = useState(initialPatientFilters.admissionDate);
+  const [selectedDischargeDate, setSelectedDischargeDate] = useState(initialPatientFilters.dischargeDate);
   const [draftPatientSearch, setDraftPatientSearch] = useState(initialPatientFilters.search);
   const [draftSelectedPatientClinicId, setDraftSelectedPatientClinicId] = useState(initialPatientFilters.clinicId);
   const [draftSelectedPatientStatus, setDraftSelectedPatientStatus] = useState<PatientStatus | "">(initialPatientFilters.status);
+  const [draftSelectedAdmissionDate, setDraftSelectedAdmissionDate] = useState(initialPatientFilters.admissionDate);
+  const [draftSelectedDischargeDate, setDraftSelectedDischargeDate] = useState(initialPatientFilters.dischargeDate);
   const [draftPatientLimit, setDraftPatientLimit] = useState(initialPatientFilters.limit);
   const [isPatientFiltersOpen, setIsPatientFiltersOpen] = useState(false);
   const [isPatientModalOpen, setIsPatientModalOpen] = useState(false);
@@ -292,7 +328,7 @@ export function PacientesPage() {
   const patientOffset = (patientPage - 1) * patientLimit;
   const selectedPatientClinicIsAvailable = availablePatientClinics.some((clinic) => clinic.id === selectedPatientClinicId);
   const effectivePatientClinicId = canFilterPatientsByClinic && selectedPatientClinicIsAvailable ? selectedPatientClinicId : "";
-  const activePatientFilterCount = [patientSearch.trim(), effectivePatientClinicId, selectedPatientStatus !== "ACTIVE" ? "status" : "", patientLimit !== DEFAULT_PATIENT_LIMIT ? String(patientLimit) : ""].filter(Boolean).length;
+  const activePatientFilterCount = [patientSearch.trim(), effectivePatientClinicId, selectedPatientStatus !== "ACTIVE" ? "status" : "", selectedAdmissionDate, selectedDischargeDate, patientLimit !== DEFAULT_PATIENT_LIMIT ? String(patientLimit) : ""].filter(Boolean).length;
   const hasActivePatientFilters = activePatientFilterCount > 0;
   const isChangingPatientClinic = Boolean(editingPatient && editingPatientClinicId && patientForm.clinicId && patientForm.clinicId !== editingPatientClinicId);
   const patientTransferPreviewMessage = patientTransferPreview ? buildTransferPreview(patientTransferPreview) : null;
@@ -303,14 +339,14 @@ export function PacientesPage() {
     setPatientLimit(nextPatientsPage.limit);
   }, []);
 
-  const fetchPatientsPage = useCallback(async (limit: number, offset: number, search: string, status: string, clinicId: string, bypassCache = false) => {
+  const fetchPatientsPage = useCallback(async (limit: number, offset: number, search: string, status: string, clinicId: string, admissionDate: string, dischargeDate: string, bypassCache = false) => {
     if (!token) return { items: [], limit, offset, total: 0 };
 
-    const cacheKey = buildPatientsCacheKey(limit, offset, search, status, clinicId);
+    const cacheKey = buildPatientsCacheKey(limit, offset, search, status, clinicId, admissionDate, dischargeDate);
     const cachedPatientsPage = patientsCacheRef.current.get(cacheKey);
     if (!bypassCache && cachedPatientsPage) return cachedPatientsPage;
 
-    const nextPatientsPayload = await apiRequest<PaginatedPatients | Patient[]>(token, buildPatientsPath(limit, offset, search, status, clinicId));
+    const nextPatientsPayload = await apiRequest<PaginatedPatients | Patient[]>(token, buildPatientsPath(limit, offset, search, status, clinicId, admissionDate, dischargeDate));
     const nextPatientsPage = normalizePatientsPage(nextPatientsPayload, limit, offset);
     patientsCacheRef.current.set(cacheKey, nextPatientsPage);
     return nextPatientsPage;
@@ -326,14 +362,21 @@ export function PacientesPage() {
   }, [patientSearch]);
 
   useEffect(() => {
-    writeStoredPatientFilters(patientSearch, selectedPatientStatus, patientLimit, effectivePatientClinicId);
-  }, [effectivePatientClinicId, patientLimit, patientSearch, selectedPatientStatus]);
+    writeStoredPatientFilters({
+      clinicId: effectivePatientClinicId,
+      search: patientSearch,
+      status: selectedPatientStatus,
+      admissionDate: selectedAdmissionDate,
+      dischargeDate: selectedDischargeDate,
+      limit: patientLimit
+    });
+  }, [effectivePatientClinicId, patientLimit, patientSearch, selectedPatientStatus, selectedAdmissionDate, selectedDischargeDate]);
 
   useEffect(() => {
     if (!token || !canReadPatients) return;
 
     let isCurrent = true;
-    const cacheKey = buildPatientsCacheKey(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId);
+    const cacheKey = buildPatientsCacheKey(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate);
     const cachedPatientsPage = patientsCacheRef.current.get(cacheKey);
 
     Promise.resolve().then(() => {
@@ -342,7 +385,7 @@ export function PacientesPage() {
       if (!cachedPatientsPage) setIsLoading(true);
     });
 
-    fetchPatientsPage(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId).then((nextPatientsPage) => {
+    fetchPatientsPage(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate).then((nextPatientsPage) => {
       if (!isCurrent) return;
       applyPatientsPage(nextPatientsPage);
       setIsPatientsLoading(false);
@@ -357,12 +400,12 @@ export function PacientesPage() {
     return () => {
       isCurrent = false;
     };
-  }, [token, canReadPatients, patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, applyPatientsPage, fetchPatientsPage]);
+  }, [token, canReadPatients, patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate, applyPatientsPage, fetchPatientsPage]);
 
   const refreshCurrentPage = async () => {
     if (!token) return;
     patientsCacheRef.current.clear();
-    const nextPatientsPage = await fetchPatientsPage(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, true);
+    const nextPatientsPage = await fetchPatientsPage(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate, true);
     applyPatientsPage(nextPatientsPage);
   };
 
@@ -371,11 +414,15 @@ export function PacientesPage() {
     setDebouncedPatientSearch("");
     setSelectedPatientClinicId("");
     setSelectedPatientStatus("ACTIVE");
+    setSelectedAdmissionDate("");
+    setSelectedDischargeDate("");
     setPatientLimit(DEFAULT_PATIENT_LIMIT);
     setPatientPage(1);
     setDraftPatientSearch("");
     setDraftSelectedPatientClinicId("");
     setDraftSelectedPatientStatus("ACTIVE");
+    setDraftSelectedAdmissionDate("");
+    setDraftSelectedDischargeDate("");
     setDraftPatientLimit(DEFAULT_PATIENT_LIMIT);
   };
 
@@ -383,6 +430,8 @@ export function PacientesPage() {
     setDraftPatientSearch(patientSearch);
     setDraftSelectedPatientClinicId(effectivePatientClinicId);
     setDraftSelectedPatientStatus(selectedPatientStatus);
+    setDraftSelectedAdmissionDate(selectedAdmissionDate);
+    setDraftSelectedDischargeDate(selectedDischargeDate);
     setDraftPatientLimit(patientLimit);
     setIsPatientFiltersOpen(true);
   };
@@ -392,6 +441,8 @@ export function PacientesPage() {
     setDebouncedPatientSearch(draftPatientSearch);
     setSelectedPatientClinicId(canFilterPatientsByClinic ? draftSelectedPatientClinicId : "");
     setSelectedPatientStatus(draftSelectedPatientStatus);
+    setSelectedAdmissionDate(draftSelectedAdmissionDate);
+    setSelectedDischargeDate(draftSelectedDischargeDate);
     setPatientLimit(normalizePatientLimit(draftPatientLimit));
     setPatientPage(1);
     setIsPatientFiltersOpen(false);
@@ -571,6 +622,14 @@ export function PacientesPage() {
                 </select>
               </label>
               <label>
+                <span>Data de admissão</span>
+                <input aria-label="Filtrar por data de admissão" onChange={(event) => setDraftSelectedAdmissionDate(event.target.value)} type="date" value={draftSelectedAdmissionDate} />
+              </label>
+              <label>
+                <span>Dia da alta</span>
+                <input aria-label="Filtrar por dia da alta" onChange={(event) => setDraftSelectedDischargeDate(event.target.value)} type="date" value={draftSelectedDischargeDate} />
+              </label>
+              <label>
                 <span>Nº de pacientes exibidos</span>
                 <input
                   max={MAX_PATIENT_LIMIT}
@@ -597,17 +656,18 @@ export function PacientesPage() {
             <tr>
               <th>Paciente</th>
               <th>Clínica</th>
+              <th>Admissão</th>
+              <th>Alta</th>
               <th>Documentos</th>
               <th>Nascimento</th>
               <th>Status</th>
-              <th>Atualização</th>
               <th>Ação</th>
             </tr>
           </thead>
           <tbody>
             {patients.length === 0 ? (
               <tr>
-                <td colSpan={7}>Nenhum paciente encontrado.</td>
+                <td colSpan={8}>Nenhum paciente encontrado.</td>
               </tr>
             ) : (
               patients.map((patient) => {
@@ -619,6 +679,8 @@ export function PacientesPage() {
                   <tr key={patient.id}>
                     <td><strong>{patient.name}</strong></td>
                     <td>{getPatientClinicLabel(patient, effectivePatientClinicId)}</td>
+                    <td>{formatPatientDate(patient.admissionDate)}</td>
+                    <td>{formatPatientDate(patient.dischargeDate)}</td>
                     <td>{formatPatientDocuments(patient)}</td>
                     <td>{formatBirthDate(patient.birthDate)}</td>
                     <td>
@@ -626,7 +688,6 @@ export function PacientesPage() {
                         {isInactive ? "Inativo" : "Ativo"}
                       </span>
                     </td>
-                    <td>{formatDateTime(patient.updatedAt)}</td>
                     <td>
                       <div className="records-table-actions patients-table-actions">
                         {canUpdatePatients ? <button className="table-action" onClick={() => { void openEditPatientModal(patient); }} type="button"><Edit3 aria-hidden="true" size={16} />Editar</button> : null}
@@ -695,6 +756,8 @@ export function PacientesPage() {
                 </label>
               ) : null}
               <label><span>Nome completo</span><input autoFocus onChange={(event) => setPatientForm((form) => ({ ...form, name: event.target.value }))} required value={patientForm.name} /></label>
+              <label><span>Data de admissão</span><input onChange={(event) => setPatientForm((form) => ({ ...form, admissionDate: event.target.value }))} type="date" value={patientForm.admissionDate} /></label>
+              <label><span>Dia da alta</span><input onChange={(event) => setPatientForm((form) => ({ ...form, dischargeDate: event.target.value }))} type="date" value={patientForm.dischargeDate} /></label>
               <label><span>Nascimento</span><input onChange={(event) => setPatientForm((form) => ({ ...form, birthDate: event.target.value }))} type="date" value={patientForm.birthDate} /></label>
               <label><span>CPF</span><input onChange={(event) => setPatientForm((form) => ({ ...form, cpf: event.target.value }))} placeholder="CPF" value={patientForm.cpf} /></label>
               <label><span>RG</span><input onChange={(event) => setPatientForm((form) => ({ ...form, rg: event.target.value }))} placeholder="RG" value={patientForm.rg} /></label>
