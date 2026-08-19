@@ -17,6 +17,8 @@ type ListQueryOptions = {
   offset?: string;
   admissionDate?: string;
   dischargeDate?: string;
+  sortBy?: string;
+  sortDirection?: string;
 };
 
 type PatientTransferSummary = {
@@ -129,6 +131,15 @@ function parseIsoDateValue(value: string | null | undefined) {
   return parsedDate;
 }
 
+function parsePatientListOrder(options?: ListQueryOptions): Prisma.PatientOrderByWithRelationInput[] {
+  if (options?.sortBy === "admissionDate") {
+    const sortDirection = options.sortDirection === "asc" ? "asc" : "desc";
+    return [{ admissionDate: { sort: sortDirection, nulls: "last" } }, { name: "asc" }];
+  }
+
+  return [{ name: "asc" }];
+}
+
 function todayAtStartOfDay() {
   const date = new Date();
   date.setHours(0, 0, 0, 0);
@@ -152,7 +163,8 @@ export class PatientsService {
     const pagination = parsePaginationOptions(options);
     const admissionDate = parseIsoDateRange(options?.admissionDate);
     const dischargeDate = parseIsoDateRange(options?.dischargeDate);
-    const cacheKey = `patients:list:${clinicScopeKey}:${normalizedSearch ? normalizedSearch.toLowerCase() : "all"}:${options?.status === "ALL" ? "all" : status ?? "all"}:${options?.admissionDate?.trim() || "all"}:${options?.dischargeDate?.trim() || "all"}:${pagination ? `${pagination.limit}:${pagination.offset}` : "legacy"}`;
+    const orderBy = parsePatientListOrder(options);
+    const cacheKey = `patients:list:${clinicScopeKey}:${normalizedSearch ? normalizedSearch.toLowerCase() : "all"}:${options?.status === "ALL" ? "all" : status ?? "all"}:${options?.admissionDate?.trim() || "all"}:${options?.dischargeDate?.trim() || "all"}:${options?.sortBy === "admissionDate" ? `admissionDate:${options.sortDirection === "asc" ? "asc" : "desc"}` : "name:asc"}:${pagination ? `${pagination.limit}:${pagination.offset}` : "legacy"}`;
 
     const whereConditions: Prisma.PatientWhereInput[] = [{
       OR: [
@@ -182,7 +194,7 @@ export class PatientsService {
         const [items, total] = await this.prisma.$transaction([
           this.prisma.patient.findMany({
             where,
-            orderBy: { name: "asc" },
+            orderBy,
             skip: pagination.offset,
             take: pagination.limit,
             include: this.patientInclude(clinicIds)
@@ -196,7 +208,7 @@ export class PatientsService {
 
     return this.cache.getOrSet(cacheKey, 15 * 1000, () => this.prisma.patient.findMany({
       where,
-      orderBy: { name: "asc" },
+      orderBy,
       take: 30,
       include: this.patientInclude(clinicIds)
     }).then((patients) => patients.map((patient) => this.toPatientListItem(patient, clinicIds))));

@@ -17,8 +17,8 @@ export class PatientsController {
 
   @Get()
   @RequirePermissions("patients.read")
-  list(@Req() request: { user: AuthenticatedUser }, @Query("search") search?: string, @Query("status") status?: string, @Query("limit") limit?: string, @Query("offset") offset?: string, @Query("clinicId") clinicId?: string, @Query("clinicScope") clinicScope?: string, @Query("admissionDate") admissionDate?: string, @Query("dischargeDate") dischargeDate?: string) {
-    return this.patientsService.list(request.user, search, { status, limit, offset, clinicId, clinicScope, admissionDate, dischargeDate });
+  list(@Req() request: { user: AuthenticatedUser }, @Query("search") search?: string, @Query("status") status?: string, @Query("limit") limit?: string, @Query("offset") offset?: string, @Query("clinicId") clinicId?: string, @Query("clinicScope") clinicScope?: string, @Query("admissionDate") admissionDate?: string, @Query("dischargeDate") dischargeDate?: string, @Query("sortBy") sortBy?: string, @Query("sortDirection") sortDirection?: string) {
+    return this.patientsService.list(request.user, search, { status, limit, offset, clinicId, clinicScope, admissionDate, dischargeDate, sortBy, sortDirection });
   }
 
   @Post()

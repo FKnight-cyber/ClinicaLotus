@@ -3102,6 +3102,28 @@ td input {
   padding: 13px 12px;
 }
 
+.table-sort-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: inherit;
+  gap: 5px;
+  padding: 0;
+}
+
+.table-sort-button:hover {
+  color: var(--primary-strong);
+}
+
+.table-sort-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
 .records-table tbody tr:hover td,
 .records-table tbody tr:hover th {
   background: #f8fbfa;

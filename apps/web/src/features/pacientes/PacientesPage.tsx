@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { CircleAlert, ChevronLeft, ChevronRight, Edit3, Eye, Paperclip, Plus, ToggleLeft, ToggleRight, Trash2, UserRound, X } from "lucide-react";
+import { ArrowDown, ArrowDownUp, ArrowUp, CircleAlert, ChevronLeft, ChevronRight, Edit3, Eye, Paperclip, Plus, ToggleLeft, ToggleRight, Trash2, UserRound, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ClearFiltersButton, FilterButton } from "@/components/filters/FilterActionButtons";
 import { invalidateAnamneseCachesForPatientTransfer } from "@/features/anamnese/storage";
@@ -9,6 +9,8 @@ import { useAuth } from "@/features/auth/AuthProvider";
 import { invalidateProntuarioCachesForPatientTransfer } from "@/features/prontuario/prontuarioStorage";
 
 type PatientStatus = "ACTIVE" | "INACTIVE";
+type PatientSortBy = "name" | "admissionDate";
+type PatientSortDirection = "asc" | "desc";
 type ClinicalStatus = "draft" | "finalized" | "canceled";
 type PatientFileType = "CONTRACT" | "MP" | "MEDICAL_PRESCRIPTION";
 
@@ -77,6 +79,8 @@ type StoredPatientFilters = {
   admissionDate: string;
   dischargeDate: string;
   limit: number;
+  sortBy: PatientSortBy;
+  sortDirection: PatientSortDirection;
 };
 
 type PatientTransferPreview = {
@@ -152,14 +156,22 @@ function normalizePatientDateFilter(value: unknown) {
   return typeof value === "string" ? value : "";
 }
 
+function normalizePatientSortBy(value: unknown): PatientSortBy {
+  return value === "admissionDate" ? "admissionDate" : "name";
+}
+
+function normalizePatientSortDirection(value: unknown): PatientSortDirection {
+  return value === "asc" ? "asc" : "desc";
+}
+
 function readStoredPatientFilters() {
-  const defaultFilters: StoredPatientFilters = { clinicId: "", search: "", status: "ACTIVE", admissionDate: "", dischargeDate: "", limit: DEFAULT_PATIENT_LIMIT };
+  const defaultFilters: StoredPatientFilters = { clinicId: "", search: "", status: "ACTIVE", admissionDate: "", dischargeDate: "", limit: DEFAULT_PATIENT_LIMIT, sortBy: "name", sortDirection: "desc" };
   if (typeof window === "undefined") return defaultFilters;
 
   try {
     const storedFilters = window.localStorage.getItem(PATIENT_FILTERS_STORAGE_KEY);
     if (!storedFilters) return defaultFilters;
-    const parsedFilters = JSON.parse(storedFilters) as { clinicId?: unknown; search?: unknown; status?: unknown; admissionDate?: unknown; dischargeDate?: unknown; limit?: unknown };
+    const parsedFilters = JSON.parse(storedFilters) as { clinicId?: unknown; search?: unknown; status?: unknown; admissionDate?: unknown; dischargeDate?: unknown; limit?: unknown; sortBy?: unknown; sortDirection?: unknown };
 
     return {
       clinicId: normalizePatientClinicId(parsedFilters.clinicId),
@@ -167,7 +179,9 @@ function readStoredPatientFilters() {
       status: normalizePatientStatus(parsedFilters.status || "ACTIVE"),
       admissionDate: normalizePatientDateFilter(parsedFilters.admissionDate),
       dischargeDate: normalizePatientDateFilter(parsedFilters.dischargeDate),
-      limit: normalizePatientLimit(parsedFilters.limit)
+      limit: normalizePatientLimit(parsedFilters.limit),
+      sortBy: normalizePatientSortBy(parsedFilters.sortBy),
+      sortDirection: normalizePatientSortDirection(parsedFilters.sortDirection)
     };
   } catch {
     window.localStorage.removeItem(PATIENT_FILTERS_STORAGE_KEY);
@@ -179,19 +193,37 @@ function writeStoredPatientFilters(filters: StoredPatientFilters) {
   window.localStorage.setItem(PATIENT_FILTERS_STORAGE_KEY, JSON.stringify(filters));
 }
 
-function buildPatientsPath(limit: number, offset: number, search: string, status: string, clinicId: string, admissionDate: string, dischargeDate: string) {
+function buildPatientsPath(limit: number, offset: number, search: string, status: string, clinicId: string, admissionDate: string, dischargeDate: string, sortBy: PatientSortBy, sortDirection: PatientSortDirection) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   const normalizedSearch = search.trim();
   if (normalizedSearch) params.set("search", normalizedSearch);
   if (clinicId) params.set("clinicId", clinicId);
   if (admissionDate) params.set("admissionDate", admissionDate);
   if (dischargeDate) params.set("dischargeDate", dischargeDate);
+  if (sortBy === "admissionDate") {
+    params.set("sortBy", sortBy);
+    params.set("sortDirection", sortDirection);
+  }
   params.set("status", status || "ALL");
   return `/api/patients?${params.toString()}`;
 }
 
-function buildPatientsCacheKey(limit: number, offset: number, search: string, status: string, clinicId: string, admissionDate: string, dischargeDate: string) {
-  return `${limit}:${offset}:${search.trim().toLowerCase()}:${status}:${clinicId}:${admissionDate}:${dischargeDate}`;
+function buildPatientsCacheKey(limit: number, offset: number, search: string, status: string, clinicId: string, admissionDate: string, dischargeDate: string, sortBy: PatientSortBy, sortDirection: PatientSortDirection) {
+  return `${limit}:${offset}:${search.trim().toLowerCase()}:${status}:${clinicId}:${admissionDate}:${dischargeDate}:${sortBy}:${sortDirection}`;
+}
+
+function sortPatientsByAdmissionDate(patients: Patient[], direction: PatientSortDirection) {
+  return [...patients].sort((leftPatient, rightPatient) => {
+    const leftAdmissionDate = leftPatient.admissionDate ? new Date(leftPatient.admissionDate).getTime() : null;
+    const rightAdmissionDate = rightPatient.admissionDate ? new Date(rightPatient.admissionDate).getTime() : null;
+
+    if (leftAdmissionDate === null && rightAdmissionDate === null) return leftPatient.name.localeCompare(rightPatient.name, "pt-BR");
+    if (leftAdmissionDate === null) return 1;
+    if (rightAdmissionDate === null) return -1;
+    if (leftAdmissionDate === rightAdmissionDate) return leftPatient.name.localeCompare(rightPatient.name, "pt-BR");
+
+    return direction === "asc" ? leftAdmissionDate - rightAdmissionDate : rightAdmissionDate - leftAdmissionDate;
+  });
 }
 
 function buildPatientDetailHref(patientId: string, clinicId: string) {
@@ -352,6 +384,8 @@ export function PacientesPage() {
   const [selectedPatientStatus, setSelectedPatientStatus] = useState<PatientStatus | "">(initialPatientFilters.status);
   const [selectedAdmissionDate, setSelectedAdmissionDate] = useState(initialPatientFilters.admissionDate);
   const [selectedDischargeDate, setSelectedDischargeDate] = useState(initialPatientFilters.dischargeDate);
+  const [patientSortBy, setPatientSortBy] = useState<PatientSortBy>(initialPatientFilters.sortBy);
+  const [patientSortDirection, setPatientSortDirection] = useState<PatientSortDirection>(initialPatientFilters.sortDirection);
   const [draftPatientSearch, setDraftPatientSearch] = useState(initialPatientFilters.search);
   const [draftSelectedPatientClinicId, setDraftSelectedPatientClinicId] = useState(initialPatientFilters.clinicId);
   const [draftSelectedPatientStatus, setDraftSelectedPatientStatus] = useState<PatientStatus | "">(initialPatientFilters.status);
@@ -389,17 +423,24 @@ export function PacientesPage() {
     setPatientLimit(nextPatientsPage.limit);
   }, []);
 
-  const fetchPatientsPage = useCallback(async (limit: number, offset: number, search: string, status: string, clinicId: string, admissionDate: string, dischargeDate: string, bypassCache = false) => {
+  const fetchPatientsPage = useCallback(async (limit: number, offset: number, search: string, status: string, clinicId: string, admissionDate: string, dischargeDate: string, sortBy: PatientSortBy, sortDirection: PatientSortDirection, bypassCache = false) => {
     if (!token) return { items: [], limit, offset, total: 0 };
 
-    const cacheKey = buildPatientsCacheKey(limit, offset, search, status, clinicId, admissionDate, dischargeDate);
+    const cacheKey = buildPatientsCacheKey(limit, offset, search, status, clinicId, admissionDate, dischargeDate, sortBy, sortDirection);
     const cachedPatientsPage = patientsCacheRef.current.get(cacheKey);
-    if (!bypassCache && cachedPatientsPage) return cachedPatientsPage;
+    if (!bypassCache && cachedPatientsPage) {
+      return sortBy === "admissionDate"
+        ? { ...cachedPatientsPage, items: sortPatientsByAdmissionDate(cachedPatientsPage.items, sortDirection) }
+        : cachedPatientsPage;
+    }
 
-    const nextPatientsPayload = await apiRequest<PaginatedPatients | Patient[]>(token, buildPatientsPath(limit, offset, search, status, clinicId, admissionDate, dischargeDate));
+    const nextPatientsPayload = await apiRequest<PaginatedPatients | Patient[]>(token, buildPatientsPath(limit, offset, search, status, clinicId, admissionDate, dischargeDate, sortBy, sortDirection));
     const nextPatientsPage = normalizePatientsPage(nextPatientsPayload, limit, offset);
-    patientsCacheRef.current.set(cacheKey, nextPatientsPage);
-    return nextPatientsPage;
+    const sortedPatientsPage = sortBy === "admissionDate"
+      ? { ...nextPatientsPage, items: sortPatientsByAdmissionDate(nextPatientsPage.items, sortDirection) }
+      : nextPatientsPage;
+    patientsCacheRef.current.set(cacheKey, sortedPatientsPage);
+    return sortedPatientsPage;
   }, [token]);
 
   useEffect(() => {
@@ -418,15 +459,17 @@ export function PacientesPage() {
       status: selectedPatientStatus,
       admissionDate: selectedAdmissionDate,
       dischargeDate: selectedDischargeDate,
-      limit: patientLimit
+      limit: patientLimit,
+      sortBy: patientSortBy,
+      sortDirection: patientSortDirection
     });
-  }, [effectivePatientClinicId, patientLimit, patientSearch, selectedPatientStatus, selectedAdmissionDate, selectedDischargeDate]);
+  }, [effectivePatientClinicId, patientLimit, patientSearch, patientSortBy, patientSortDirection, selectedPatientStatus, selectedAdmissionDate, selectedDischargeDate]);
 
   useEffect(() => {
     if (!token || !canReadPatients) return;
 
     let isCurrent = true;
-    const cacheKey = buildPatientsCacheKey(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate);
+    const cacheKey = buildPatientsCacheKey(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate, patientSortBy, patientSortDirection);
     const cachedPatientsPage = patientsCacheRef.current.get(cacheKey);
 
     Promise.resolve().then(() => {
@@ -435,7 +478,7 @@ export function PacientesPage() {
       if (!cachedPatientsPage) setIsLoading(true);
     });
 
-    fetchPatientsPage(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate).then((nextPatientsPage) => {
+    fetchPatientsPage(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate, patientSortBy, patientSortDirection).then((nextPatientsPage) => {
       if (!isCurrent) return;
       applyPatientsPage(nextPatientsPage);
       setIsPatientsLoading(false);
@@ -450,13 +493,23 @@ export function PacientesPage() {
     return () => {
       isCurrent = false;
     };
-  }, [token, canReadPatients, patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate, applyPatientsPage, fetchPatientsPage]);
+  }, [token, canReadPatients, patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate, patientSortBy, patientSortDirection, applyPatientsPage, fetchPatientsPage]);
 
   const refreshCurrentPage = async () => {
     if (!token) return;
     patientsCacheRef.current.clear();
-    const nextPatientsPage = await fetchPatientsPage(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate, true);
+    const nextPatientsPage = await fetchPatientsPage(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate, patientSortBy, patientSortDirection, true);
     applyPatientsPage(nextPatientsPage);
+  };
+
+  const handleAdmissionSort = () => {
+    if (patientSortBy === "admissionDate") {
+      setPatientSortDirection((currentDirection) => currentDirection === "desc" ? "asc" : "desc");
+    } else {
+      setPatientSortBy("admissionDate");
+      setPatientSortDirection("desc");
+    }
+    setPatientPage(1);
   };
 
   const handleClearPatientFilters = () => {
@@ -735,7 +788,12 @@ export function PacientesPage() {
             <tr>
               <th>Paciente</th>
               <th>Clínica</th>
-              <th>Admissão</th>
+              <th aria-sort={patientSortBy === "admissionDate" ? patientSortDirection === "asc" ? "ascending" : "descending" : "none"}>
+                <button aria-label={`Ordenar por data de admissão: ${patientSortBy === "admissionDate" && patientSortDirection === "desc" ? "mais antiga primeiro" : "mais recente primeiro"}`} className="table-sort-button" onClick={handleAdmissionSort} title="Ordenar por data de admissão" type="button">
+                  Admissão
+                  {patientSortBy !== "admissionDate" ? <ArrowDownUp aria-hidden="true" size={15} /> : patientSortDirection === "desc" ? <ArrowDown aria-hidden="true" size={15} /> : <ArrowUp aria-hidden="true" size={15} />}
+                </button>
+              </th>
               <th>Alta</th>
               <th>Documentos</th>
               <th>Nascimento</th>
