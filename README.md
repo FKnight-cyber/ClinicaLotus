@@ -130,7 +130,7 @@ Comandos úteis dentro do container:
 
 ```bash
 docker compose exec api sh -lc "cd apps/api && npx prisma generate"
-docker compose exec api sh -lc "cd apps/api && npx prisma db push"
+docker compose exec api sh -lc "cd apps/api && npm run prisma:deploy"
 docker compose exec api sh -lc "cd apps/api && npm run prisma:seed"
 ```
 
@@ -164,6 +164,22 @@ ADMIN_PASSWORD=<senha inicial forte do admin>
 WEB_ORIGIN=https://seu-front.cloudpages.app
 NODE_ENV=production
 ```
+
+#### Arquivos de pacientes com Railway Volume
+
+Os anexos de pacientes não devem ser enviados para o serviço PostgreSQL. O banco guarda apenas os metadados; os arquivos ficam em um Volume privado montado no serviço `API`.
+
+1. Abra o serviço `API` no Railway e crie um `Volume` nele. Não adicione o Volume ao serviço PostgreSQL que já possui o volume próprio do banco.
+2. Use `patient-files` como nome e `/data` como caminho de montagem.
+3. Adicione a variável de ambiente da `API`:
+
+```txt
+PATIENT_FILES_DIR=/data/patient-files
+```
+
+4. Faça um redeploy da `API`. O serviço cria a pasta `patient-files` automaticamente no primeiro upload.
+
+O Volume deve permanecer montado na mesma `API` em todos os redeploys. Defina também uma rotina de backup compatível com os requisitos de retenção de documentos clínicos; o backup do PostgreSQL não inclui os arquivos do Volume.
 
 Observações:
 

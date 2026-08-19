@@ -4,9 +4,11 @@ import { Client } from "pg";
 const databaseUrl = process.env.DATABASE_URL ?? "postgresql://clinica:clinica_dev@localhost:5432/clinica";
 const initMigrationName = "20260808223000_init";
 const bootstrapMigrationName = "20260808224500_bootstrap_default_clinic_once";
+const patientClinicLinksMigrationName = "20260811143000_add_patient_clinic_links";
+const patientClinicStaysMigrationName = "20260811193000_add_patient_clinic_stays";
 const bootstrapEntity = "system_bootstrap";
 const bootstrapAction = "bootstrap_default_clinic_once";
-const legacyClinicTables = ["Clinic", "UserClinic", "AccessGroupClinic"];
+const legacyClinicTables = ["Clinic", "UserClinic"];
 const legacyClinicColumns = [
   ["Patient", "clinicId"],
   ["AnamnesisRecord", "clinicId"],
@@ -261,15 +263,6 @@ async function applyLegacyClinicTransitionIfNeeded() {
       )
     `);
 
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS "AccessGroupClinic" (
-        "accessGroupId" TEXT NOT NULL,
-        "clinicId" TEXT NOT NULL,
-        "assignedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        CONSTRAINT "AccessGroupClinic_pkey" PRIMARY KEY ("accessGroupId", "clinicId")
-      )
-    `);
-
     await client.query(`ALTER TABLE "Patient" ADD COLUMN IF NOT EXISTS "clinicId" TEXT`);
     await client.query(`ALTER TABLE "AnamnesisRecord" ADD COLUMN IF NOT EXISTS "clinicId" TEXT`);
     await client.query(`ALTER TABLE "MedicalEvolution" ADD COLUMN IF NOT EXISTS "clinicId" TEXT`);
@@ -314,10 +307,10 @@ async function applyLegacyClinicTransitionIfNeeded() {
     await client.query(`DELETE FROM "UserClinic"`);
     await client.query(
       `
-        INSERT INTO "AccessGroupClinic" ("accessGroupId", "clinicId", "assignedAt")
-        SELECT "id", $1, CURRENT_TIMESTAMP
-        FROM "AccessGroup"
-        ON CONFLICT ("accessGroupId", "clinicId") DO NOTHING
+        INSERT INTO "UserClinic" ("userId", "clinicId", "status", "isDefault", "assignedAt")
+        SELECT "id", $1, 'ACTIVE'::"UserClinicStatus", true, CURRENT_TIMESTAMP
+        FROM "User"
+        ON CONFLICT ("userId", "clinicId") DO NOTHING
       `,
       [defaultClinicId]
     );
@@ -346,7 +339,6 @@ async function applyLegacyClinicTransitionIfNeeded() {
     if (!(await hasIndex(client, "Clinic_code_key"))) await client.query(`CREATE UNIQUE INDEX "Clinic_code_key" ON "Clinic"("code")`);
     if (!(await hasIndex(client, "Clinic_status_name_idx"))) await client.query(`CREATE INDEX "Clinic_status_name_idx" ON "Clinic"("status", "name")`);
     if (!(await hasIndex(client, "UserClinic_clinicId_status_idx"))) await client.query(`CREATE INDEX "UserClinic_clinicId_status_idx" ON "UserClinic"("clinicId", "status")`);
-    if (!(await hasIndex(client, "AccessGroupClinic_clinicId_idx"))) await client.query(`CREATE INDEX "AccessGroupClinic_clinicId_idx" ON "AccessGroupClinic"("clinicId")`);
     if (!(await hasIndex(client, "Patient_clinicId_status_idx"))) await client.query(`CREATE INDEX "Patient_clinicId_status_idx" ON "Patient"("clinicId", "status")`);
     if (!(await hasIndex(client, "AnamnesisRecord_clinicId_createdAt_idx"))) await client.query(`CREATE INDEX "AnamnesisRecord_clinicId_createdAt_idx" ON "AnamnesisRecord"("clinicId", "createdAt")`);
     if (!(await hasIndex(client, "MedicalRecordEntry_clinicId_createdAt_idx"))) await client.query(`CREATE INDEX "MedicalRecordEntry_clinicId_createdAt_idx" ON "MedicalRecordEntry"("clinicId", "createdAt")`);
@@ -356,8 +348,6 @@ async function applyLegacyClinicTransitionIfNeeded() {
 
     if (!(await hasConstraint(client, "UserClinic_userId_fkey"))) await client.query(`ALTER TABLE "UserClinic" ADD CONSTRAINT "UserClinic_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE`);
     if (!(await hasConstraint(client, "UserClinic_clinicId_fkey"))) await client.query(`ALTER TABLE "UserClinic" ADD CONSTRAINT "UserClinic_clinicId_fkey" FOREIGN KEY ("clinicId") REFERENCES "Clinic"("id") ON DELETE CASCADE ON UPDATE CASCADE`);
-    if (!(await hasConstraint(client, "AccessGroupClinic_accessGroupId_fkey"))) await client.query(`ALTER TABLE "AccessGroupClinic" ADD CONSTRAINT "AccessGroupClinic_accessGroupId_fkey" FOREIGN KEY ("accessGroupId") REFERENCES "AccessGroup"("id") ON DELETE CASCADE ON UPDATE CASCADE`);
-    if (!(await hasConstraint(client, "AccessGroupClinic_clinicId_fkey"))) await client.query(`ALTER TABLE "AccessGroupClinic" ADD CONSTRAINT "AccessGroupClinic_clinicId_fkey" FOREIGN KEY ("clinicId") REFERENCES "Clinic"("id") ON DELETE CASCADE ON UPDATE CASCADE`);
     if (!(await hasConstraint(client, "Patient_clinicId_fkey"))) await client.query(`ALTER TABLE "Patient" ADD CONSTRAINT "Patient_clinicId_fkey" FOREIGN KEY ("clinicId") REFERENCES "Clinic"("id") ON DELETE RESTRICT ON UPDATE CASCADE`);
     if (!(await hasConstraint(client, "AnamnesisRecord_clinicId_fkey"))) await client.query(`ALTER TABLE "AnamnesisRecord" ADD CONSTRAINT "AnamnesisRecord_clinicId_fkey" FOREIGN KEY ("clinicId") REFERENCES "Clinic"("id") ON DELETE RESTRICT ON UPDATE CASCADE`);
     if (!(await hasConstraint(client, "MedicalRecordEntry_clinicId_fkey"))) await client.query(`ALTER TABLE "MedicalRecordEntry" ADD CONSTRAINT "MedicalRecordEntry_clinicId_fkey" FOREIGN KEY ("clinicId") REFERENCES "Clinic"("id") ON DELETE RESTRICT ON UPDATE CASCADE`);
@@ -465,6 +455,93 @@ async function recoverFailedBootstrapMigrationIfNeeded() {
   }
 }
 
+async function hasPatientClinicLinksStructure(client) {
+  return (await hasTable(client, "PatientClinic"))
+    && (await hasColumn(client, "PatientClinic", "patientId"))
+    && (await hasColumn(client, "PatientClinic", "clinicId"))
+    && (await hasConstraint(client, "PatientClinic_patientId_fkey"))
+    && (await hasConstraint(client, "PatientClinic_clinicId_fkey"))
+    && (await hasIndex(client, "PatientClinic_clinicId_status_idx"));
+}
+
+async function backfillPatientClinicLinks(client) {
+  await client.query(`
+    INSERT INTO "PatientClinic" ("patientId", "clinicId", "status", "firstSeenAt", "lastSeenAt")
+    SELECT "id", "clinicId", CASE WHEN "status" = 'ACTIVE' THEN 'ACTIVE'::"PatientClinicStatus" ELSE 'INACTIVE'::"PatientClinicStatus" END, "createdAt", "updatedAt"
+    FROM "Patient"
+    ON CONFLICT ("patientId", "clinicId") DO UPDATE
+    SET
+      "status" = EXCLUDED."status",
+      "firstSeenAt" = LEAST("PatientClinic"."firstSeenAt", EXCLUDED."firstSeenAt"),
+      "lastSeenAt" = GREATEST(COALESCE("PatientClinic"."lastSeenAt", EXCLUDED."lastSeenAt"), COALESCE(EXCLUDED."lastSeenAt", "PatientClinic"."lastSeenAt"))
+  `);
+}
+
+async function recoverFailedPatientClinicLinksMigrationIfNeeded() {
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+
+  try {
+    const failedMigration = await getFailedMigrationState(client, patientClinicLinksMigrationName);
+    if (!failedMigration) return;
+
+    if (!(await hasPatientClinicLinksStructure(client))) {
+      throw new Error(`A migration ${patientClinicLinksMigrationName} falhou e a estrutura de vínculos de pacientes está incompleta.`);
+    }
+
+    await backfillPatientClinicLinks(client);
+    console.log(`Migration ${patientClinicLinksMigrationName} recuperada com backfill dos vínculos de pacientes.`);
+    runPrismaCommand(["migrate", "resolve", "--applied", patientClinicLinksMigrationName]);
+  } finally {
+    await client.end();
+  }
+}
+
+async function hasPatientClinicStaysStructure(client) {
+  return (await hasTable(client, "PatientClinicStay"))
+    && (await hasColumn(client, "PatientClinicStay", "patientId"))
+    && (await hasColumn(client, "PatientClinicStay", "clinicId"))
+    && (await hasColumn(client, "PatientClinicStay", "admissionDate"))
+    && (await hasConstraint(client, "PatientClinicStay_patientId_fkey"))
+    && (await hasConstraint(client, "PatientClinicStay_clinicId_fkey"))
+    && (await hasIndex(client, "PatientClinicStay_patientId_status_admissionDate_idx"))
+    && (await hasIndex(client, "PatientClinicStay_clinicId_status_admissionDate_idx"));
+}
+
+async function resolvePatientClinicStaysMigrationIfNeeded() {
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+
+  try {
+    if (!(await hasMigrationsTable(client)) || await getFailedMigrationState(client, patientClinicStaysMigrationName)) return;
+
+    const migration = await client.query(`SELECT finished_at FROM "_prisma_migrations" WHERE migration_name = $1 LIMIT 1`, [patientClinicStaysMigrationName]);
+    if (migration.rows[0]?.finished_at || !(await hasPatientClinicStaysStructure(client))) return;
+
+    await client.query(`
+      INSERT INTO "PatientClinicStay" ("id", "patientId", "clinicId", "status", "admissionDate", "dischargeDate", "createdAt", "updatedAt")
+      SELECT
+        gen_random_uuid()::text,
+        pc."patientId",
+        pc."clinicId",
+        CASE WHEN pc."status" = 'ACTIVE' AND p."status" = 'ACTIVE' AND p."dischargeDate" IS NULL THEN 'ACTIVE'::"PatientClinicStayStatus" ELSE 'DISCHARGED'::"PatientClinicStayStatus" END,
+        COALESCE(p."admissionDate", pc."firstSeenAt", p."createdAt"),
+        CASE WHEN pc."status" = 'ACTIVE' AND p."status" = 'ACTIVE' AND p."dischargeDate" IS NULL THEN NULL ELSE COALESCE(p."dischargeDate", pc."lastSeenAt", p."updatedAt") END,
+        pc."firstSeenAt",
+        GREATEST(COALESCE(pc."lastSeenAt", pc."firstSeenAt"), p."updatedAt", pc."firstSeenAt")
+      FROM "PatientClinic" pc
+      JOIN "Patient" p ON p."id" = pc."patientId"
+      WHERE NOT EXISTS (
+        SELECT 1 FROM "PatientClinicStay" pcs WHERE pcs."patientId" = pc."patientId" AND pcs."clinicId" = pc."clinicId"
+      )
+    `);
+    console.log(`Migration ${patientClinicStaysMigrationName} recuperada com backfill das permanências de pacientes.`);
+    runPrismaCommand(["migrate", "resolve", "--applied", patientClinicStaysMigrationName]);
+  } finally {
+    await client.end();
+  }
+}
+
 async function main() {
   await recoverBrokenEmptyDatabaseMigrationStateIfNeeded();
   await ensureClinicCodeUniqueIndexIfNeeded();
@@ -482,6 +559,8 @@ async function main() {
 
   if (!transitionedLegacyDatabase) {
     await recoverFailedBootstrapMigrationIfNeeded();
+    await recoverFailedPatientClinicLinksMigrationIfNeeded();
+    await resolvePatientClinicStaysMigrationIfNeeded();
   }
 
   runPrismaCommand(["migrate", "deploy"]);

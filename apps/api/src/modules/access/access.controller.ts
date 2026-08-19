@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import type { AuthenticatedUser } from "../auth/auth.types";
 import { AuthGuard } from "../auth/guards/auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
@@ -11,7 +11,6 @@ import { ListAccessGroupsQueryDto } from "./dto/list-access-groups-query.dto";
 import { ListAccessUsersQueryDto } from "./dto/list-access-users-query.dto";
 import { ListPasswordChangeRequestsQueryDto } from "./dto/list-password-change-requests-query.dto";
 import { UpdateGroupPermissionsDto } from "./dto/update-group-permissions.dto";
-import { UpdateGroupClinicsDto } from "./dto/update-group-clinics.dto";
 import { UpdateUserClinicsDto } from "./dto/update-user-clinics.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { UpdateUserGroupsDto } from "./dto/update-user-groups.dto";
@@ -88,15 +87,21 @@ export class AccessController {
     return this.accessService.updateGroupPermissions(groupId, dto, request.user?.id);
   }
 
-  @Patch("groups/:groupId/clinics")
-  @RequirePermissions("access.groups.manage")
-  updateGroupClinics(@Param("groupId") groupId: string, @Body() dto: UpdateGroupClinicsDto, @Req() request: { user?: AuthenticatedUser }) {
-    return this.accessService.updateGroupClinics(groupId, dto, request.user?.id);
-  }
-
   @Get("users")
   @RequirePermissions("access.users.read")
   listUsers(@Query() query: ListAccessUsersQueryDto) {
+    return this.accessService.listUsers(query);
+  }
+
+  @Get("users/clinic-options")
+  @RequirePermissions("access.users.clinics.manage")
+  listActiveClinics() {
+    return this.accessService.listActiveClinics();
+  }
+
+  @Get("users/clinic-assignments")
+  @RequirePermissions("access.users.clinics.manage")
+  listUserClinicAssignments(@Query() query: ListAccessUsersQueryDto) {
     return this.accessService.listUsers(query);
   }
 
@@ -109,6 +114,11 @@ export class AccessController {
   @Post("users")
   @RequirePermissions("access.users.manage")
   createUser(@Body() dto: CreateUserDto, @Req() request: { user?: AuthenticatedUser }) {
+    const actorPermissions = request.user?.permissions ?? [];
+    const canAssignClinics = actorPermissions.includes("admin.full_access") || actorPermissions.includes("access.users.clinics.manage");
+    if (dto.clinicIds?.length && !canAssignClinics) {
+      throw new ForbiddenException("Usuário sem permissão para atribuir clínicas.");
+    }
     return this.accessService.createUser(dto, request.user?.id);
   }
 
@@ -130,8 +140,14 @@ export class AccessController {
     return this.accessService.updateUserGroups(userId, dto, request.user?.id);
   }
 
+  @Patch("users/me/clinics")
+  @RequirePermissions("access.users.clinics.manage")
+  updateOwnUserClinics(@Body() dto: UpdateUserClinicsDto, @Req() request: { user: AuthenticatedUser }) {
+    return this.accessService.updateUserClinics(request.user.id, dto, request.user.id);
+  }
+
   @Patch("users/:userId/clinics")
-  @RequirePermissions("access.users.manage")
+  @RequirePermissions("access.users.clinics.manage")
   updateUserClinics(@Param("userId") userId: string, @Body() dto: UpdateUserClinicsDto, @Req() request: { user?: AuthenticatedUser }) {
     return this.accessService.updateUserClinics(userId, dto, request.user?.id);
   }

@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { LogOut, UserCircle } from "lucide-react";
+import { Building2, LogOut, UserCircle } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { ClinicLogo } from "@/components/brand/ClinicLogo";
 import { moduleItems } from "@/config/modules";
@@ -133,6 +133,25 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
       </aside>
 
       <main className="main-area">
+        {user ? (
+          <header className="session-header">
+            <div className="session-user">
+              <UserCircle aria-hidden="true" size={22} />
+              <div>
+                <span>Usuário conectado</span>
+                <strong>{user.name}</strong>
+              </div>
+            </div>
+            <div className="session-clinics">
+              <span className="session-clinics-label"><Building2 aria-hidden="true" size={16} />Clínicas com acesso</span>
+              {clinics.length > 0 ? (
+                <div className="session-clinic-list">
+                  {clinics.map((clinic) => <span className="session-clinic-chip" key={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</span>)}
+                </div>
+              ) : <span className="session-clinic-empty">Nenhuma clínica vinculada</span>}
+            </div>
+          </header>
+        ) : null}
         {shouldShowMissingClinicNotice ? (
           <div className="access-message" role="alert">
             Seu usuário ainda não possui clínica vinculada. Solicite a um administrador a liberação de uma clínica antes de usar os módulos operacionais.

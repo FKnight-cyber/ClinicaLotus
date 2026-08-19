@@ -137,7 +137,7 @@ export class ClinicsService {
 
   private clinicRelations() {
     return {
-      _count: { select: { users: true, patients: true, accessGroups: true } }
+      _count: { select: { users: true, patients: true } }
     };
   }
 
@@ -146,6 +146,7 @@ export class ClinicsService {
     this.cache.deleteByPrefix("auth:profile:");
     this.cache.deleteByPrefix("access:groups:");
     this.cache.deleteByPrefix("access:users:");
+    this.cache.delete("access:clinic-options");
     if (clinicId) this.cache.delete(`clinics:detail:${clinicId}`);
   }
 

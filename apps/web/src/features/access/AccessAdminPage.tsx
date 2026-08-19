@@ -21,7 +21,6 @@ type AccessGroup = {
   description?: string | null;
   active: boolean;
   permissions: { permission: Permission }[];
-  clinics: { clinic: Clinic }[];
   users: unknown[];
 };
 
@@ -309,15 +308,12 @@ export function AccessGroupsPage() {
   const { hasPermission, token } = useAuth();
   const canManageGroups = hasPermission("access.groups.manage");
   const permissionsCacheRef = useRef<Permission[] | null>(null);
-  const clinicsCacheRef = useRef<Clinic[] | null>(null);
   const groupsCacheRef = useRef(new Map<string, PaginatedAccessGroups>());
   const [permissions, setPermissions] = useState<Permission[]>([]);
-  const [clinics, setClinics] = useState<Clinic[]>([]);
   const [groups, setGroups] = useState<AccessGroup[]>([]);
   const [groupTotal, setGroupTotal] = useState(0);
   const [groupLimit, setGroupLimit] = useState(DEFAULT_GROUP_LIMIT);
   const [groupDrafts, setGroupDrafts] = useState<Record<string, string[]>>({});
-  const [groupClinicDrafts, setGroupClinicDrafts] = useState<Record<string, string[]>>({});
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [groupSearch, setGroupSearch] = useState("");
   const [debouncedGroupSearch, setDebouncedGroupSearch] = useState("");
@@ -346,9 +342,6 @@ export function AccessGroupsPage() {
     setGroupDrafts(Object.fromEntries(
       nextGroupsPage.items.map((group) => [group.id, group.permissions.map((item) => item.permission.key)])
     ));
-    setGroupClinicDrafts(Object.fromEntries(
-      nextGroupsPage.items.map((group) => [group.id, group.clinics.map((item) => item.clinic.id)])
-    ));
     setSelectedGroupId((currentGroupId) => currentGroupId && nextGroupsPage.items.some((group) => group.id === currentGroupId) ? currentGroupId : nextGroupsPage.items[0]?.id ?? null);
   }, []);
 
@@ -359,16 +352,6 @@ export function AccessGroupsPage() {
     const nextPermissions = await apiRequest<Permission[]>(token, "/api/access/permissions");
     permissionsCacheRef.current = nextPermissions;
     return nextPermissions;
-  }, [token]);
-
-  const fetchClinics = useCallback(async () => {
-    if (!token) return [];
-    if (clinicsCacheRef.current) return clinicsCacheRef.current;
-
-    const nextClinicsPayload = await apiRequest<PaginatedClinics | Clinic[]>(token, buildClinicsPath());
-    const nextClinicsPage = normalizeClinicsPage(nextClinicsPayload, 100);
-    clinicsCacheRef.current = nextClinicsPage.items;
-    return nextClinicsPage.items;
   }, [token]);
 
   const fetchGroupsPage = useCallback(async (limit: number, search: string, bypassCache = false) => {
@@ -388,10 +371,9 @@ export function AccessGroupsPage() {
     if (!token) return;
     setIsLoading(true);
     setIsGroupsLoading(true);
-    const [nextPermissions, nextClinics, nextGroupsPage] = await Promise.all([fetchPermissions(), fetchClinics(), fetchGroupsPage(limit, search, true)]);
+    const [nextPermissions, nextGroupsPage] = await Promise.all([fetchPermissions(), fetchGroupsPage(limit, search, true)]);
 
     setPermissions(nextPermissions);
-    setClinics(nextClinics);
     applyGroupsPage(nextGroupsPage);
     setIsGroupsLoading(false);
     setIsLoading(false);
@@ -418,10 +400,9 @@ export function AccessGroupsPage() {
       if (!permissionsCacheRef.current) setIsLoading(true);
     });
 
-    Promise.all([fetchPermissions(), fetchClinics(), fetchGroupsPage(groupLimit, debouncedGroupSearch)]).then(([nextPermissions, nextClinics, nextGroupsPage]) => {
+    Promise.all([fetchPermissions(), fetchGroupsPage(groupLimit, debouncedGroupSearch)]).then(([nextPermissions, nextGroupsPage]) => {
       if (!isCurrent) return;
       setPermissions(nextPermissions);
-      setClinics(nextClinics);
       applyGroupsPage(nextGroupsPage);
       setIsGroupsLoading(false);
       setIsLoading(false);
@@ -434,7 +415,7 @@ export function AccessGroupsPage() {
     return () => {
       isCurrent = false;
     };
-  }, [token, groupLimit, debouncedGroupSearch, applyGroupsPage, fetchClinics, fetchGroupsPage, fetchPermissions]);
+  }, [token, groupLimit, debouncedGroupSearch, applyGroupsPage, fetchGroupsPage, fetchPermissions]);
 
   const handleCreateGroup = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -487,33 +468,6 @@ export function AccessGroupsPage() {
     }).catch((error) => {
       setGroupDrafts((current) => ({ ...current, [groupId]: previousPermissionKeys }));
       setStatusMessage(error instanceof Error ? error.message : "Não foi possível atualizar as permissões.");
-    }).finally(() => {
-      setSavingGroupId((currentGroupId) => currentGroupId === groupId ? null : currentGroupId);
-    });
-  };
-
-  const handleToggleGroupClinic = async (groupId: string, clinicId: string) => {
-    if (!token || !canManageGroups) return;
-
-    const previousClinicIds = groupClinicDrafts[groupId] ?? [];
-    const nextClinicIds = toggleValue(previousClinicIds, clinicId);
-    setGroupClinicDrafts((current) => ({ ...current, [groupId]: nextClinicIds }));
-    setSavingGroupId(groupId);
-
-    await apiRequest<AccessGroup>(token, `/api/access/groups/${groupId}/clinics`, {
-      method: "PATCH",
-      body: JSON.stringify({ clinicIds: nextClinicIds })
-    }).then((updatedGroup) => {
-      groupsCacheRef.current.clear();
-      setGroups((currentGroups) => currentGroups.map((group) => group.id === updatedGroup.id ? updatedGroup : group));
-      setGroupClinicDrafts((current) => ({
-        ...current,
-        [updatedGroup.id]: updatedGroup.clinics.map((item) => item.clinic.id)
-      }));
-      setStatusMessage("Clínicas do grupo atualizadas.");
-    }).catch((error) => {
-      setGroupClinicDrafts((current) => ({ ...current, [groupId]: previousClinicIds }));
-      setStatusMessage(error instanceof Error ? error.message : "Não foi possível atualizar as clínicas do grupo.");
     }).finally(() => {
       setSavingGroupId((currentGroupId) => currentGroupId === groupId ? null : currentGroupId);
     });
@@ -578,14 +532,13 @@ export function AccessGroupsPage() {
           <div className={`group-directory ${isGroupsLoading ? "is-loading" : ""}`} aria-label="Grupos cadastrados">
             {groups.map((group) => {
               const permissionCount = groupDrafts[group.id]?.length ?? 0;
-              const clinicCount = groupClinicDrafts[group.id]?.length ?? 0;
               const isSelected = selectedGroup?.id === group.id;
 
               return (
                 <button className={`group-directory-item ${isSelected ? "is-selected" : ""}`} key={group.id} onClick={() => setSelectedGroupId(group.id)} type="button">
                   <strong>{group.name}</strong>
                   <span>{group.description || "Sem descrição"}</span>
-                  <small>{permissionCount} permissões · {clinicCount} clínicas</small>
+                  <small>{permissionCount} permissões</small>
                 </button>
               );
             })}
@@ -597,18 +550,11 @@ export function AccessGroupsPage() {
           <div className="access-card-heading">
             <div>
               <h3>{selectedGroup ? selectedGroup.name : "Selecione um grupo"}</h3>
-              <p>{savingGroupId === selectedGroup?.id ? "Salvando alterações..." : selectedGroup?.description || "Escolha um grupo para revisar permissões e clínicas liberadas."}</p>
+              <p>{savingGroupId === selectedGroup?.id ? "Salvando alterações..." : selectedGroup?.description || "Escolha um grupo para revisar suas permissões."}</p>
             </div>
           </div>
           {selectedGroup ? (
             <div className="group-access-editor">
-              <ClinicScopePicker
-                canManageGroups={canManageGroups}
-                clinics={clinics}
-                isSaving={savingGroupId === selectedGroup.id}
-                selected={groupClinicDrafts[selectedGroup.id] ?? []}
-                onToggle={(clinicId) => handleToggleGroupClinic(selectedGroup.id, clinicId)}
-              />
               <PermissionPicker
                 canManageGroups={canManageGroups}
                 isSaving={savingGroupId === selectedGroup.id}
@@ -1334,7 +1280,7 @@ function UserCard({
       <p>{user.groups.map((group) => group.accessGroup.name).join(", ") || "Sem grupo vinculado"}</p>
       <div className="user-clinic-scope">
         <strong>Escopo de clínicas</strong>
-        <p>O acesso às clínicas é definido exclusivamente pelos grupos vinculados ao usuário.</p>
+        <p>{user.clinics.length > 0 ? user.clinics.map(({ clinic }) => clinic.name).join(", ") : "Nenhuma clínica vinculada."}</p>
       </div>
       <div className="user-card-actions">
         {canManageUsers ? (
@@ -1423,36 +1369,6 @@ function UserDeleteConfirmationModal({
         </div>
       </section>
     </div>
-  );
-}
-
-function ClinicScopePicker({
-  canManageGroups,
-  clinics,
-  isSaving,
-  onToggle,
-  selected
-}: {
-  canManageGroups: boolean;
-  clinics: Clinic[];
-  isSaving: boolean;
-  onToggle: (clinicId: string) => void;
-  selected: string[];
-}) {
-  return (
-    <fieldset className="clinic-scope-picker">
-      <legend>Clínicas liberadas</legend>
-      <p>Defina em quais clínicas este grupo pode operar. As permissões abaixo continuam controlando o que o grupo pode fazer.</p>
-      <div className="access-checklist">
-        {clinics.map((clinic) => (
-          <label className="choice-pill" key={clinic.id} title={clinic.code ?? clinic.name}>
-            <input checked={selected.includes(clinic.id)} disabled={!canManageGroups || isSaving} onChange={() => onToggle(clinic.id)} type="checkbox" />
-            {clinic.name}{clinic.code ? ` (${clinic.code})` : ""}
-          </label>
-        ))}
-        {clinics.length === 0 ? <div className="empty-state">Nenhuma clínica ativa encontrada.</div> : null}
-      </div>
-    </fieldset>
   );
 }
 

@@ -24,8 +24,7 @@ export class AuthService {
           include: {
             accessGroup: {
               include: {
-                permissions: { include: { permission: true } },
-                clinics: { include: { clinic: true } }
+                permissions: { include: { permission: true } }
               }
             }
           }
@@ -52,7 +51,7 @@ export class AuthService {
     }
 
     const permissions = this.getEffectivePermissions(user.groups);
-    const clinics = this.resolveClinicContext(user.clinics, user.groups);
+    const clinics = this.resolveClinicContext(user.clinics);
     const accessToken = await this.signAccessToken(user.id, user.login, permissions, clinics.map((clinic) => clinic.id));
 
     return {
@@ -200,8 +199,7 @@ export class AuthService {
           include: {
             accessGroup: {
               include: {
-                permissions: { include: { permission: true } },
-                clinics: { include: { clinic: true } }
+                permissions: { include: { permission: true } }
               }
             }
           }
@@ -219,7 +217,7 @@ export class AuthService {
     }
 
     const permissions = this.getEffectivePermissions(user.groups);
-    const clinics = this.resolveClinicContext(user.clinics, user.groups);
+    const clinics = this.resolveClinicContext(user.clinics);
 
     return {
       id: user.id,
@@ -340,26 +338,9 @@ export class AuthService {
   }
 
   private resolveClinicContext(
-    _clinics: Array<{ isDefault: boolean; assignedAt: Date; clinic: { id: string; name: string; code: string | null; status: string } }>,
-    groups: Array<{ accessGroup: { active: boolean; clinics: Array<{ clinic: { id: string; name: string; code: string | null; status: string } }> } }> = []
+    clinics: Array<{ isDefault: boolean; clinic: { id: string; name: string; code: string | null; status: string } }>
   ) {
-    const availableClinicsById = new Map<string, { id: string; name: string; code: string | null; status: string; isDefault: boolean }>();
-
-    for (const group of groups) {
-      if (!group.accessGroup.active) continue;
-      for (const relation of group.accessGroup.clinics) {
-        if (relation.clinic.status !== "ACTIVE" || availableClinicsById.has(relation.clinic.id)) continue;
-        availableClinicsById.set(relation.clinic.id, {
-          id: relation.clinic.id,
-          name: relation.clinic.name,
-          code: relation.clinic.code,
-          status: relation.clinic.status,
-          isDefault: false
-        });
-      }
-    }
-
-    return [...availableClinicsById.values()];
+    return clinics.map(({ clinic, isDefault }) => ({ ...clinic, isDefault }));
   }
 
   private signAccessToken(userId: string, login: string, permissions: string[], availableClinicIds: string[]) {

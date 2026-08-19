@@ -5,5 +5,6 @@ coverage/
 .env
 .env.local
 .tmp_pdf_pages/
+apps/api/storage/
 *.tsbuildinfo
 npm-debug.log*

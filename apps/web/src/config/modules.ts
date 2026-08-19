@@ -117,6 +117,12 @@ export const moduleItems: ModuleItem[] = [
         visibilityPermission: "access.users.read"
       },
       {
+        slug: "gerenciar-usuarios-clinicas",
+        label: "Gerenciar usuários e clínicas",
+        href: "/modulos/controle-acesso/gerenciar-usuarios-clinicas",
+        visibilityPermission: "access.users.clinics.manage"
+      },
+      {
         slug: "alteracao-senhas",
         label: "Gerenciar alteração de senhas",
         href: "/modulos/controle-acesso/alteracao-senhas",

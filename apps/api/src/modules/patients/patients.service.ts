@@ -1,6 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import { basename, extname, relative, resolve, sep } from "node:path";
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import type { AnamnesisStatus, MedicalEvolutionStatus, PatientStatus, Prisma } from "@prisma/client";
+import type { AnamnesisStatus, MedicalEvolutionStatus, PatientFileType, PatientStatus, Prisma } from "@prisma/client";
 import { AppCacheService } from "../../shared/cache/app-cache.service";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import type { AuthenticatedUser } from "../auth/auth.types";
@@ -49,9 +51,43 @@ type PatientClinicStayRecord = {
   clinic: { id: string; name: string; code: string | null; status: "ACTIVE" | "INACTIVE" };
 };
 
+type PatientFileKind = PatientFileType;
+
+export type PatientFileUpload = {
+  originalname: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+};
+
+type PatientFileRecord = {
+  id: string;
+  patientId: string;
+  type: PatientFileKind;
+  storageKey: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 const defaultListLimit = 5;
 const maxListLimit = 100;
 const patientClinicStatuses = new Set(["ACTIVE", "INACTIVE"]);
+const patientFileTypes = new Set<PatientFileKind>(["CONTRACT", "MP", "MEDICAL_PRESCRIPTION"]);
+const patientFileLabels: Record<PatientFileKind, string> = {
+  CONTRACT: "Contrato",
+  MP: "MP",
+  MEDICAL_PRESCRIPTION: "Receita médica"
+};
+const acceptedPatientFileMimeTypes = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+]);
 
 function parsePatientStatusFilter(status?: string): PatientStatus | undefined {
   if (status === "ALL") return undefined;
@@ -101,6 +137,8 @@ function todayAtStartOfDay() {
 
 @Injectable()
 export class PatientsService {
+  private readonly patientFilesDirectory = resolve(process.env.PATIENT_FILES_DIR ?? "storage/patient-files");
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: AppCacheService
@@ -280,8 +318,9 @@ export class PatientsService {
 
   private getByIdInClinics(patientId: string, clinicIds: string[], userPermissions: string[] = []) {
     const canReadEvolutions = this.hasPermission(userPermissions, "medical_evolutions.read");
+    const canReadPatientFiles = this.hasPermission(userPermissions, "patients.files.read");
     const clinicScopeKey = this.buildClinicScopeKey(clinicIds);
-    const cacheKey = `patients:detail:${clinicScopeKey}:${patientId}:with-anamnesis-summary:${canReadEvolutions ? "with-evolutions" : "without-evolutions"}`;
+    const cacheKey = `patients:detail:${clinicScopeKey}:${patientId}:with-anamnesis-summary:${canReadEvolutions ? "with-evolutions" : "without-evolutions"}:${canReadPatientFiles ? "with-files" : "without-files"}`;
 
     return this.cache.getOrSet(cacheKey, 15 * 1000, async () => {
       const patient = await this.prisma.patient.findFirst({
@@ -351,6 +390,7 @@ export class PatientsService {
         rg: patient.rg,
         createdAt: patient.createdAt.toISOString(),
         updatedAt: patient.updatedAt.toISOString(),
+        ...(canReadPatientFiles ? { files: patient.files.map((file) => this.toPatientFileSummary(file)) } : {}),
         anamneses: anamneses.map((record) => ({
           id: record.id,
           code: record.code,
@@ -464,6 +504,79 @@ export class PatientsService {
     this.invalidatePatientCaches(patient.id, beforeData.clinicId);
     await this.writeAuditLog(user.id, beforeData.clinicId, status === "ACTIVE" ? "activate_patient" : "inactivate_patient", beforeData, patient, `${status === "ACTIVE" ? "Paciente ativado" : "Paciente inativado"}: ${patient.name}`);
     return patient;
+  }
+
+  async uploadFile(user: AuthenticatedUser, patientId: string, rawFileType: string, file: PatientFileUpload | undefined, requestedClinicId?: string) {
+    const clinicIds = await this.resolveScopedClinicIds(user, requestedClinicId);
+    const patient = await this.findPatientOrThrow(patientId, clinicIds);
+    const fileType = this.resolvePatientFileType(rawFileType);
+    this.validateUploadedFile(file);
+
+    const existingFile = await this.prisma.patientFile.findUnique({ where: { patientId_type: { patientId, type: fileType } } });
+    const storedFile = await this.storePatientFile(patientId, fileType, file);
+
+    let savedFile;
+    try {
+      savedFile = await this.prisma.patientFile.upsert({
+        where: { patientId_type: { patientId, type: fileType } },
+        update: storedFile,
+        create: { patientId, type: fileType, ...storedFile }
+      });
+    } catch (error) {
+      await this.removeStoredFile(storedFile.storageKey);
+      throw error;
+    }
+
+    if (existingFile) await this.removeStoredFile(existingFile.storageKey).catch(() => undefined);
+    this.invalidatePatientCaches(patientId, patient.clinicId);
+    await this.writePatientFileAuditLog(
+      user.id,
+      patient.clinicId,
+      patientId,
+      existingFile ? "replace_patient_file" : "upload_patient_file",
+      existingFile,
+      savedFile,
+      `${patientFileLabels[fileType]} ${existingFile ? "substituído" : "anexado"}: ${patient.name}`
+    );
+    return this.toPatientFileSummary(savedFile);
+  }
+
+  async getFileForDownload(user: AuthenticatedUser, patientId: string, rawFileType: string, requestedClinicId?: string) {
+    const clinicIds = await this.resolveScopedClinicIds(user, requestedClinicId);
+    await this.findPatientOrThrow(patientId, clinicIds);
+    const fileType = this.resolvePatientFileType(rawFileType);
+    const file = await this.prisma.patientFile.findUnique({ where: { patientId_type: { patientId, type: fileType } } });
+    if (!file) throw new NotFoundException("Arquivo do paciente não encontrado.");
+
+    const path = this.resolveStoredFilePath(file.storageKey);
+    try {
+      await access(path);
+    } catch {
+      throw new NotFoundException("Arquivo do paciente não está disponível no armazenamento.");
+    }
+    return { path, fileName: file.fileName, mimeType: file.mimeType };
+  }
+
+  async removeFile(user: AuthenticatedUser, patientId: string, rawFileType: string, requestedClinicId?: string) {
+    const clinicIds = await this.resolveScopedClinicIds(user, requestedClinicId);
+    const patient = await this.findPatientOrThrow(patientId, clinicIds);
+    const fileType = this.resolvePatientFileType(rawFileType);
+    const existingFile = await this.prisma.patientFile.findUnique({ where: { patientId_type: { patientId, type: fileType } } });
+    if (!existingFile) throw new NotFoundException("Arquivo do paciente não encontrado.");
+
+    await this.prisma.patientFile.delete({ where: { id: existingFile.id } });
+    await this.removeStoredFile(existingFile.storageKey).catch(() => undefined);
+    this.invalidatePatientCaches(patientId, patient.clinicId);
+    await this.writePatientFileAuditLog(
+      user.id,
+      patient.clinicId,
+      patientId,
+      "remove_patient_file",
+      existingFile,
+      null,
+      `${patientFileLabels[fileType]} removido: ${patient.name}`
+    );
+    return { removed: true, type: fileType };
   }
 
   async emitSummaryReportDocument(user: AuthenticatedUser, patientId: string, requestedClinicId?: string) {
@@ -692,8 +805,68 @@ export class PatientsService {
         where: clinicIds ? { clinicId: { in: clinicIds } } : undefined,
         orderBy: [{ admissionDate: "desc" }, { createdAt: "desc" }],
         include: { clinic: { select: { id: true, name: true, code: true, status: true } } }
-      }
+      },
+      files: { orderBy: { type: "asc" } }
     } satisfies Prisma.PatientInclude;
+  }
+
+  private resolvePatientFileType(fileType: string): PatientFileKind {
+    if (patientFileTypes.has(fileType as PatientFileKind)) return fileType as PatientFileKind;
+    throw new BadRequestException("Tipo de arquivo do paciente inválido.");
+  }
+
+  private validateUploadedFile(file: PatientFileUpload | undefined): asserts file is PatientFileUpload {
+    if (!file?.buffer?.length) throw new BadRequestException("Selecione um arquivo para anexar.");
+    if (!acceptedPatientFileMimeTypes.has(file.mimetype)) {
+      throw new BadRequestException("Formato não permitido. Envie PDF, JPG, PNG, DOC ou DOCX.");
+    }
+  }
+
+  private async storePatientFile(patientId: string, fileType: PatientFileKind, file: PatientFileUpload) {
+    const originalExtension = extname(file.originalname).toLowerCase();
+    const safeExtension = /^[.][a-z0-9]{1,10}$/.test(originalExtension) ? originalExtension : "";
+    const storageKey = `${patientId}/${fileType.toLowerCase()}-${randomUUID()}${safeExtension}`;
+    const path = this.resolveStoredFilePath(storageKey);
+    await mkdir(resolve(path, ".."), { recursive: true });
+    await writeFile(path, file.buffer, { flag: "wx" });
+
+    return {
+      storageKey,
+      fileName: this.normalizeFileName(file.originalname, fileType, safeExtension),
+      mimeType: file.mimetype,
+      size: file.size
+    };
+  }
+
+  private normalizeFileName(fileName: string, fileType: PatientFileKind, fallbackExtension: string) {
+    const normalizedName = basename(fileName).replace(/[\u0000-\u001f<>:"/\\|?*]+/g, " ").replace(/\s+/g, " ").trim();
+    return normalizedName || `${patientFileLabels[fileType]}${fallbackExtension}`;
+  }
+
+  private resolveStoredFilePath(storageKey: string) {
+    const path = resolve(this.patientFilesDirectory, storageKey);
+    const relativePath = relative(this.patientFilesDirectory, path);
+    if (relativePath.startsWith("..") || relativePath.includes(`${sep}..${sep}`) || relativePath === "") {
+      throw new BadRequestException("Referência de arquivo inválida.");
+    }
+    return path;
+  }
+
+  private async removeStoredFile(storageKey: string) {
+    await rm(this.resolveStoredFilePath(storageKey), { force: true });
+  }
+
+  private toPatientFileSummary(file: PatientFileRecord) {
+    return {
+      id: file.id,
+      type: file.type,
+      label: patientFileLabels[file.type],
+      fileName: file.fileName,
+      mimeType: file.mimeType,
+      size: file.size,
+      createdAt: file.createdAt.toISOString(),
+      updatedAt: file.updatedAt.toISOString()
+    };
   }
 
   private async transferPatientClinicContext(tx: Prisma.TransactionClient, patientId: string, sourceClinicId: string, targetClinicId: string, sourceDischargeDate: Date): Promise<PatientTransferSummary | null> {
@@ -849,6 +1022,26 @@ export class PatientsService {
         action,
         beforeData: null,
         afterData: JSON.stringify(document),
+        reason,
+        userId: userId ?? null,
+        clinicId
+      }
+    });
+    this.cache.deleteByPrefix("access:audit-logs:");
+  }
+
+  private async writePatientFileAuditLog(userId: string | undefined, clinicId: string, patientId: string, action: string, beforeData: unknown, afterData: unknown, reason: string) {
+    await this.prisma.auditLog.create({
+      data: {
+        entity: "patient_file",
+        entityId: typeof afterData === "object" && afterData && "id" in afterData
+          ? String(afterData.id)
+          : typeof beforeData === "object" && beforeData && "id" in beforeData
+            ? String(beforeData.id)
+            : patientId,
+        action,
+        beforeData: beforeData ? JSON.stringify(beforeData) : null,
+        afterData: afterData ? JSON.stringify(afterData) : null,
         reason,
         userId: userId ?? null,
         clinicId

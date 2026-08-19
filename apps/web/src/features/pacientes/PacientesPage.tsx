@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { CircleAlert, ChevronLeft, ChevronRight, Edit3, Eye, Plus, ToggleLeft, ToggleRight, UserRound, X } from "lucide-react";
+import { CircleAlert, ChevronLeft, ChevronRight, Edit3, Eye, Paperclip, Plus, ToggleLeft, ToggleRight, Trash2, UserRound, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ClearFiltersButton, FilterButton } from "@/components/filters/FilterActionButtons";
 import { invalidateAnamneseCachesForPatientTransfer } from "@/features/anamnese/storage";
@@ -10,6 +10,18 @@ import { invalidateProntuarioCachesForPatientTransfer } from "@/features/prontua
 
 type PatientStatus = "ACTIVE" | "INACTIVE";
 type ClinicalStatus = "draft" | "finalized" | "canceled";
+type PatientFileType = "CONTRACT" | "MP" | "MEDICAL_PRESCRIPTION";
+
+type PatientFile = {
+  id: string;
+  type: PatientFileType;
+  label: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  createdAt: string;
+  updatedAt: string;
+};
 
 type PatientClinicFilter = {
   id: string;
@@ -75,6 +87,7 @@ type PatientTransferPreview = {
 type PatientTransferPreviewResponse = {
   anamneses: Array<{ status: ClinicalStatus }>;
   evolutions: Array<{ status: ClinicalStatus }>;
+  files?: PatientFile[];
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
@@ -83,6 +96,11 @@ const MAX_PATIENT_LIMIT = 100;
 const PATIENT_SEARCH_DELAY_MS = 350;
 const PATIENT_FILTERS_STORAGE_KEY = "clinica.pacientes.filters";
 const patientClinicEditTooltip = "Ao trocar a clínica atual do paciente, os registros concluídos permanecem na clínica original. Se houver anamneses ou evoluções em andamento, elas serão transferidas para a nova clínica e o sistema avisará ao salvar.";
+const patientFileDefinitions: Array<{ type: PatientFileType; label: string }> = [
+  { type: "CONTRACT", label: "Contrato" },
+  { type: "MP", label: "MP" },
+  { type: "MEDICAL_PRESCRIPTION", label: "Receita médica" }
+];
 
 const emptyPatientForm: PatientFormState = {
   name: "",
@@ -229,6 +247,11 @@ function formatPatientDate(value?: string | null, fallback = "Não informado") {
   return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(value));
 }
 
+function formatPatientFileSize(size: number) {
+  if (size < 1024 * 1024) return `${Math.max(1, Math.ceil(size / 1024))} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
 }
@@ -282,6 +305,28 @@ async function apiRequest<T>(token: string, path: string, options: RequestInit =
   return response.json() as Promise<T>;
 }
 
+async function uploadPatientFile(token: string, patientId: string, fileType: PatientFileType, file: File, clinicId: string) {
+  const formData = new FormData();
+  formData.set("file", file);
+  const clinicQuery = clinicId ? `?clinicId=${encodeURIComponent(clinicId)}` : "";
+  const response = await fetch(`${API_BASE_URL}/api/patients/${patientId}/files/${fileType}${clinicQuery}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.message ?? "Não foi possível enviar o arquivo do paciente.");
+  }
+
+  return response.json() as Promise<PatientFile>;
+}
+
+function createPatientFileSelections(): Record<PatientFileType, File | null> {
+  return { CONTRACT: null, MP: null, MEDICAL_PRESCRIPTION: null };
+}
+
 export function PacientesPage() {
   const { clinics, hasPermission, refreshProfile, token } = useAuth();
   const router = useRouter();
@@ -290,6 +335,8 @@ export function PacientesPage() {
   const canFilterPatientsByClinic = hasPermission("patients.clinic_filter") && clinics.length > 1;
   const canUpdatePatients = hasPermission("patients.update");
   const canInactivatePatients = hasPermission("patients.inactivate");
+  const canReadPatientFiles = hasPermission("patients.files.read");
+  const canEditPatientFiles = hasPermission("patients.files.edit");
   const availablePatientClinics: PatientClinicFilter[] = clinics.filter((clinic) => clinic.status === "ACTIVE");
   const shouldShowPatientClinicField = availablePatientClinics.length > 0;
   const mustChoosePatientClinic = availablePatientClinics.length > 1;
@@ -324,6 +371,9 @@ export function PacientesPage() {
   const [savingStatusPatientId, setSavingStatusPatientId] = useState<string | null>(null);
   const [isLoadingPatientTransferPreview, setIsLoadingPatientTransferPreview] = useState(false);
   const [patientTransferPreview, setPatientTransferPreview] = useState<PatientTransferPreview | null>(null);
+  const [patientFileSelections, setPatientFileSelections] = useState(createPatientFileSelections);
+  const [existingPatientFiles, setExistingPatientFiles] = useState<PatientFile[]>([]);
+  const [removingPatientFileType, setRemovingPatientFileType] = useState<PatientFileType | null>(null);
 
   const patientOffset = (patientPage - 1) * patientLimit;
   const selectedPatientClinicIsAvailable = availablePatientClinics.some((clinic) => clinic.id === selectedPatientClinicId);
@@ -456,6 +506,8 @@ export function PacientesPage() {
     setEditingPatientClinicId("");
     setPatientTransferPreview(null);
     setIsLoadingPatientTransferPreview(false);
+    setPatientFileSelections(createPatientFileSelections());
+    setExistingPatientFiles([]);
     setPatientForm({ ...emptyPatientForm, clinicId: effectivePatientClinicId || (refreshedClinics.length === 1 ? refreshedClinics[0].id : "") });
     setIsPatientModalOpen(true);
   };
@@ -465,6 +517,8 @@ export function PacientesPage() {
     setEditingPatient(patient);
     setEditingPatientClinicId(currentClinicId);
     setPatientTransferPreview(null);
+    setPatientFileSelections(createPatientFileSelections());
+    setExistingPatientFiles([]);
     setPatientForm({ ...getPatientForm(patient), clinicId: currentClinicId });
     setIsPatientModalOpen(true);
 
@@ -477,6 +531,7 @@ export function PacientesPage() {
         draftAnamneses: detail.anamneses.filter((record) => record.status === "draft").length,
         draftEvolutions: detail.evolutions.filter((record) => record.status === "draft").length
       });
+      setExistingPatientFiles(detail.files ?? []);
     } catch {
       setPatientTransferPreview(null);
     } finally {
@@ -490,38 +545,62 @@ export function PacientesPage() {
     setIsSavingPatient(true);
 
     try {
+      let savedPatient: Patient;
+      let successMessage: string;
       if (editingPatient) {
         const clinicQuery = editingPatientClinicId ? `?clinicId=${encodeURIComponent(editingPatientClinicId)}` : "";
-        const updatedPatient = await apiRequest<Patient>(token, `/api/patients/${editingPatient.id}${clinicQuery}`, {
+        savedPatient = await apiRequest<Patient>(token, `/api/patients/${editingPatient.id}${clinicQuery}`, {
           method: "PATCH",
           body: JSON.stringify(toPatientPayload(patientForm))
         });
         invalidateAnamneseCachesForPatientTransfer(token, editingPatient.id);
         invalidateProntuarioCachesForPatientTransfer(token, editingPatient.id);
-        setMessage(`Paciente atualizado.${buildTransferMessage(updatedPatient.transferSummary)}`);
+        successMessage = `Paciente atualizado.${buildTransferMessage(savedPatient.transferSummary)}`;
       } else {
-        const patient = await apiRequest<Patient>(token, "/api/patients", {
+        savedPatient = await apiRequest<Patient>(token, "/api/patients", {
           method: "POST",
           body: JSON.stringify(toPatientPayload(patientForm))
         });
-        invalidateAnamneseCachesForPatientTransfer(token, patient.id);
-        invalidateProntuarioCachesForPatientTransfer(token, patient.id);
-        setMessage(patient.linkedExisting
-          ? `Paciente existente vinculado à clínica selecionada.${buildTransferMessage(patient.transferSummary)}`
-          : patient.existingInClinic
+        invalidateAnamneseCachesForPatientTransfer(token, savedPatient.id);
+        invalidateProntuarioCachesForPatientTransfer(token, savedPatient.id);
+        successMessage = savedPatient.linkedExisting
+          ? `Paciente existente vinculado à clínica selecionada.${buildTransferMessage(savedPatient.transferSummary)}`
+          : savedPatient.existingInClinic
             ? "Paciente já estava cadastrado nesta clínica."
-            : `Paciente criado.${buildTransferMessage(patient.transferSummary)}`);
+            : `Paciente criado.${buildTransferMessage(savedPatient.transferSummary)}`;
       }
+
+      const selectedFiles = (Object.entries(patientFileSelections) as Array<[PatientFileType, File | null]>).filter(([, file]) => file);
+      await Promise.all(selectedFiles.map(([fileType, file]) => uploadPatientFile(token, savedPatient.id, fileType, file!, patientForm.clinicId)));
+      setMessage(`${successMessage}${selectedFiles.length ? ` ${selectedFiles.length} arquivo(s) anexado(s).` : ""}`);
 
       setIsPatientModalOpen(false);
       setEditingPatientClinicId("");
       setPatientTransferPreview(null);
+      setPatientFileSelections(createPatientFileSelections());
+      setExistingPatientFiles([]);
       setPatientForm(emptyPatientForm);
       await refreshCurrentPage();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível salvar o paciente.");
     } finally {
       setIsSavingPatient(false);
+    }
+  };
+
+  const handleRemovePatientFile = async (fileType: PatientFileType) => {
+    if (!token || !editingPatient || !canEditPatientFiles) return;
+    const selectedClinicId = patientForm.clinicId || editingPatientClinicId;
+    setRemovingPatientFileType(fileType);
+
+    try {
+      await apiRequest(token, `/api/patients/${editingPatient.id}/files/${fileType}${selectedClinicId ? `?clinicId=${encodeURIComponent(selectedClinicId)}` : ""}`, { method: "DELETE" });
+      setExistingPatientFiles((files) => files.filter((file) => file.type !== fileType));
+      setMessage(`${patientFileDefinitions.find((file) => file.type === fileType)?.label ?? "Arquivo"} removido.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível remover o arquivo do paciente.");
+    } finally {
+      setRemovingPatientFileType(null);
     }
   };
 
@@ -727,6 +806,7 @@ export function PacientesPage() {
               </div>
               <button className="icon-button" onClick={() => setIsPatientModalOpen(false)} title="Fechar" type="button"><X aria-hidden="true" size={18} /></button>
             </div>
+            {message ? <div className="access-message">{message}</div> : null}
             <form className="access-form patient-form-grid" onSubmit={handleSavePatient}>
               {!editingPatient && shouldShowPatientClinicField ? (
                 <label className="patient-form-full">
@@ -762,6 +842,38 @@ export function PacientesPage() {
               <label><span>CPF</span><input onChange={(event) => setPatientForm((form) => ({ ...form, cpf: event.target.value }))} placeholder="CPF" value={patientForm.cpf} /></label>
               <label><span>RG</span><input onChange={(event) => setPatientForm((form) => ({ ...form, rg: event.target.value }))} placeholder="RG" value={patientForm.rg} /></label>
               <label className="patient-form-full"><span>Documento complementar</span><input onChange={(event) => setPatientForm((form) => ({ ...form, document: event.target.value }))} placeholder="Outro documento" value={patientForm.document} /></label>
+              {canEditPatientFiles ? (
+                <div className="patient-form-full patient-files-form">
+                  <div className="patient-files-form-heading">
+                    <div>
+                      <h4>Arquivos do paciente</h4>
+                      <p>PDF, JPG, PNG, DOC ou DOCX, com até 10 MB por arquivo.</p>
+                    </div>
+                    <Paperclip aria-hidden="true" size={19} />
+                  </div>
+                  <div className="patient-files-form-list">
+                    {patientFileDefinitions.map((definition) => {
+                      const existingFile = existingPatientFiles.find((file) => file.type === definition.type);
+                      const selectedFile = patientFileSelections[definition.type];
+                      return (
+                        <div className="patient-file-form-item" key={definition.type}>
+                          <label>
+                            <span>{existingFile ? `Substituir ${definition.label}` : definition.label}</span>
+                            <input accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" onChange={(event) => setPatientFileSelections((files) => ({ ...files, [definition.type]: event.target.files?.[0] ?? null }))} type="file" />
+                          </label>
+                          {selectedFile ? <small>Selecionado: {selectedFile.name} ({formatPatientFileSize(selectedFile.size)})</small> : null}
+                          {canReadPatientFiles && existingFile ? (
+                            <div className="patient-file-current">
+                              <span>Atual: {existingFile.fileName} ({formatPatientFileSize(existingFile.size)})</span>
+                              <button className="table-action is-danger" disabled={removingPatientFileType === definition.type} onClick={() => { void handleRemovePatientFile(definition.type); }} type="button"><Trash2 aria-hidden="true" size={15} />{removingPatientFileType === definition.type ? "Removendo..." : "Remover"}</button>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
               <div className="confirmation-modal-actions patient-form-full">
                 <button className="secondary-button" disabled={isSavingPatient} onClick={() => { setIsPatientModalOpen(false); setEditingPatientClinicId(""); setPatientTransferPreview(null); }} type="button">Cancelar</button>
                 <button className="primary-button" disabled={isSavingPatient || !patientForm.name.trim() || !patientForm.clinicId} type="submit">{isSavingPatient ? "Salvando..." : "Salvar paciente"}</button>

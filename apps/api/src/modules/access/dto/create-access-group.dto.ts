@@ -12,9 +12,4 @@ export class CreateAccessGroupDto {
   @IsArray()
   @IsString({ each: true })
   permissionKeys?: string[];
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  clinicIds?: string[];
 }

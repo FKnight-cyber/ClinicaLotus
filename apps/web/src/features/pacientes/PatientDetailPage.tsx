@@ -9,6 +9,18 @@ import { downloadPatientSummaryReportPdf } from "./patientSummaryReportPdf";
 
 type PatientStatus = "ACTIVE" | "INACTIVE";
 type ClinicalStatus = "draft" | "finalized" | "canceled";
+type PatientFileType = "CONTRACT" | "MP" | "MEDICAL_PRESCRIPTION";
+
+type PatientFile = {
+  id: string;
+  type: PatientFileType;
+  label: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  createdAt: string;
+  updatedAt: string;
+};
 
 type PatientDetail = {
   id: string;
@@ -24,6 +36,7 @@ type PatientDetail = {
   rg?: string | null;
   createdAt: string;
   updatedAt: string;
+  files?: PatientFile[];
   anamneses: PatientAnamnesis[];
   evolutions: PatientEvolution[];
 };
@@ -95,6 +108,11 @@ type PatientEvolution = {
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
+const patientFileDefinitions: Array<{ type: PatientFileType; label: string }> = [
+  { type: "CONTRACT", label: "Contrato" },
+  { type: "MP", label: "MP" },
+  { type: "MEDICAL_PRESCRIPTION", label: "Receita médica" }
+];
 
 async function apiRequest<T>(token: string, path: string, options: RequestInit = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -122,6 +140,11 @@ function formatDate(value?: string | null) {
 function formatDateTime(value?: string | null) {
   if (!value) return "Não informado";
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
+}
+
+function formatPatientFileSize(size: number) {
+  if (size < 1024 * 1024) return `${Math.max(1, Math.ceil(size / 1024))} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function formatDocuments(patient: PatientDetail) {
@@ -190,18 +213,27 @@ function buildPatientDetailPath(patientId: string, clinicId?: string) {
   return `/api/patients/${patientId}${queryString ? `?${queryString}` : ""}`;
 }
 
+function buildPatientFilePath(patientId: string, fileType: PatientFileType, clinicId?: string) {
+  const params = new URLSearchParams();
+  if (clinicId) params.set("clinicId", clinicId);
+  const queryString = params.toString();
+  return `/api/patients/${patientId}/files/${fileType}${queryString ? `?${queryString}` : ""}`;
+}
+
 export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; patientId: string }) {
   const { hasPermission, token, user } = useAuth();
   const canReadPatients = hasPermission("patients.read");
   const canReadAnamnese = hasPermission("anamnese.read");
   const canReadEvolutions = hasPermission("medical_evolutions.read");
   const canUpdatePatientStatus = hasPermission("patients.inactivate");
+  const canReadPatientFiles = hasPermission("patients.files.read");
   const canGenerateReport = true;
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingStatus, setIsSavingStatus] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [downloadingPatientFileType, setDownloadingPatientFileType] = useState<PatientFileType | null>(null);
   const [isReportOptionsOpen, setIsReportOptionsOpen] = useState(false);
   const [reportOptions, setReportOptions] = useState<PatientReportOptions>({ includePsychologicalPart: true, includeMedicalPart: canReadEvolutions });
 
@@ -229,6 +261,7 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
   }, [token, canReadPatients, clinicId, patientId]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setReportOptions((currentOptions) => ({
       includePsychologicalPart: currentOptions.includePsychologicalPart,
       includeMedicalPart: canReadEvolutions ? currentOptions.includeMedicalPart : false
@@ -288,6 +321,35 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
       setMessage(error instanceof Error ? error.message : "Não foi possível gerar o relatório do paciente.");
     } finally {
       setIsGeneratingReport(false);
+    }
+  }
+
+  async function handleDownloadPatientFile(file: PatientFile) {
+    if (!token || !patient || !canReadPatientFiles) return;
+    setDownloadingPatientFileType(file.type);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}${buildPatientFilePath(patient.id, file.type, clinicId)}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? "Não foi possível baixar o arquivo do paciente.");
+      }
+
+      const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = file.fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setMessage(`${file.label} baixado.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível baixar o arquivo do paciente.");
+    } finally {
+      setDownloadingPatientFileType(null);
     }
   }
 
@@ -394,6 +456,32 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
           </div>
         </section>
       </div>
+
+      {canReadPatientFiles ? (
+        <section className="plain-panel patient-files-panel">
+          <div className="access-card-heading">
+            <div>
+              <h3>Arquivos do paciente</h3>
+              <p>Contrato, MP e receita médica vinculados ao cadastro.</p>
+            </div>
+            <FileText aria-hidden="true" size={22} />
+          </div>
+          <div className="patient-file-detail-list">
+            {patientFileDefinitions.map((definition) => {
+              const file = patient.files?.find((item) => item.type === definition.type);
+              return (
+                <div className="patient-file-detail-item" key={definition.type}>
+                  <div>
+                    <strong>{definition.label}</strong>
+                    <span>{file ? `${file.fileName} (${formatPatientFileSize(file.size)})` : "Não enviado"}</span>
+                  </div>
+                  {file ? <button className="table-action" disabled={downloadingPatientFileType === file.type} onClick={() => { void handleDownloadPatientFile(file); }} type="button"><FileDown aria-hidden="true" size={16} />{downloadingPatientFileType === file.type ? "Baixando..." : "Baixar"}</button> : null}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
       <section className="plain-panel patient-history-panel patient-clinic-history-panel">
         <div className="access-card-heading">

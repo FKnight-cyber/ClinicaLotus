@@ -72,14 +72,18 @@ export function UserDetailPage({ userId }: { userId: string }) {
   const router = useRouter();
   const canReadUsers = hasPermission("access.users.read");
   const canManageUsers = hasPermission("access.users.manage");
+  const canManageUserClinics = hasPermission("access.users.clinics.manage");
   const isSelf = user?.id === userId;
   const [targetUser, setTargetUser] = useState<AccessUser | null>(null);
   const [groups, setGroups] = useState<AccessGroup[]>([]);
+  const [availableClinics, setAvailableClinics] = useState<Clinic[]>([]);
   const [draft, setDraft] = useState<{ name: string; email: string }>({ name: "", email: "" });
   const [groupDraft, setGroupDraft] = useState<string[]>([]);
+  const [clinicDraft, setClinicDraft] = useState<string[]>([]);
   const [statusDraft, setStatusDraft] = useState<AccessUser["status"]>("PENDING");
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSavingClinics, setIsSavingClinics] = useState(false);
 
   useEffect(() => {
     if (!token || !user) return;
@@ -89,17 +93,20 @@ export function UserDetailPage({ userId }: { userId: string }) {
       setIsLoading(true);
 
       if (canReadUsers) {
-        const [nextUser, nextGroups] = await Promise.all([
+        const [nextUser, nextGroups, nextClinics] = await Promise.all([
           apiRequest<AccessUser>(token, `/api/access/users/${userId}`),
-          canManageUsers ? apiRequest<PaginatedAccessGroups | AccessGroup[]>(token, "/api/access/groups?limit=100") : Promise.resolve({ items: [], limit: 100, total: 0 })
+          canManageUsers ? apiRequest<PaginatedAccessGroups | AccessGroup[]>(token, "/api/access/groups?limit=100") : Promise.resolve({ items: [], limit: 100, total: 0 }),
+          canManageUserClinics ? apiRequest<Clinic[]>(token, "/api/access/users/clinic-options") : Promise.resolve([])
         ]);
 
         if (!isCurrent) return;
         const nextGroupsPage = normalizeGroupsPage(nextGroups);
         setTargetUser(nextUser);
         setGroups(nextGroupsPage.items);
+        setAvailableClinics(nextClinics);
         setDraft({ name: nextUser.name, email: nextUser.email ?? "" });
         setGroupDraft(nextUser.groups.map((group) => group.accessGroup.id));
+        setClinicDraft(nextUser.clinics.map((clinic) => clinic.clinic.id));
         setStatusDraft(nextUser.status);
         setIsLoading(false);
         return;
@@ -138,10 +145,14 @@ export function UserDetailPage({ userId }: { userId: string }) {
     return () => {
       isCurrent = false;
     };
-  }, [token, user, userId, canReadUsers, canManageUsers, isSelf]);
+  }, [token, user, userId, canReadUsers, canManageUsers, canManageUserClinics, isSelf]);
 
   const toggleGroup = (groupId: string) => {
     setGroupDraft((current) => current.includes(groupId) ? current.filter((id) => id !== groupId) : [...current, groupId]);
+  };
+
+  const toggleClinic = (clinicId: string) => {
+    setClinicDraft((current) => current.includes(clinicId) ? current.filter((id) => id !== clinicId) : [...current, clinicId]);
   };
 
   const handleSaveProfile = async (event: FormEvent<HTMLFormElement>) => {
@@ -192,6 +203,26 @@ export function UserDetailPage({ userId }: { userId: string }) {
     });
     setTargetUser(updatedUser);
     setMessage("Grupos de acesso atualizados.");
+  };
+
+  const handleSaveClinics = async () => {
+    if (!token || !targetUser || !canManageUserClinics) return;
+    setIsSavingClinics(true);
+
+    try {
+      const updatedUser = await apiRequest<AccessUser>(token, `/api/access/users/${targetUser.id}/clinics`, {
+        method: "PATCH",
+        body: JSON.stringify({ clinicIds: clinicDraft })
+      });
+      setTargetUser(updatedUser);
+      setClinicDraft(updatedUser.clinics.map((clinic) => clinic.clinic.id));
+      if (isSelf) await refreshProfile();
+      setMessage("Clínicas vinculadas ao usuário atualizadas.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível atualizar as clínicas do usuário.");
+    } finally {
+      setIsSavingClinics(false);
+    }
   };
 
   if (isLoading) {
@@ -249,6 +280,33 @@ export function UserDetailPage({ userId }: { userId: string }) {
         ) : null}
       </div>
 
+      <section className="plain-panel user-access-panel">
+        <div className="access-card-heading">
+          <div>
+            <h3>Escopo de clínicas</h3>
+            <p>As clínicas vinculadas determinam os dados que este usuário pode acessar.</p>
+          </div>
+        </div>
+        {canManageUserClinics ? (
+          <div className="access-form">
+            <div className="access-checklist">
+              {availableClinics.map((clinic) => (
+                <label className="choice-pill" key={clinic.id} title={clinic.code ?? clinic.name}>
+                  <input checked={clinicDraft.includes(clinic.id)} disabled={isSavingClinics} onChange={() => toggleClinic(clinic.id)} type="checkbox" />
+                  {clinic.name}{clinic.code ? ` (${clinic.code})` : ""}
+                </label>
+              ))}
+              {availableClinics.length === 0 ? <div className="empty-state">Nenhuma clínica ativa encontrada.</div> : null}
+            </div>
+            <button className="primary-button" disabled={isSavingClinics} onClick={handleSaveClinics} type="button"><Save aria-hidden="true" size={17} />{isSavingClinics ? "Salvando..." : "Salvar clínicas"}</button>
+          </div>
+        ) : (
+          <div className="access-checklist compact-checklist">
+            {targetUser.clinics.length > 0 ? targetUser.clinics.map(({ clinic }) => <span className="choice-pill" key={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</span>) : <span>Nenhuma clínica vinculada.</span>}
+          </div>
+        )}
+      </section>
+
       {canManageUsers ? (
         <section className="plain-panel user-access-panel">
           <div className="access-card-heading">
@@ -269,16 +327,6 @@ export function UserDetailPage({ userId }: { userId: string }) {
         </section>
       ) : null}
 
-      {canManageUsers ? (
-        <section className="plain-panel user-access-panel">
-          <div className="access-card-heading">
-            <div>
-              <h3>Escopo de clínicas</h3>
-              <p>O acesso às clínicas deste usuário é definido exclusivamente pelos grupos vinculados acima.</p>
-            </div>
-          </div>
-        </section>
-      ) : null}
     </section>
   );
 }

@@ -23,6 +23,12 @@ enum PatientStatus {
   INACTIVE
 }
 
+enum PatientFileType {
+  CONTRACT
+  MP
+  MEDICAL_PRESCRIPTION
+}
+
 enum ClinicStatus {
   ACTIVE
   INACTIVE
@@ -124,7 +130,6 @@ model Clinic {
   patients  Patient[]
   patientLinks PatientClinic[]
   patientStays PatientClinicStay[]
-  accessGroups AccessGroupClinic[]
   anamnesisRecords AnamnesisRecord[]
   medicalRecordEntries MedicalRecordEntry[]
   medicalEvolutions MedicalEvolution[]
@@ -173,18 +178,6 @@ model AccessGroup {
   updatedAt   DateTime                @updatedAt
   users       UserAccessGroup[]
   permissions AccessGroupPermission[]
-  clinics     AccessGroupClinic[]
-}
-
-model AccessGroupClinic {
-  accessGroupId String
-  clinicId      String
-  assignedAt    DateTime    @default(now())
-  accessGroup   AccessGroup @relation(fields: [accessGroupId], references: [id], onDelete: Cascade)
-  clinic        Clinic      @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-
-  @@id([accessGroupId, clinicId])
-  @@index([clinicId])
 }
 
 model Permission {
@@ -237,8 +230,25 @@ model Patient {
   medicalRecordEntries MedicalRecordEntry[]
   medicalEvolutions MedicalEvolution[]
   clinicalDocuments ClinicalDocument[]
+  files           PatientFile[]
 
   @@index([clinicId, status])
+}
+
+model PatientFile {
+  id         String          @id @default(uuid())
+  patientId  String
+  type       PatientFileType
+  storageKey String          @unique
+  fileName   String
+  mimeType   String
+  size       Int
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  patient    Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@unique([patientId, type])
+  @@index([patientId])
 }
 
 model PatientClinic {

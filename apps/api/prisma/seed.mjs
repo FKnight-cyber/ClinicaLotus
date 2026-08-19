@@ -45,6 +45,8 @@ const basePermissions = [
   ["patients.create", "patients", "create", "Cadastrar pacientes"],
   ["patients.update", "patients", "update", "Editar pacientes"],
   ["patients.inactivate", "patients", "inactivate", "Ativar e inativar pacientes"],
+  ["patients.files.read", "patients", "read_files", "Visualizar arquivos do paciente"],
+  ["patients.files.edit", "patients", "edit_files", "Editar arquivos do paciente"],
   ["prontuario.read", "prontuario", "read", "Visualizar prontuário"],
   ["prontuario.read_network", "prontuario", "read_network", "Visualizar prontuário consolidado da rede"],
   ["medical_evolutions.read", "medical_evolutions", "read", "Visualizar evoluções"],
@@ -57,6 +59,7 @@ const basePermissions = [
   ["profile.medical_info.read", "profile", "read_medical_info", "Adicionar campos de registro profissional ( Médicos )"],
   ["access.users.read", "access", "read_users", "Visualizar usuários"],
   ["access.users.manage", "access", "manage_users", "Gerenciar usuários"],
+  ["access.users.clinics.manage", "access", "manage_user_clinics", "Atribuir clínicas aos usuários"],
   ["access.groups.read", "access", "read_groups", "Visualizar grupos de acesso"],
   ["access.groups.manage", "access", "manage_groups", "Gerenciar grupos e permissões"],
   ["access.password_changes.read", "access", "read_password_changes", "Visualizar pedidos de alteração de senha"],
@@ -220,14 +223,12 @@ async function seedDefaultClinic() {
     create: { name: "Clínica 1", code: "CLINICA-1", document: "00.000.000/0001-00", status: "ACTIVE" }
   });
 
-  const accessGroups = await prisma.accessGroup.findMany({ select: { id: true } });
-  for (const accessGroup of accessGroups) {
-    await prisma.accessGroupClinic.upsert({
-      where: { accessGroupId_clinicId: { accessGroupId: accessGroup.id, clinicId: defaultClinic.id } },
-      update: {},
-      create: { accessGroupId: accessGroup.id, clinicId: defaultClinic.id }
-    });
-  }
+  const users = await prisma.user.findMany({ select: { id: true } });
+  await prisma.$transaction(users.map((user) => prisma.userClinic.upsert({
+    where: { userId_clinicId: { userId: user.id, clinicId: defaultClinic.id } },
+    update: { status: "ACTIVE" },
+    create: { userId: user.id, clinicId: defaultClinic.id, status: "ACTIVE", isDefault: true }
+  })));
 
   return defaultClinic;
 }

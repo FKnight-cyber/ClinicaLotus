@@ -19,7 +19,14 @@ type ProfileForm = {
   password: string;
 };
 
-const professionalAreaOptions = ["Médico", "Terapeuta", "Psicólogo", "Psiquiatra", "Assistente social", "Enfermagem"];
+type Clinic = {
+  id: string;
+  name: string;
+  code?: string | null;
+  status: "ACTIVE" | "INACTIVE";
+};
+
+const professionalAreaOptions = ["Administrador", "Gerente", "Médico", "Terapeuta", "Psicólogo", "Psiquiatra", "Assistente social", "Enfermagem"];
 const professionalCouncilOptions = ["CRM", "CRP", "COREN", "CRESS", "Outro"];
 
 function getDefaultProfessionalArea(userType?: string) {
@@ -68,13 +75,48 @@ async function updateProfile(token: string, form: ProfileForm) {
   return response.json();
 }
 
+async function updateUserClinics(token: string, clinicIds: string[]) {
+  const response = await fetch(`${API_BASE_URL}/api/access/users/me/clinics`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify({ clinicIds })
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.message ?? "Não foi possível atualizar as clínicas.");
+  }
+
+  return response.json();
+}
+
+async function fetchAvailableClinics(token: string) {
+  const response = await fetch(`${API_BASE_URL}/api/access/users/clinic-options`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.message ?? "Não foi possível carregar as clínicas.");
+  }
+
+  return response.json() as Promise<Clinic[]>;
+}
+
 export default function MeuPerfilPage() {
   const { clinics, hasPermission, refreshProfile, token, user } = useAuth();
   const [form, setForm] = useState<ProfileForm>({ login: "", name: "", email: "", professionalArea: "", professionalCouncil: "", professionalRegistration: "", professionalCouncilState: "", professionalSpecialty: "", password: "" });
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [availableClinics, setAvailableClinics] = useState<Clinic[]>([]);
+  const [clinicIds, setClinicIds] = useState<string[]>([]);
+  const [isSavingClinics, setIsSavingClinics] = useState(false);
   const canViewMedicalInfo = hasPermission("profile.medical_info.read");
+  const canManageUserClinics = hasPermission("access.users.clinics.manage");
   const accessibleClinics = clinics.filter((clinic) => clinic.status === "ACTIVE");
 
   useEffect(() => {
@@ -93,6 +135,32 @@ export default function MeuPerfilPage() {
     });
   }, [user]);
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setClinicIds(clinics.filter((clinic) => clinic.status === "ACTIVE").map((clinic) => clinic.id));
+  }, [clinics]);
+
+  useEffect(() => {
+    if (!token || !canManageUserClinics) return;
+
+    let isCurrent = true;
+    fetchAvailableClinics(token).then((nextClinics) => {
+      if (isCurrent) setAvailableClinics(nextClinics);
+    }).catch((caughtError) => {
+      if (isCurrent) setError(caughtError instanceof Error ? caughtError.message : "Não foi possível carregar as clínicas.");
+    });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [canManageUserClinics, token]);
+
+  function toggleClinic(clinicId: string) {
+    setClinicIds((currentClinicIds) => currentClinicIds.includes(clinicId)
+      ? currentClinicIds.filter((currentClinicId) => currentClinicId !== clinicId)
+      : [...currentClinicIds, clinicId]);
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!token) return;
@@ -109,6 +177,23 @@ export default function MeuPerfilPage() {
       setError(caughtError instanceof Error ? caughtError.message : "Não foi possível atualizar o perfil.");
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function handleSaveClinics() {
+    if (!token || !canManageUserClinics) return;
+    setMessage(null);
+    setError(null);
+    setIsSavingClinics(true);
+
+    try {
+      await updateUserClinics(token, clinicIds);
+      await refreshProfile();
+      setMessage("Clínicas com acesso atualizadas.");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Não foi possível atualizar as clínicas.");
+    } finally {
+      setIsSavingClinics(false);
     }
   }
 
@@ -134,14 +219,30 @@ export default function MeuPerfilPage() {
               <label><span>Login</span><input autoComplete="username" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, login: event.target.value }))} required value={form.login} /></label>
               <label><span>Nome completo</span><input autoComplete="name" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required value={form.name} /></label>
               <label><span>Email</span><input autoComplete="email" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} type="email" value={form.email} /></label>
-              <div className="profile-readonly-field">
-                <span>Clínicas com acesso</span>
-                <div className="access-checklist compact-checklist">
-                  {accessibleClinics.length > 0 ? accessibleClinics.map((clinic) => (
-                    <span className="choice-pill" key={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</span>
-                  )) : <span>Nenhuma clínica vinculada.</span>}
+              {canManageUserClinics ? (
+                <fieldset className="clinic-scope-picker">
+                  <legend>Clínicas com acesso</legend>
+                  <div className="access-checklist">
+                    {availableClinics.map((clinic) => (
+                      <label className="choice-pill" key={clinic.id} title={clinic.code ?? clinic.name}>
+                        <input checked={clinicIds.includes(clinic.id)} disabled={isSavingClinics} onChange={() => toggleClinic(clinic.id)} type="checkbox" />
+                        {clinic.name}{clinic.code ? ` (${clinic.code})` : ""}
+                      </label>
+                    ))}
+                    {availableClinics.length === 0 ? <span>Nenhuma clínica ativa encontrada.</span> : null}
+                  </div>
+                  <button className="secondary-button" disabled={isSavingClinics} onClick={handleSaveClinics} type="button"><Save aria-hidden="true" size={17} />{isSavingClinics ? "Salvando..." : "Salvar clínicas"}</button>
+                </fieldset>
+              ) : (
+                <div className="profile-readonly-field">
+                  <span>Clínicas com acesso</span>
+                  <div className="access-checklist compact-checklist">
+                    {accessibleClinics.length > 0 ? accessibleClinics.map((clinic) => (
+                      <span className="choice-pill" key={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</span>
+                    )) : <span>Nenhuma clínica vinculada.</span>}
+                  </div>
                 </div>
-              </div>
+              )}
               {shouldShowProfessionalArea(user?.userType, canViewMedicalInfo) ? <label><span>Área profissional</span><select disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, professionalArea: event.target.value }))} value={form.professionalArea}>
                 <option value="">Selecione</option>
                 {professionalAreaOptions.map((area) => <option key={area} value={area}>{area}</option>)}

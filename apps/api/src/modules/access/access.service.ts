@@ -10,7 +10,6 @@ import { ListAccessAuditLogsQueryDto } from "./dto/list-access-audit-logs-query.
 import { ListAccessGroupsQueryDto } from "./dto/list-access-groups-query.dto";
 import { ListAccessUsersQueryDto } from "./dto/list-access-users-query.dto";
 import { ListPasswordChangeRequestsQueryDto } from "./dto/list-password-change-requests-query.dto";
-import { UpdateGroupClinicsDto } from "./dto/update-group-clinics.dto";
 import { UpdateGroupPermissionsDto } from "./dto/update-group-permissions.dto";
 import { UpdateUserClinicsDto } from "./dto/update-user-clinics.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
@@ -26,6 +25,14 @@ export class AccessService {
 
   listPermissions() {
     return this.cache.getOrSet("access:permissions", 5 * 60 * 1000, () => this.prisma.permission.findMany({ orderBy: [{ module: "asc" }, { action: "asc" }] }));
+  }
+
+  listActiveClinics() {
+    return this.cache.getOrSet("access:clinic-options", 60 * 1000, () => this.prisma.clinic.findMany({
+      where: { status: "ACTIVE" },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, code: true, document: true, status: true }
+    }));
   }
 
   listAuditLogs(query: ListAccessAuditLogsQueryDto = {}, user?: AuthenticatedUser) {
@@ -115,7 +122,7 @@ export class AccessService {
           where,
           orderBy: { name: "asc" },
           take: limit,
-          include: { permissions: { include: { permission: true } }, users: true, clinics: { include: { clinic: true } } }
+          include: { permissions: { include: { permission: true } }, users: true }
         }),
         this.prisma.accessGroup.count({ where })
       ]);
@@ -172,22 +179,9 @@ export class AccessService {
       await this.setGroupPermissions(group.id, dto.permissionKeys);
     }
 
-    if (dto.clinicIds?.length) {
-      await this.setGroupClinics(group.id, dto.clinicIds);
-    }
-
     this.invalidateAccessCaches();
     const nextGroup = await this.getGroup(group.id);
     await this.createAccessAuditLog("access_group", group.id, "create_group", actorUserId, null, nextGroup, `Grupo criado: ${nextGroup.name}`);
-    return nextGroup;
-  }
-
-  async updateGroupClinics(groupId: string, dto: UpdateGroupClinicsDto, actorUserId?: string) {
-    const previousGroup = await this.getGroup(groupId);
-    await this.setGroupClinics(groupId, dto.clinicIds);
-    this.invalidateAccessCaches();
-    const nextGroup = await this.getGroup(groupId);
-    await this.createAccessAuditLog("access_group", groupId, "update_group_clinics", actorUserId, previousGroup, nextGroup, `Clínicas atualizadas: ${nextGroup.name}`);
     return nextGroup;
   }
 
@@ -221,7 +215,7 @@ export class AccessService {
     }
 
     if (clinicId) {
-      filters.push({ groups: { some: { accessGroup: { clinics: { some: { clinicId } } } } } });
+      filters.push({ clinics: { some: { clinicId, status: "ACTIVE" } } });
     }
 
     const where: Prisma.UserWhereInput = {
@@ -285,6 +279,10 @@ export class AccessService {
       await this.setUserGroups(user.id, dto.groupIds);
     }
 
+    if (dto.clinicIds?.length) {
+      await this.setUserClinics(user.id, dto.clinicIds);
+    }
+
     this.invalidateAccessCaches(user.id);
     const nextUser = await this.getUser(user.id);
     await this.createAccessAuditLog("access_user", user.id, "create_user", actorUserId, null, nextUser, `Usuário criado: ${nextUser.name}`);
@@ -301,10 +299,21 @@ export class AccessService {
   }
 
   async updateUserClinics(userId: string, dto: UpdateUserClinicsDto, actorUserId?: string) {
-    void userId;
-    void dto;
-    void actorUserId;
-    throw new BadRequestException("O acesso a clínicas do usuário é definido exclusivamente pelos grupos de acesso.");
+    const previousUser = await this.getUser(userId);
+
+    if (previousUser.status === "ACTIVE" && dto.clinicIds.length === 0) {
+      throw new BadRequestException("Um usuário ativo precisa ter ao menos uma clínica vinculada.");
+    }
+
+    await this.setUserClinics(
+      userId,
+      dto.clinicIds,
+      previousUser.clinics.find((clinic) => clinic.isDefault)?.clinicId
+    );
+    this.invalidateAccessCaches(userId);
+    const nextUser = await this.getUser(userId);
+    await this.createAccessAuditLog("access_user", userId, "update_user_clinics", actorUserId, previousUser, nextUser, `Clínicas atualizadas: ${nextUser.name}`);
+    return nextUser;
   }
 
   async updateUser(userId: string, dto: UpdateUserDto, actorUserId?: string) {
@@ -371,7 +380,7 @@ export class AccessService {
   private async getGroup(groupId: string) {
     const group = await this.prisma.accessGroup.findUnique({
       where: { id: groupId },
-      include: { permissions: { include: { permission: true } }, users: true, clinics: { include: { clinic: true } } }
+      include: { permissions: { include: { permission: true } }, users: true }
     });
 
     if (!group) throw new NotFoundException("Grupo de acesso não encontrado.");
@@ -573,7 +582,7 @@ export class AccessService {
     ]);
   }
 
-  private async setGroupClinics(groupId: string, clinicIds: string[]) {
+  private async setUserClinics(userId: string, clinicIds: string[], currentDefaultClinicId?: string) {
     const uniqueClinicIds = [...new Set(clinicIds.filter((clinicId) => clinicId.trim().length > 0))];
     const clinics = await this.prisma.clinic.findMany({ where: { id: { in: uniqueClinicIds }, status: "ACTIVE" }, select: { id: true } });
 
@@ -581,9 +590,15 @@ export class AccessService {
       throw new BadRequestException("Uma ou mais clínicas informadas não foram encontradas ou estão inativas.");
     }
 
+    const defaultClinicId = currentDefaultClinicId && uniqueClinicIds.includes(currentDefaultClinicId)
+      ? currentDefaultClinicId
+      : uniqueClinicIds[0];
+
     await this.prisma.$transaction([
-      this.prisma.accessGroupClinic.deleteMany({ where: { accessGroupId: groupId } }),
-      ...uniqueClinicIds.map((clinicId) => this.prisma.accessGroupClinic.create({ data: { accessGroupId: groupId, clinicId } }))
+      this.prisma.userClinic.deleteMany({ where: { userId } }),
+      ...uniqueClinicIds.map((clinicId) => this.prisma.userClinic.create({
+        data: { userId, clinicId, status: "ACTIVE", isDefault: clinicId === defaultClinicId }
+      }))
     ]);
   }
 
@@ -598,21 +613,14 @@ export class AccessService {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
-        groups: {
-          where: { accessGroup: { active: true } },
-          select: {
-            accessGroup: {
-              select: { clinics: { where: { clinic: { status: "ACTIVE" } }, select: { clinicId: true }, take: 1 } }
-            }
-          }
-        }
+        clinics: { where: { status: "ACTIVE", clinic: { status: "ACTIVE" } }, select: { clinicId: true }, take: 1 }
       }
     });
 
-    const hasGroupClinic = user?.groups.some((group) => group.accessGroup.clinics.length > 0) ?? false;
+    const hasUserClinic = (user?.clinics.length ?? 0) > 0;
 
-    if (!hasGroupClinic) {
-      throw new BadRequestException("Vincule ao menos uma clínica a um dos grupos do usuário antes de ativar o cadastro.");
+    if (!hasUserClinic) {
+      throw new BadRequestException("Vincule ao menos uma clínica ao usuário antes de ativar o cadastro.");
     }
   }
 }

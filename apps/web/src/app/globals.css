@@ -476,6 +476,88 @@ button:disabled {
   padding: 26px;
 }
 
+.session-header {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+}
+
+.session-user {
+  align-items: center;
+  color: var(--primary-strong);
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.session-user div {
+  display: grid;
+  gap: 1px;
+}
+
+.session-user span,
+.session-clinics-label {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.session-user strong {
+  color: var(--text);
+  font-size: 0.94rem;
+}
+
+.session-clinics {
+  align-items: center;
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.session-clinics-label {
+  align-items: center;
+  display: inline-flex;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.session-clinic-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.session-clinic-chip {
+  background: var(--primary-soft);
+  border: 1px solid #a8d7ca;
+  border-radius: 999px;
+  color: var(--primary-strong);
+  font-size: 0.82rem;
+  font-weight: 700;
+  max-width: 260px;
+  overflow: hidden;
+  padding: 5px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-clinic-empty {
+  color: var(--danger);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
 .topbar {
   align-items: center;
   display: flex;
@@ -2528,6 +2610,27 @@ td input {
   width: auto;
 }
 
+.user-clinic-assignment-card {
+  gap: 14px;
+}
+
+.user-clinic-assignment-meta {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  gap: 6px;
+  margin: 0;
+}
+
+.user-clinic-assignment-card .clinic-scope-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.user-clinic-save-button {
+  justify-self: start;
+}
+
 .user-status-toggle {
   color: var(--primary-strong);
 }
@@ -3029,6 +3132,90 @@ td input {
   grid-column: 1 / -1;
 }
 
+.patient-files-form {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+}
+
+.patient-files-form-heading,
+.patient-file-current,
+.patient-file-detail-item {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.patient-files-form-heading h4 {
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+.patient-files-form-heading p,
+.patient-file-form-item small,
+.patient-file-current,
+.patient-file-detail-item span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.patient-files-form-heading p {
+  margin: 4px 0 0;
+}
+
+.patient-files-form-list {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.patient-file-form-item {
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.patient-file-form-item input[type="file"] {
+  font-size: 0.78rem;
+  max-width: 100%;
+}
+
+.patient-file-current {
+  align-items: flex-start;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.patient-file-current span,
+.patient-file-detail-item span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.patient-files-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.patient-file-detail-list {
+  border-top: 1px solid var(--line);
+}
+
+.patient-file-detail-item {
+  border-bottom: 1px solid var(--line);
+  padding: 11px 0;
+}
+
+.patient-file-detail-item > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
 .patient-detail-page {
   display: grid;
   gap: 18px;
@@ -3267,9 +3454,15 @@ td input {
   .workflow-heading,
   .template-context,
   .action-bar,
-  .access-section-title-row {
+  .access-section-title-row,
+  .session-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .session-clinics,
+  .session-clinic-list {
+    justify-content: flex-start;
   }
 
   .filter-actions-row,
@@ -3322,6 +3515,16 @@ td input {
 
   .patient-create-fields {
     grid-template-columns: 1fr;
+  }
+
+  .patient-files-form-list {
+    grid-template-columns: 1fr;
+  }
+
+  .patient-file-current,
+  .patient-file-detail-item {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .evolution-form-grid {
