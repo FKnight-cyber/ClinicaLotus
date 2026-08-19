@@ -2612,6 +2612,36 @@ td input {
 
 .user-clinic-assignment-card {
   gap: 14px;
+  min-width: 0;
+}
+
+.user-clinic-assignment-list {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  min-width: 0;
+}
+
+.user-clinic-assignment-card .user-card-heading {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.user-clinic-assignment-card .user-status-badge {
+  justify-self: start;
+}
+
+.user-clinic-assignment-card .user-card-identity strong,
+.user-clinic-assignment-card .user-card-identity span,
+.user-clinic-assignment-meta {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.user-clinic-assignment-card .access-checklist {
+  min-width: 0;
+}
+
+.user-clinic-assignment-card .choice-pill {
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .user-clinic-assignment-meta {
