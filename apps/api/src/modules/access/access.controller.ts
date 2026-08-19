@@ -87,6 +87,12 @@ export class AccessController {
     return this.accessService.updateGroupPermissions(groupId, dto, request.user?.id);
   }
 
+  @Delete("groups/:groupId")
+  @RequirePermissions("access.groups.manage")
+  deleteGroup(@Param("groupId") groupId: string, @Req() request: { user?: AuthenticatedUser }) {
+    return this.accessService.deleteGroup(groupId, request.user?.id);
+  }
+
   @Get("users")
   @RequirePermissions("access.users.read")
   listUsers(@Query() query: ListAccessUsersQueryDto) {

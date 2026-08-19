@@ -2351,6 +2351,11 @@ td input {
   pointer-events: none;
 }
 
+.group-directory-row {
+  min-width: 0;
+  position: relative;
+}
+
 .group-directory-item {
   background: #ffffff;
   border: 1px solid var(--line);
@@ -2358,8 +2363,37 @@ td input {
   color: var(--text);
   display: grid;
   gap: 4px;
-  padding: 12px;
+  padding: 12px 52px 12px 12px;
   text-align: left;
+  width: 100%;
+}
+
+.group-directory-delete-button {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--danger);
+  display: inline-flex;
+  height: 30px;
+  justify-content: center;
+  min-height: 30px;
+  min-width: 30px;
+  padding: 0;
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  width: 30px;
+}
+
+.group-directory-delete-button:hover:not(:disabled) {
+  background: #fff1f1;
+  border-color: #efaaa3;
+}
+
+.group-directory-delete-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .group-directory-item.is-selected {

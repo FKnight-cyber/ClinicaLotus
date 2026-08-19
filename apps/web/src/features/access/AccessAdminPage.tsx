@@ -307,6 +307,7 @@ async function apiRequest<T>(token: string, path: string, options: RequestInit =
 export function AccessGroupsPage() {
   const { hasPermission, token } = useAuth();
   const canManageGroups = hasPermission("access.groups.manage");
+  const canDeleteGroups = hasPermission("admin.full_access");
   const permissionsCacheRef = useRef<Permission[] | null>(null);
   const groupsCacheRef = useRef(new Map<string, PaginatedAccessGroups>());
   const [permissions, setPermissions] = useState<Permission[]>([]);
@@ -324,6 +325,8 @@ export function AccessGroupsPage() {
   const [isGroupsLoading, setIsGroupsLoading] = useState(true);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [savingGroupId, setSavingGroupId] = useState<string | null>(null);
+  const [deleteGroupConfirmation, setDeleteGroupConfirmation] = useState<AccessGroup | null>(null);
+  const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null);
 
   const permissionsByModule = useMemo(() => {
     return permissions.reduce<Record<string, Permission[]>>((accumulator, permission) => {
@@ -473,6 +476,27 @@ export function AccessGroupsPage() {
     });
   };
 
+  const handleConfirmDeleteGroup = async () => {
+    if (!token || !deleteGroupConfirmation || !canDeleteGroups) return;
+
+    const group = deleteGroupConfirmation;
+    setDeletingGroupId(group.id);
+    setIsGroupsLoading(true);
+
+    try {
+      await apiRequest<{ id: string }>(token, `/api/access/groups/${group.id}`, { method: "DELETE" });
+      groupsCacheRef.current.clear();
+      setDeleteGroupConfirmation(null);
+      setStatusMessage(`Grupo ${group.name} excluído permanentemente.`);
+      await loadAccessData(groupLimit, groupSearch);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Não foi possível excluir o grupo.");
+    } finally {
+      setDeletingGroupId(null);
+      setIsGroupsLoading(false);
+    }
+  };
+
   if (!hasPermission("access.groups.read")) {
     return (
       <section className="placeholder-page">
@@ -535,11 +559,18 @@ export function AccessGroupsPage() {
               const isSelected = selectedGroup?.id === group.id;
 
               return (
-                <button className={`group-directory-item ${isSelected ? "is-selected" : ""}`} key={group.id} onClick={() => setSelectedGroupId(group.id)} type="button">
-                  <strong>{group.name}</strong>
-                  <span>{group.description || "Sem descrição"}</span>
-                  <small>{permissionCount} permissões</small>
-                </button>
+                <div className="group-directory-row" key={group.id}>
+                  <button className={`group-directory-item ${isSelected ? "is-selected" : ""}`} onClick={() => setSelectedGroupId(group.id)} type="button">
+                    <strong>{group.name}</strong>
+                    <span>{group.description || "Sem descrição"}</span>
+                    <small>{permissionCount} permissões</small>
+                  </button>
+                  {canDeleteGroups ? (
+                    <button aria-label={`Excluir grupo ${group.name}`} className="group-directory-delete-button" disabled={deletingGroupId === group.id} onClick={() => setDeleteGroupConfirmation(group)} title="Excluir grupo" type="button">
+                      <X aria-hidden="true" size={17} />
+                    </button>
+                  ) : null}
+                </div>
               );
             })}
             {groups.length === 0 ? <div className="empty-state">Nenhum grupo encontrado.</div> : null}
@@ -566,6 +597,14 @@ export function AccessGroupsPage() {
           ) : null}
         </section>
       </div>
+      {deleteGroupConfirmation ? (
+        <GroupDeleteConfirmationModal
+          group={deleteGroupConfirmation}
+          isSaving={deletingGroupId === deleteGroupConfirmation.id}
+          onCancel={() => setDeleteGroupConfirmation(null)}
+          onConfirm={handleConfirmDeleteGroup}
+        />
+      ) : null}
     </section>
   );
 }
@@ -1366,6 +1405,38 @@ function UserDeleteConfirmationModal({
         <div className="confirmation-modal-actions">
           <button className="secondary-button" disabled={isSaving} onClick={onCancel} type="button">Cancelar</button>
           <button className="danger-button" disabled={isSaving} onClick={onConfirm} type="button">{isSaving ? "Excluindo..." : "Excluir usuário"}</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function GroupDeleteConfirmationModal({
+  group,
+  isSaving,
+  onCancel,
+  onConfirm
+}: {
+  group: AccessGroup;
+  isSaving: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="confirmation-modal-layer" role="presentation">
+      <button aria-label="Cancelar exclusão de grupo" className="confirmation-modal-backdrop" disabled={isSaving} onClick={onCancel} type="button" />
+      <section aria-labelledby="group-delete-confirmation-title" aria-modal="true" className="confirmation-modal-panel" role="dialog">
+        <div className="confirmation-modal-heading">
+          <span className="confirmation-modal-icon is-danger"><XCircle aria-hidden="true" size={20} /></span>
+          <div>
+            <span className="eyebrow">Confirmação obrigatória</span>
+            <h3 id="group-delete-confirmation-title">Excluir grupo permanentemente?</h3>
+          </div>
+        </div>
+        <p>Esta ação remove permanentemente o grupo {group.name}, suas permissões e seus vínculos com usuários. Os usuários continuarão cadastrados, mas perderão os acessos concedidos por este grupo. O histórico de auditoria será preservado.</p>
+        <div className="confirmation-modal-actions">
+          <button className="secondary-button" disabled={isSaving} onClick={onCancel} type="button">Cancelar</button>
+          <button className="danger-button" disabled={isSaving} onClick={onConfirm} type="button">{isSaving ? "Excluindo..." : "Excluir grupo"}</button>
         </div>
       </section>
     </div>

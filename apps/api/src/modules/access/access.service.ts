@@ -171,9 +171,23 @@ export class AccessService {
   }
 
   async createGroup(dto: CreateAccessGroupDto, actorUserId?: string) {
-    const group = await this.prisma.accessGroup.create({
-      data: { name: dto.name, description: dto.description, active: true }
-    });
+    const name = dto.name.trim();
+    const existingGroup = await this.prisma.accessGroup.findUnique({ where: { name }, select: { id: true } });
+    if (existingGroup) {
+      throw new BadRequestException("Já existe um grupo com este nome.");
+    }
+
+    let group;
+    try {
+      group = await this.prisma.accessGroup.create({
+        data: { name, description: dto.description?.trim() || null, active: true }
+      });
+    } catch (error) {
+      if (this.isUniqueConstraintError(error)) {
+        throw new BadRequestException("Já existe um grupo com este nome.");
+      }
+      throw error;
+    }
 
     if (dto.permissionKeys?.length) {
       await this.setGroupPermissions(group.id, dto.permissionKeys);
@@ -192,6 +206,15 @@ export class AccessService {
     const nextGroup = await this.getGroup(groupId);
     await this.createAccessAuditLog("access_group", groupId, "update_group_permissions", actorUserId, previousGroup, nextGroup, `Permissões atualizadas: ${nextGroup.name}`);
     return nextGroup;
+  }
+
+  async deleteGroup(groupId: string, actorUserId?: string) {
+    const previousGroup = await this.getGroup(groupId);
+
+    await this.prisma.accessGroup.delete({ where: { id: groupId } });
+    this.invalidateAccessCaches();
+    await this.createAccessAuditLog("access_group", groupId, "delete_group", actorUserId, previousGroup, null, `Grupo excluído permanentemente: ${previousGroup.name}`);
+    return { id: groupId };
   }
 
   listUsers(query: ListAccessUsersQueryDto = {}) {
@@ -572,6 +595,10 @@ export class AccessService {
       }
     });
     this.cache.deleteByPrefix("access:audit-logs:");
+  }
+
+  private isUniqueConstraintError(error: unknown) {
+    return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
   }
 
   private async setGroupPermissions(groupId: string, permissionKeys: string[]) {
