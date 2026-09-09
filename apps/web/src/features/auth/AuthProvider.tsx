@@ -95,23 +95,42 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
   }, []);
 
   useEffect(() => {
-    const storedSession = localStorage.getItem(AUTH_STORAGE_KEY);
+    let storedSession: string | null = null;
+    try {
+      storedSession = localStorage.getItem(AUTH_STORAGE_KEY);
+    } catch {
+      storedSession = null;
+    }
+
     if (!storedSession) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setStatus("anonymous");
       return;
     }
 
-    const parsedSession = JSON.parse(storedSession) as StoredSession;
-    setToken(parsedSession.accessToken);
-    setUser(parsedSession.user);
-    setClinics(parsedSession.clinics ?? []);
+    let parsedSession: StoredSession | null = null;
+    try {
+      parsedSession = JSON.parse(storedSession) as StoredSession;
+    } catch {
+      clearSession();
+      return;
+    }
+
+    if (!parsedSession?.accessToken) {
+      clearSession();
+      return;
+    }
+
+    const session = parsedSession;
+    setToken(session.accessToken);
+    setUser(session.user);
+    setClinics(session.clinics ?? []);
 
     requestJson<AuthUser & { clinics?: AuthClinic[] }>("/api/auth/me", {
-      headers: { Authorization: `Bearer ${parsedSession.accessToken}` }
+      headers: { Authorization: `Bearer ${session.accessToken}` }
     })
       .then((profile) => {
-        persistSession(parsedSession.accessToken, profile, profile.clinics ?? []);
+        persistSession(session.accessToken, profile, profile.clinics ?? []);
       })
       .catch(() => clearSession());
   }, [clearSession, persistSession]);

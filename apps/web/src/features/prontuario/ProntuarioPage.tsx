@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Eye, FilePenLine, Plus, Printer, Save, Search, UserRound, X, XCircle } from "lucide-react";
+import { ButtonSpinner } from "@/components/feedback/ButtonSpinner";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { downloadMedicalEvolutionPdf } from "./medicalEvolutionPdf";
 import { cancelMedicalEvolution, createMedicalEvolution, emitMedicalEvolutionPdfDocument, fetchMedicalEvolution, fetchMedicalEvolutions, fetchProntuarioPatients, finalizeMedicalEvolution, updateMedicalEvolution } from "./prontuarioStorage";
@@ -486,7 +487,7 @@ export function ProntuarioPage() {
                     <td>
                       <div className="evolution-table-actions">
                         <button className="table-action" onClick={() => editEvolution(evolution)} type="button">{evolution.status === "draft" && canUpdateEvolutions ? <FilePenLine aria-hidden="true" size={15} /> : <Eye aria-hidden="true" size={15} />}{evolution.status === "draft" && canUpdateEvolutions ? "Editar" : "Visualizar"}</button>
-                        {evolution.status === "draft" && canFinalizeEvolutions ? <button className="table-action is-primary" disabled={finalizingEvolutionId === evolution.id} onClick={() => void finalizeEvolution(evolution)} type="button"><CheckCircle2 aria-hidden="true" size={15} />Finalizar</button> : null}
+                        {evolution.status === "draft" && canFinalizeEvolutions ? <button className="table-action is-primary" disabled={finalizingEvolutionId === evolution.id} onClick={() => void finalizeEvolution(evolution)} type="button">{finalizingEvolutionId === evolution.id ? <ButtonSpinner label="Finalizando" /> : <><CheckCircle2 aria-hidden="true" size={15} />Finalizar</>}</button> : null}
                         {evolution.status === "finalized" && canPrintEvolutions ? <button className="table-action" disabled={printingEvolutionId === evolution.id} onClick={() => void downloadEvolutionPdf(evolution)} type="button"><Printer aria-hidden="true" size={15} />PDF</button> : null}
                         {evolution.status === "draft" && canCancelEvolutions ? <button className="table-action is-danger" disabled={cancelingEvolutionId === evolution.id} onClick={() => { setPendingCancelEvolutionId(evolution.id); setCancelReason(""); }} type="button"><XCircle aria-hidden="true" size={15} />Cancelar</button> : null}
                       </div>
@@ -559,7 +560,7 @@ export function ProntuarioPage() {
                 <span>{savingEvolution ? "Salvando evolução..." : evolutionMessage}</span>
                 <div>
                   {canEditEvolutionForm ? <button className="secondary-button" disabled={savingEvolution || !hasEvolutionFormContent} onClick={() => setForm(emptyFormState)} type="button">Limpar</button> : null}
-                  {canEditEvolutionForm ? <button className="primary-button" disabled={!canSaveEvolution} type="submit"><Save aria-hidden="true" size={16} />{savingEvolution ? "Salvando..." : "Salvar rascunho"}</button> : null}
+                  {canEditEvolutionForm ? <button className="primary-button" disabled={!canSaveEvolution} type="submit">{savingEvolution ? <ButtonSpinner label="Salvando" /> : <><Save aria-hidden="true" size={16} />Salvar rascunho</>}</button> : null}
                 </div>
               </div>
             </form>

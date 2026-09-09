@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowDownUp, ArrowUp, CircleAlert, ChevronLeft, ChevronRight, Edit3, Eye, Paperclip, Plus, ToggleLeft, ToggleRight, Trash2, UserRound, X } from "lucide-react";
+import { ArrowDown, ArrowDownUp, ArrowUp, CircleAlert, ChevronLeft, ChevronRight, Edit3, Eye, Paperclip, Plus, Search, ToggleLeft, ToggleRight, Trash2, UserRound, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ClearFiltersButton, FilterButton } from "@/components/filters/FilterActionButtons";
 import { invalidateAnamneseCachesForPatientTransfer } from "@/features/anamnese/storage";
@@ -165,7 +165,7 @@ function normalizePatientSortDirection(value: unknown): PatientSortDirection {
 }
 
 function readStoredPatientFilters() {
-  const defaultFilters: StoredPatientFilters = { clinicId: "", search: "", status: "ACTIVE", admissionDate: "", dischargeDate: "", limit: DEFAULT_PATIENT_LIMIT, sortBy: "name", sortDirection: "desc" };
+  const defaultFilters: StoredPatientFilters = { clinicId: "", search: "", status: "ACTIVE", admissionDate: "", dischargeDate: "", limit: DEFAULT_PATIENT_LIMIT, sortBy: "name", sortDirection: "asc" };
   if (typeof window === "undefined") return defaultFilters;
 
   try {
@@ -202,6 +202,9 @@ function buildPatientsPath(limit: number, offset: number, search: string, status
   if (dischargeDate) params.set("dischargeDate", dischargeDate);
   if (sortBy === "admissionDate") {
     params.set("sortBy", sortBy);
+    params.set("sortDirection", sortDirection);
+  } else {
+    params.set("sortBy", "name");
     params.set("sortDirection", sortDirection);
   }
   params.set("status", status || "ALL");
@@ -512,6 +515,16 @@ export function PacientesPage() {
     setPatientPage(1);
   };
 
+  const handleNameSort = () => {
+    if (patientSortBy === "name") {
+      setPatientSortDirection((currentDirection) => currentDirection === "asc" ? "desc" : "asc");
+    } else {
+      setPatientSortBy("name");
+      setPatientSortDirection("asc");
+    }
+    setPatientPage(1);
+  };
+
   const handleClearPatientFilters = () => {
     setPatientSearch("");
     setDebouncedPatientSearch("");
@@ -711,9 +724,20 @@ export function PacientesPage() {
       {isLoading ? <div className="loading-panel">Carregando pacientes...</div> : null}
 
       <div className="list-toolbar">
-        <div className="filter-actions-row">
-          <FilterButton activeCount={activePatientFilterCount} onClick={handleOpenPatientFilters} />
-          <ClearFiltersButton disabled={!hasActivePatientFilters} onClick={handleClearPatientFilters} />
+        <div className="filter-actions-stack">
+          <div className="filter-name-search">
+            <Search aria-hidden="true" size={16} />
+            <input
+              aria-label="Buscar por nome do paciente"
+              onChange={(event) => setPatientSearch(event.target.value)}
+              placeholder="Buscar por nome do paciente"
+              value={patientSearch}
+            />
+          </div>
+          <div className="filter-actions-row">
+            <FilterButton activeCount={activePatientFilterCount} onClick={handleOpenPatientFilters} />
+            <ClearFiltersButton disabled={!hasActivePatientFilters} onClick={handleClearPatientFilters} />
+          </div>
         </div>
         <span>{isPatientsLoading ? "Atualizando pacientes..." : `${patients.length} de ${patientTotal} pacientes exibidos`}</span>
       </div>
@@ -786,7 +810,12 @@ export function PacientesPage() {
         <table className="records-table patients-table">
           <thead>
             <tr>
-              <th>Paciente</th>
+              <th aria-sort={patientSortBy === "name" ? patientSortDirection === "asc" ? "ascending" : "descending" : "none"}>
+                <button aria-label={`Ordenar por nome: ${patientSortBy === "name" && patientSortDirection === "desc" ? "Z a A" : "A a Z"}`} className="table-sort-button" onClick={handleNameSort} title="Ordenar por nome" type="button">
+                  Paciente
+                  {patientSortBy !== "name" ? <ArrowDownUp aria-hidden="true" size={15} /> : patientSortDirection === "desc" ? <ArrowDown aria-hidden="true" size={15} /> : <ArrowUp aria-hidden="true" size={15} />}
+                </button>
+              </th>
               <th>Clínica</th>
               <th aria-sort={patientSortBy === "admissionDate" ? patientSortDirection === "asc" ? "ascending" : "descending" : "none"}>
                 <button aria-label={`Ordenar por data de admissão: ${patientSortBy === "admissionDate" && patientSortDirection === "desc" ? "mais antiga primeiro" : "mais recente primeiro"}`} className="table-sort-button" onClick={handleAdmissionSort} title="Ordenar por data de admissão" type="button">

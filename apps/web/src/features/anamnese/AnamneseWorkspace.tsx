@@ -4,6 +4,8 @@ import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, Circle
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { ButtonSpinner } from "@/components/feedback/ButtonSpinner";
+import { createId } from "@/lib/uuid";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { downloadMedicalEvolutionPdf } from "@/features/prontuario/medicalEvolutionPdf";
 import { emitMedicalEvolutionPdfDocument, fetchMedicalEvolution, fetchMedicalEvolutions } from "@/features/prontuario/prontuarioStorage";
@@ -24,7 +26,7 @@ function createEmptyRecord(): AnamneseRecord {
   const now = new Date().toISOString();
 
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     code: `ANA-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
     status: "draft",
     createdAt: now,
@@ -559,6 +561,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [message, setMessage] = useState("Carregando anamnese do banco...");
   const [isCreatingRecord, setIsCreatingRecord] = useState(false);
+  const [savingAction, setSavingAction] = useState<"draft" | "finalized" | "complete-template" | null>(null);
   const [newQuestionLabel, setNewQuestionLabel] = useState("");
   const [newQuestionType, setNewQuestionType] = useState<CustomQuestionType>("textarea");
   const [isMultiChoiceModalOpen, setIsMultiChoiceModalOpen] = useState(false);
@@ -798,7 +801,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
   }
 
   async function saveRecord(status: "draft" | "finalized") {
-    if (!token) return;
+    if (!token || savingAction) return;
     if (status === "draft" && !canUpdateAnamnese) return;
     if (status === "finalized" && !canFinalizeAnamnese) return;
     if (autosaveTimerRef.current) {
@@ -817,16 +820,23 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
       return;
     }
 
+    setSavingAction(status);
     setMessage(status === "finalized" ? "Salvando e finalizando anamnese..." : "Salvando rascunho no banco...");
-    const savedRecord = await persistDraft(loadedRecord);
-    const nextRecord = status === "finalized" ? await finalizeAnamneseRecord(token, savedRecord.id, clinicId) : savedRecord;
-    lastSavedSnapshotRef.current = getRecordSnapshot(nextRecord);
-    setCurrentRecord(nextRecord);
-    setMessage(status === "finalized" ? "Anamnese finalizada no banco" : "Rascunho salvo no banco");
+    try {
+      const savedRecord = await persistDraft(loadedRecord);
+      const nextRecord = status === "finalized" ? await finalizeAnamneseRecord(token, savedRecord.id, clinicId) : savedRecord;
+      lastSavedSnapshotRef.current = getRecordSnapshot(nextRecord);
+      setCurrentRecord(nextRecord);
+      setMessage(status === "finalized" ? "Anamnese finalizada no banco" : "Rascunho salvo no banco");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível salvar a anamnese.");
+    } finally {
+      setSavingAction(null);
+    }
   }
 
   async function completeActiveTemplate() {
-    if (!token || !canFinalizeAnamnese || loadedRecord.status === "finalized") return;
+    if (!token || !canFinalizeAnamnese || loadedRecord.status === "finalized" || savingAction) return;
     setIsTemplateCompletionConfirmOpen(false);
     if (autosaveTimerRef.current) {
       clearTimeout(autosaveTimerRef.current);
@@ -840,12 +850,19 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
       return;
     }
 
+    setSavingAction("complete-template");
     setMessage(`Concluindo ficha ${activeTemplate.shortTitle}...`);
-    const savedRecord = await persistDraft(loadedRecord);
-    const completedRecord = await completeAnamneseTemplate(token, savedRecord.id, activeTemplate.id, clinicId);
-    lastSavedSnapshotRef.current = getRecordSnapshot(completedRecord);
-    setCurrentRecord(completedRecord);
-    setMessage(`Ficha ${activeTemplate.shortTitle} concluída`);
+    try {
+      const savedRecord = await persistDraft(loadedRecord);
+      const completedRecord = await completeAnamneseTemplate(token, savedRecord.id, activeTemplate.id, clinicId);
+      lastSavedSnapshotRef.current = getRecordSnapshot(completedRecord);
+      setCurrentRecord(completedRecord);
+      setMessage(`Ficha ${activeTemplate.shortTitle} concluída`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível concluir a ficha.");
+    } finally {
+      setSavingAction(null);
+    }
   }
 
   async function startNewRecord() {
@@ -965,12 +982,12 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
     }
 
     const newField: FormField = {
-      id: `custom-${activeSection.id}-${crypto.randomUUID()}`,
+      id: `custom-${activeSection.id}-${createId()}`,
       label: normalizedLabel,
       type: newQuestionType,
       options: newQuestionType === "yesNo" ? yesNoOptions : newQuestionType === "multiChoice" ? parsedNewQuestionOptions : undefined,
       rows: newQuestionType === "table" ? parsedTableRows : undefined,
-      columns: newQuestionType === "table" ? parsedTableColumns.map((column) => ({ id: `custom-column-${crypto.randomUUID()}`, label: column })) : undefined,
+      columns: newQuestionType === "table" ? parsedTableColumns.map((column) => ({ id: `custom-column-${createId()}`, label: column })) : undefined,
       helper: newQuestionType === "yesNoDetails"
         ? "Pergunta personalizada com complemento quando a resposta for Sim."
         : newQuestionType === "multiChoice"
@@ -1213,7 +1230,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
     if (!normalizedTitle) return;
 
     const nextTemplate: TemplateConfigItem = {
-      id: `custom-template-${crypto.randomUUID()}`,
+      id: `custom-template-${createId()}`,
       title: normalizedTitle,
       shortTitle: normalizedTitle,
       description: "Ficha personalizada deste registro.",
@@ -1313,7 +1330,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
     if (!normalizedTitle) return;
 
     const nextSection: SectionConfigItem = {
-      id: `custom-section-${crypto.randomUUID()}`,
+      id: `custom-section-${createId()}`,
       title: normalizedTitle,
       description: undefined,
       sortOrder: getSectionConfigItems().length,
@@ -1857,8 +1874,8 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
                 </div>
                 <p>Ao concluir esta ficha, ela ficará bloqueada: não será mais possível editar respostas, adicionar perguntas, editar ou excluir itens desta ficha.</p>
                 <div className="confirmation-modal-actions">
-                  <button className="secondary-button" onClick={() => setIsTemplateCompletionConfirmOpen(false)} type="button">Cancelar</button>
-                  <button className="primary-button" onClick={() => { void completeActiveTemplate(); }} type="button">Concluir ficha</button>
+                  <button className="secondary-button" disabled={Boolean(savingAction)} onClick={() => setIsTemplateCompletionConfirmOpen(false)} type="button">Cancelar</button>
+                  <button className="primary-button" disabled={Boolean(savingAction)} onClick={() => { void completeActiveTemplate(); }} type="button">{savingAction === "complete-template" ? <ButtonSpinner label="Concluindo ficha" /> : "Concluir ficha"}</button>
                 </div>
               </section>
             </div>
@@ -1938,15 +1955,13 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
           <span>{message}</span>
           <div>
             {canCreateAnamnese ? (
-              <button className="secondary-button" disabled={isCreatingRecord} onClick={startNewRecord} type="button">
-                <Plus size={17} />
-                {isCreatingRecord ? "Criando..." : "Nova"}
+              <button className="secondary-button" disabled={isCreatingRecord || Boolean(savingAction)} onClick={startNewRecord} type="button">
+                {isCreatingRecord ? <ButtonSpinner label="Criando" /> : <><Plus size={17} />Nova</>}
               </button>
             ) : null}
             {canUpdateAnamnese && !isActiveTemplateCompleted ? (
-              <button className="secondary-button" disabled={loadedRecord.status === "finalized"} onClick={() => saveRecord("draft")} type="button">
-                <Save size={17} />
-                Salvar rascunho
+              <button className="secondary-button" disabled={loadedRecord.status === "finalized" || Boolean(savingAction)} onClick={() => saveRecord("draft")} type="button">
+                {savingAction === "draft" ? <ButtonSpinner label="Salvando rascunho" /> : <><Save size={17} />Salvar rascunho</>}
               </button>
             ) : null}
             {canPrintAnamnese ? (
@@ -1968,15 +1983,14 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
               </button>
             ) : null}
             {canFinalizeAnamnese && !isActiveTemplateCompleted ? (
-              <button className="secondary-button" disabled={loadedRecord.status === "finalized"} onClick={() => setIsTemplateCompletionConfirmOpen(true)} type="button">
+              <button className="secondary-button" disabled={loadedRecord.status === "finalized" || Boolean(savingAction)} onClick={() => setIsTemplateCompletionConfirmOpen(true)} type="button">
                 <CheckCircle2 size={17} />
                 Concluir ficha
               </button>
             ) : null}
             {canFinalizeAnamnese ? (
-              <button className="primary-button" disabled={loadedRecord.status === "finalized" || !allTemplatesCompleted} onClick={() => saveRecord("finalized")} type="button">
-                <FileCheck2 size={17} />
-                Finalizar completa
+              <button className="primary-button" disabled={loadedRecord.status === "finalized" || !allTemplatesCompleted || Boolean(savingAction)} onClick={() => saveRecord("finalized")} type="button">
+                {savingAction === "finalized" ? <ButtonSpinner label="Finalizando" /> : <><FileCheck2 size={17} />Finalizar completa</>}
               </button>
             ) : null}
           </div>

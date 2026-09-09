@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { CheckCircle2, UserPlus } from "lucide-react";
 import Link from "next/link";
 import { ClinicLogo } from "@/components/brand/ClinicLogo";
+import { ButtonSpinner } from "@/components/feedback/ButtonSpinner";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
 
@@ -61,8 +62,7 @@ export default function RegisterPage() {
           {error ? <div className="login-error" role="alert"><span>{error}</span></div> : null}
 
           <button className="primary-button" disabled={isSubmitting} type="submit">
-            <UserPlus aria-hidden="true" size={18} />
-            {isSubmitting ? "Enviando..." : "Enviar para aprovacao"}
+            {isSubmitting ? <ButtonSpinner label="Enviando cadastro" /> : <><UserPlus aria-hidden="true" size={18} />Enviar para aprovacao</>}
           </button>
           <Link className="secondary-button auth-link-button" href="/login">Voltar para login</Link>
         </form>

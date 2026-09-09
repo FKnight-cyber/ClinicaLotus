@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Eye, Filter, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, Filter, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/features/auth/AuthProvider";
@@ -311,16 +311,27 @@ export function AnamneseListPage() {
       </div>
 
       <div className="list-toolbar">
-        <div className="filter-actions">
-          <button className="secondary-button" onClick={() => setIsFilterDrawerOpen(true)} type="button">
-            <Filter size={17} />
-            Filtros
-            {activeFilterCount > 0 ? <span>{activeFilterCount}</span> : null}
-          </button>
-          <button className="secondary-button" onClick={clearFilters} type="button">
-            <RotateCcw size={17} />
-            Limpar filtros
-          </button>
+        <div className="filter-actions-stack">
+          <div className="filter-name-search">
+            <Search aria-hidden="true" size={16} />
+            <input
+              aria-label="Buscar por nome do paciente"
+              onChange={(event) => updateFilter("patient", event.target.value)}
+              placeholder="Buscar por nome do paciente"
+              value={filters.patient}
+            />
+          </div>
+          <div className="filter-actions">
+            <button className="secondary-button" onClick={() => setIsFilterDrawerOpen(true)} type="button">
+              <Filter size={17} />
+              Filtros
+              {activeFilterCount > 0 ? <span>{activeFilterCount}</span> : null}
+            </button>
+            <button className="secondary-button" onClick={clearFilters} type="button">
+              <RotateCcw size={17} />
+              Limpar filtros
+            </button>
+          </div>
         </div>
         <span>{filteredRecords.length} de {records.length} registros exibidos. {message}</span>
       </div>

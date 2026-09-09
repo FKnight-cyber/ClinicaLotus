@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createId } from "@/lib/uuid";
 import { anamneseTemplates } from "./templates";
 import type { AnamneseRecord, ClinicalDocumentSummary, FieldValue, FormTemplate, MedicalRecordEntry, PatientSummary, TemplateAnswers, TemplateId, ValidationIssue } from "./types";
 
@@ -254,7 +255,7 @@ export function createEmptyRecord(): AnamneseRecord {
   const now = new Date().toISOString();
 
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     code: `ANA-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
     status: "draft",
     createdAt: now,

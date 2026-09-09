@@ -137,7 +137,8 @@ function parsePatientListOrder(options?: ListQueryOptions): Prisma.PatientOrderB
     return [{ admissionDate: { sort: sortDirection, nulls: "last" } }, { name: "asc" }];
   }
 
-  return [{ name: "asc" }];
+  const nameDirection = options?.sortDirection === "desc" ? "desc" : "asc";
+  return [{ name: nameDirection }];
 }
 
 function todayAtStartOfDay() {
@@ -164,7 +165,7 @@ export class PatientsService {
     const admissionDate = parseIsoDateRange(options?.admissionDate);
     const dischargeDate = parseIsoDateRange(options?.dischargeDate);
     const orderBy = parsePatientListOrder(options);
-    const cacheKey = `patients:list:${clinicScopeKey}:${normalizedSearch ? normalizedSearch.toLowerCase() : "all"}:${options?.status === "ALL" ? "all" : status ?? "all"}:${options?.admissionDate?.trim() || "all"}:${options?.dischargeDate?.trim() || "all"}:${options?.sortBy === "admissionDate" ? `admissionDate:${options.sortDirection === "asc" ? "asc" : "desc"}` : "name:asc"}:${pagination ? `${pagination.limit}:${pagination.offset}` : "legacy"}`;
+    const cacheKey = `patients:list:${clinicScopeKey}:${normalizedSearch ? normalizedSearch.toLowerCase() : "all"}:${options?.status === "ALL" ? "all" : status ?? "all"}:${options?.admissionDate?.trim() || "all"}:${options?.dischargeDate?.trim() || "all"}:${options?.sortBy === "admissionDate" ? `admissionDate:${options.sortDirection === "asc" ? "asc" : "desc"}` : `name:${options?.sortDirection === "desc" ? "desc" : "asc"}`}:${pagination ? `${pagination.limit}:${pagination.offset}` : "legacy"}`;
 
     const whereConditions: Prisma.PatientWhereInput[] = [{
       OR: [

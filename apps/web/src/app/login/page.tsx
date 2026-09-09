@@ -5,6 +5,7 @@ import { CheckCircle2, KeyRound, LockKeyhole, LogIn, RotateCcw } from "lucide-re
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ClinicLogo } from "@/components/brand/ClinicLogo";
+import { ButtonSpinner } from "@/components/feedback/ButtonSpinner";
 import { getDefaultModuleHrefForPermissions } from "@/config/modules";
 import { useAuth } from "@/features/auth/AuthProvider";
 
@@ -137,8 +138,7 @@ export default function LoginPage() {
             ) : null}
 
             <button className="primary-button" disabled={isRecoverySubmitting} type="submit">
-              <KeyRound aria-hidden="true" size={18} />
-              {isRecoverySubmitting ? "Enviando..." : "Solicitar alteração"}
+              {isRecoverySubmitting ? <ButtonSpinner label="Enviando solicitação" /> : <><KeyRound aria-hidden="true" size={18} />Solicitar alteração</>}
             </button>
             <button className="secondary-button" disabled={isRecoverySubmitting} onClick={closePasswordRecovery} type="button">
               <RotateCcw aria-hidden="true" size={18} />
@@ -176,8 +176,7 @@ export default function LoginPage() {
           ) : null}
 
           <button className="primary-button" disabled={isSubmitting} type="submit">
-            <LogIn aria-hidden="true" size={18} />
-            {isSubmitting ? "Entrando..." : "Entrar"}
+            {isSubmitting ? <ButtonSpinner label="Entrando" /> : <><LogIn aria-hidden="true" size={18} />Entrar</>}
           </button>
           <button className="secondary-button" disabled={isSubmitting} onClick={openPasswordRecovery} type="button">
             <KeyRound aria-hidden="true" size={18} />
