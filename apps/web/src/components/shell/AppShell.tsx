@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Building2, LogOut, UserCircle } from "lucide-react";
+import { Building2, LogOut, Menu, UserCircle, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { ClinicLogo } from "@/components/brand/ClinicLogo";
 import { moduleItems } from "@/config/modules";
@@ -31,6 +31,7 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
   const pathname = usePathname();
   const [customTitle, setCustomTitle] = useState<string | null>(null);
   const [pendingPasswordChangeRequests, setPendingPasswordChangeRequests] = useState<number | null>(null);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const setShellTitle = useMemo(() => setCustomTitle, []);
   const visibleModules = moduleItems.filter((module) => hasPermission(module.visibilityPermission));
   const canReadPasswordChangeRequests = hasPermission("access.password_changes.read");
@@ -69,7 +70,7 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar" aria-label="Menu principal">
+      <aside className={`sidebar ${isMobileNavOpen ? "is-menu-open" : ""}`} aria-label="Menu principal">
         <div className="brand-block">
           <div className="brand-mark">
             <ClinicLogo />
@@ -79,6 +80,11 @@ export function AppShell({ activeSlug, children }: AppShellProps) {
             <span>Sistema clínico</span>
           </div>
         </div>
+
+        <button aria-expanded={isMobileNavOpen} aria-label={isMobileNavOpen ? "Fechar menu" : "Abrir menu"} className="sidebar-menu-toggle" onClick={() => setIsMobileNavOpen((current) => !current)} type="button">
+          {isMobileNavOpen ? <X aria-hidden="true" size={20} /> : <Menu aria-hidden="true" size={20} />}
+          <span>{isMobileNavOpen ? "Fechar" : "Menu"}</span>
+        </button>
 
         <nav className="module-nav">
           <div className="module-nav-group">

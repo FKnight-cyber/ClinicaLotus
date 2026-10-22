@@ -20,7 +20,8 @@ const moduleMenuItems = [
   ["relatorios", "Relatorios"],
   ["pacientes", "Pacientes"],
   ["configuracoes", "Configuracoes"],
-  ["institucional", "Clinica"]
+  ["institucional", "Clinica"],
+  ["estoque", "Estoque"]
 ];
 
 const menuVisibilityPermissions = moduleMenuItems.map(([slug, label]) => [
@@ -70,6 +71,9 @@ const basePermissions = [
   ["audit.patients.read", "audit", "read_patient_logs", "Visualizar logs de pacientes"],
   ["clinics.read", "clinics", "read", "Visualizar clínicas"],
   ["clinics.manage", "clinics", "manage", "Gerenciar clínicas"],
+  ["inventory.read", "inventory", "read", "Visualizar entradas de estoque"],
+  ["inventory.manage", "inventory", "manage", "Cadastrar entradas de estoque"],
+  ["inventory.report", "inventory", "report", "Emitir recibos de entrada do estoque"],
   ["admin.full_access", "admin", "full_access", "Acesso administrativo total"]
 ];
 
@@ -256,7 +260,7 @@ async function main() {
 
   const allPermissions = await prisma.permission.findMany();
   await syncGroupPermissions(developerGroup.id, allPermissions.map((permission) => permission.key));
-  await syncGroupPermissions(adminGroup.id, [...basePermissions.map(([key]) => key), "menu.anamnese.view"]);
+  await syncGroupPermissions(adminGroup.id, [...basePermissions.map(([key]) => key), "menu.anamnese.view", "menu.estoque.view"]);
 
   const adminPassword = process.env.ADMIN_PASSWORD ?? "admin123";
   const admin = await prisma.user.upsert({

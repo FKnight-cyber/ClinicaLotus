@@ -482,6 +482,8 @@ async function recoverFailedPatientClinicLinksMigrationIfNeeded() {
   await client.connect();
 
   try {
+    if (!(await hasMigrationsTable(client))) return;
+
     const failedMigration = await getFailedMigrationState(client, patientClinicLinksMigrationName);
     if (!failedMigration) return;
 

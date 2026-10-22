@@ -135,6 +135,7 @@ model Clinic {
   medicalEvolutions MedicalEvolution[]
   clinicalDocuments ClinicalDocument[]
   auditLogs AuditLog[]
+  inventoryEntries InventoryEntry[]
 
   @@index([status, name])
 }
@@ -508,4 +509,19 @@ model AuditLog {
   @@index([entity, createdAt])
   @@index([clinicId, createdAt])
   @@index([userId])
+}
+
+model InventoryEntry {
+  id        String   @id @default(uuid())
+  clinicId  String
+  productName String
+  quantity  Int
+  unitPrice Decimal  @db.Decimal(12, 2)
+  entryDate DateTime
+  createdById String?
+  createdAt DateTime @default(now())
+  clinic    Clinic   @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+
+  @@index([clinicId, entryDate])
+  @@index([clinicId, productName])
 }

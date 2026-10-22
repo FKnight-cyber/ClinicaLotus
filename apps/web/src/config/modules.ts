@@ -5,6 +5,7 @@ import {
   FolderCog,
   HeartPulse,
   Hospital,
+  Boxes,
   NotebookTabs,
   ScrollText,
   Settings,
@@ -205,6 +206,16 @@ export const moduleItems: ModuleItem[] = [
     visibilityPermission: "menu.institucional.view",
     status: "active",
     actions: ["Nova clínica", "Editar unidade", "Ativar ou inativar"]
+  },
+  {
+    slug: "estoque",
+    label: "Estoque",
+    description: "Entradas de produtos, quantidades e recibos por clínica.",
+    href: "/modulos/estoque",
+    icon: Boxes,
+    visibilityPermission: "menu.estoque.view",
+    status: "active",
+    actions: ["Registrar entrada", "Consultar estoque", "Emitir recibo"]
   }
 ];
 

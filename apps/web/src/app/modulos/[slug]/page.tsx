@@ -3,6 +3,7 @@ import { AppShell } from "@/components/shell/AppShell";
 import { PlaceholderModule } from "@/components/placeholder/PlaceholderModule";
 import { getModuleBySlug } from "@/config/modules";
 import { ClinicsAdminPage } from "@/features/clinics/ClinicsAdminPage";
+import { InventoryPage } from "@/features/inventory/InventoryPage";
 import { PacientesPage } from "@/features/pacientes/PacientesPage";
 import { ProntuarioPage } from "@/features/prontuario/ProntuarioPage";
 
@@ -46,6 +47,14 @@ export default async function PlaceholderPage({ params }: PlaceholderPageProps) 
     return (
       <AppShell activeSlug={moduleItem.slug}>
         <ClinicsAdminPage />
+      </AppShell>
+    );
+  }
+
+  if (moduleItem.slug === "estoque") {
+    return (
+      <AppShell activeSlug={moduleItem.slug}>
+        <InventoryPage />
       </AppShell>
     );
   }

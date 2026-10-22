@@ -138,6 +138,22 @@ O seed cria permissoes iniciais, o grupo `Administrador`, o grupo `Developer`, o
 
 O seed não cria registros clínicos, pacientes de demonstração nem rascunhos de anamnese. Registros clínicos devem nascer apenas pelo uso da aplicação/API.
 
+### Carga única dos itens da nota fiscal
+
+A carga está separada do seed normal e não roda ao iniciar a API. Primeiro confira a prévia, informando o código/ID da clínica, o login/ID do usuário responsável e a data de entrada que será aplicada aos itens:
+
+```bash
+docker compose exec api sh -lc "cd apps/api && npm run prisma:import-inventory-note -- --clinic CLINICA-1 --user admin --entry-date 2026-10-21"
+```
+
+Para gravar após revisar a prévia, execute o mesmo comando acrescentando `--apply`:
+
+```bash
+docker compose exec api sh -lc "cd apps/api && npm run prisma:import-inventory-note -- --clinic CLINICA-1 --user admin --entry-date 2026-10-21 --apply"
+```
+
+A carga importa 75 entradas completas uma única vez e registra auditoria; uma segunda tentativa é bloqueada no banco. A linha 4.6 foi separada em toalhas de papel e sabonete líquido, conforme quantidades informadas. Não substitua a data do exemplo sem confirmar a data de entrada desejada.
+
 ## Deploy
 
 Esta aplicação tem dois serviços de produção:
