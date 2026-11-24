@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowDownUp, ArrowUp, CircleAlert, ChevronLeft, ChevronRight, Edit3, Eye, Paperclip, Plus, Search, ToggleLeft, ToggleRight, Trash2, UserRound, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ClearFiltersButton, FilterButton } from "@/components/filters/FilterActionButtons";
+import { ButtonSpinner } from "@/components/feedback/ButtonSpinner";
 import { invalidateAnamneseCachesForPatientTransfer } from "@/features/anamnese/storage";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { invalidateProntuarioCachesForPatientTransfer } from "@/features/prontuario/prontuarioStorage";
@@ -74,7 +75,6 @@ type PaginatedPatients = {
 
 type StoredPatientFilters = {
   clinicId: string;
-  search: string;
   status: PatientStatus | "";
   admissionDate: string;
   dischargeDate: string;
@@ -160,12 +160,12 @@ function normalizePatientSortBy(value: unknown): PatientSortBy {
   return value === "admissionDate" ? "admissionDate" : "name";
 }
 
-function normalizePatientSortDirection(value: unknown): PatientSortDirection {
-  return value === "asc" ? "asc" : "desc";
+function normalizePatientSortDirection(value: unknown, fallback: PatientSortDirection = "desc"): PatientSortDirection {
+  return value === "asc" || value === "desc" ? value : fallback;
 }
 
 function readStoredPatientFilters() {
-  const defaultFilters: StoredPatientFilters = { clinicId: "", search: "", status: "ACTIVE", admissionDate: "", dischargeDate: "", limit: DEFAULT_PATIENT_LIMIT, sortBy: "name", sortDirection: "asc" };
+  const defaultFilters: StoredPatientFilters = { clinicId: "", status: "ACTIVE", admissionDate: "", dischargeDate: "", limit: DEFAULT_PATIENT_LIMIT, sortBy: "name", sortDirection: "asc" };
   if (typeof window === "undefined") return defaultFilters;
 
   try {
@@ -173,16 +173,18 @@ function readStoredPatientFilters() {
     if (!storedFilters) return defaultFilters;
     const parsedFilters = JSON.parse(storedFilters) as { clinicId?: unknown; search?: unknown; status?: unknown; admissionDate?: unknown; dischargeDate?: unknown; limit?: unknown; sortBy?: unknown; sortDirection?: unknown };
 
-    return {
+    const sortBy = normalizePatientSortBy(parsedFilters.sortBy);
+    const normalizedFilters = {
       clinicId: normalizePatientClinicId(parsedFilters.clinicId),
-      search: typeof parsedFilters.search === "string" ? parsedFilters.search : "",
-      status: normalizePatientStatus(parsedFilters.status || "ACTIVE"),
+      status: parsedFilters.status === undefined ? "ACTIVE" : normalizePatientStatus(parsedFilters.status),
       admissionDate: normalizePatientDateFilter(parsedFilters.admissionDate),
       dischargeDate: normalizePatientDateFilter(parsedFilters.dischargeDate),
       limit: normalizePatientLimit(parsedFilters.limit),
-      sortBy: normalizePatientSortBy(parsedFilters.sortBy),
-      sortDirection: normalizePatientSortDirection(parsedFilters.sortDirection)
+      sortBy,
+      sortDirection: normalizePatientSortDirection(parsedFilters.sortDirection, sortBy === "admissionDate" ? "desc" : "asc")
     };
+    window.localStorage.setItem(PATIENT_FILTERS_STORAGE_KEY, JSON.stringify(normalizedFilters));
+    return normalizedFilters;
   } catch {
     window.localStorage.removeItem(PATIENT_FILTERS_STORAGE_KEY);
     return defaultFilters;
@@ -381,15 +383,15 @@ export function PacientesPage() {
   const [patientTotal, setPatientTotal] = useState(0);
   const [patientLimit, setPatientLimit] = useState(initialPatientFilters.limit);
   const [patientPage, setPatientPage] = useState(1);
-  const [patientSearch, setPatientSearch] = useState(initialPatientFilters.search);
-  const [debouncedPatientSearch, setDebouncedPatientSearch] = useState(initialPatientFilters.search);
+  const [patientSearch, setPatientSearch] = useState("");
+  const [debouncedPatientSearch, setDebouncedPatientSearch] = useState("");
   const [selectedPatientClinicId, setSelectedPatientClinicId] = useState(initialPatientFilters.clinicId);
   const [selectedPatientStatus, setSelectedPatientStatus] = useState<PatientStatus | "">(initialPatientFilters.status);
   const [selectedAdmissionDate, setSelectedAdmissionDate] = useState(initialPatientFilters.admissionDate);
   const [selectedDischargeDate, setSelectedDischargeDate] = useState(initialPatientFilters.dischargeDate);
   const [patientSortBy, setPatientSortBy] = useState<PatientSortBy>(initialPatientFilters.sortBy);
   const [patientSortDirection, setPatientSortDirection] = useState<PatientSortDirection>(initialPatientFilters.sortDirection);
-  const [draftPatientSearch, setDraftPatientSearch] = useState(initialPatientFilters.search);
+  const [draftPatientSearch, setDraftPatientSearch] = useState("");
   const [draftSelectedPatientClinicId, setDraftSelectedPatientClinicId] = useState(initialPatientFilters.clinicId);
   const [draftSelectedPatientStatus, setDraftSelectedPatientStatus] = useState<PatientStatus | "">(initialPatientFilters.status);
   const [draftSelectedAdmissionDate, setDraftSelectedAdmissionDate] = useState(initialPatientFilters.admissionDate);
@@ -402,21 +404,32 @@ export function PacientesPage() {
   const [patientForm, setPatientForm] = useState<PatientFormState>(emptyPatientForm);
   const [editingPatientClinicId, setEditingPatientClinicId] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [patientsLoadError, setPatientsLoadError] = useState<string | null>(null);
+  const [patientsLoadAttempt, setPatientsLoadAttempt] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isPatientsLoading, setIsPatientsLoading] = useState(true);
+  const [isOpeningPatientModal, setIsOpeningPatientModal] = useState(false);
   const [isSavingPatient, setIsSavingPatient] = useState(false);
   const [savingStatusPatientId, setSavingStatusPatientId] = useState<string | null>(null);
   const [isLoadingPatientTransferPreview, setIsLoadingPatientTransferPreview] = useState(false);
   const [patientTransferPreview, setPatientTransferPreview] = useState<PatientTransferPreview | null>(null);
+  const [patientTransferPreviewError, setPatientTransferPreviewError] = useState<string | null>(null);
+  const [patientTransferPreviewLoaded, setPatientTransferPreviewLoaded] = useState(false);
   const [patientFileSelections, setPatientFileSelections] = useState(createPatientFileSelections);
   const [existingPatientFiles, setExistingPatientFiles] = useState<PatientFile[]>([]);
   const [removingPatientFileType, setRemovingPatientFileType] = useState<PatientFileType | null>(null);
+  const openingPatientModalRequestRef = useRef(false);
+  const savingPatientRequestRef = useRef(false);
+  const savingPatientStatusRequestRef = useRef(false);
+  const removingPatientFileRequestRef = useRef(false);
+  const patientTransferPreviewRequestRef = useRef(0);
 
   const patientOffset = (patientPage - 1) * patientLimit;
   const selectedPatientClinicIsAvailable = availablePatientClinics.some((clinic) => clinic.id === selectedPatientClinicId);
   const effectivePatientClinicId = canFilterPatientsByClinic && selectedPatientClinicIsAvailable ? selectedPatientClinicId : "";
   const activePatientFilterCount = [patientSearch.trim(), effectivePatientClinicId, selectedPatientStatus !== "ACTIVE" ? "status" : "", selectedAdmissionDate, selectedDischargeDate, patientLimit !== DEFAULT_PATIENT_LIMIT ? String(patientLimit) : ""].filter(Boolean).length;
   const hasActivePatientFilters = activePatientFilterCount > 0;
+  const isPatientFileMutationInProgress = Boolean(removingPatientFileType);
   const isChangingPatientClinic = Boolean(editingPatient && editingPatientClinicId && patientForm.clinicId && patientForm.clinicId !== editingPatientClinicId);
   const patientTransferPreviewMessage = patientTransferPreview ? buildTransferPreview(patientTransferPreview) : null;
 
@@ -458,7 +471,6 @@ export function PacientesPage() {
   useEffect(() => {
     writeStoredPatientFilters({
       clinicId: effectivePatientClinicId,
-      search: patientSearch,
       status: selectedPatientStatus,
       admissionDate: selectedAdmissionDate,
       dischargeDate: selectedDischargeDate,
@@ -479,16 +491,21 @@ export function PacientesPage() {
       if (!isCurrent) return;
       setIsPatientsLoading(!cachedPatientsPage);
       if (!cachedPatientsPage) setIsLoading(true);
+      setPatientsLoadError(null);
     });
 
     fetchPatientsPage(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate, patientSortBy, patientSortDirection).then((nextPatientsPage) => {
       if (!isCurrent) return;
       applyPatientsPage(nextPatientsPage);
+      setPatientsLoadError(null);
       setIsPatientsLoading(false);
       setIsLoading(false);
     }).catch((error) => {
       if (!isCurrent) return;
-      setMessage(error instanceof Error ? error.message : "Não foi possível carregar pacientes.");
+      const nextError = error instanceof Error ? error.message : "Não foi possível carregar pacientes.";
+      setPatientsLoadError(nextError);
+      setPatients([]);
+      setPatientTotal(0);
       setIsPatientsLoading(false);
       setIsLoading(false);
     });
@@ -496,13 +513,33 @@ export function PacientesPage() {
     return () => {
       isCurrent = false;
     };
-  }, [token, canReadPatients, patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate, patientSortBy, patientSortDirection, applyPatientsPage, fetchPatientsPage]);
+  }, [token, canReadPatients, patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate, patientSortBy, patientSortDirection, applyPatientsPage, fetchPatientsPage, patientsLoadAttempt]);
 
-  const refreshCurrentPage = async () => {
+  const refreshCurrentPage = async (requestedPage = patientPage) => {
     if (!token) return;
     patientsCacheRef.current.clear();
-    const nextPatientsPage = await fetchPatientsPage(patientLimit, patientOffset, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate, patientSortBy, patientSortDirection, true);
-    applyPatientsPage(nextPatientsPage);
+    setPatientsLoadError(null);
+    setIsPatientsLoading(true);
+    try {
+      let nextPage = Math.max(1, requestedPage);
+      let nextPatientsPage = await fetchPatientsPage(patientLimit, (nextPage - 1) * patientLimit, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate, patientSortBy, patientSortDirection, true);
+      const lastPage = Math.max(1, Math.ceil(nextPatientsPage.total / patientLimit));
+      if (nextPage > lastPage) {
+        nextPage = lastPage;
+        nextPatientsPage = await fetchPatientsPage(patientLimit, (nextPage - 1) * patientLimit, debouncedPatientSearch, selectedPatientStatus, effectivePatientClinicId, selectedAdmissionDate, selectedDischargeDate, patientSortBy, patientSortDirection, true);
+      }
+      if (nextPage !== patientPage) setPatientPage(nextPage);
+      applyPatientsPage(nextPatientsPage);
+      setPatientsLoadError(null);
+    } catch (error) {
+      const nextError = error instanceof Error ? error.message : "Não foi possível atualizar a lista de pacientes.";
+      setPatientsLoadError(nextError);
+      setPatients([]);
+      setPatientTotal(0);
+      throw error;
+    } finally {
+      setIsPatientsLoading(false);
+    }
   };
 
   const handleAdmissionSort = () => {
@@ -565,50 +602,104 @@ export function PacientesPage() {
   };
 
   const openCreatePatientModal = async () => {
-    const refreshedProfile = await refreshProfile().catch(() => null);
-    const refreshedClinics = refreshedProfile?.clinics?.filter((clinic) => clinic.status === "ACTIVE") ?? availablePatientClinics;
+    if (openingPatientModalRequestRef.current || !canCreatePatients) return;
+    openingPatientModalRequestRef.current = true;
+    setIsOpeningPatientModal(true);
+    try {
+      const refreshedProfile = await refreshProfile();
+      const refreshedClinics = refreshedProfile?.clinics?.filter((clinic) => clinic.status === "ACTIVE") ?? [];
+      if (refreshedClinics.length === 0) {
+        throw new Error("Nenhuma clínica ativa está disponível para cadastrar o paciente.");
+      }
 
-    setEditingPatient(null);
-    setEditingPatientClinicId("");
-    setPatientTransferPreview(null);
-    setIsLoadingPatientTransferPreview(false);
-    setPatientFileSelections(createPatientFileSelections());
-    setExistingPatientFiles([]);
-    setPatientForm({ ...emptyPatientForm, clinicId: effectivePatientClinicId || (refreshedClinics.length === 1 ? refreshedClinics[0].id : "") });
-    setIsPatientModalOpen(true);
+      patientTransferPreviewRequestRef.current += 1;
+      setEditingPatient(null);
+      setEditingPatientClinicId("");
+      setPatientTransferPreview(null);
+      setPatientTransferPreviewError(null);
+      setPatientTransferPreviewLoaded(false);
+      setIsLoadingPatientTransferPreview(false);
+      setPatientFileSelections(createPatientFileSelections());
+      setExistingPatientFiles([]);
+      const preselectedClinicId = refreshedClinics.some((clinic) => clinic.id === effectivePatientClinicId)
+        ? effectivePatientClinicId
+        : refreshedClinics.length === 1 ? refreshedClinics[0].id : "";
+      setPatientForm({ ...emptyPatientForm, clinicId: preselectedClinicId });
+      setMessage(null);
+      setIsPatientModalOpen(true);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível preparar o cadastro do paciente.");
+    } finally {
+      openingPatientModalRequestRef.current = false;
+      setIsOpeningPatientModal(false);
+    }
   };
 
-  const openEditPatientModal = async (patient: Patient) => {
-    const currentClinicId = getEditablePatientClinicId(patient, effectivePatientClinicId);
-    setEditingPatient(patient);
-    setEditingPatientClinicId(currentClinicId);
-    setPatientTransferPreview(null);
-    setPatientFileSelections(createPatientFileSelections());
-    setExistingPatientFiles([]);
-    setPatientForm({ ...getPatientForm(patient), clinicId: currentClinicId });
-    setIsPatientModalOpen(true);
+  const loadPatientTransferPreview = async (patientId: string, clinicId: string) => {
+    if (!token || !clinicId) {
+      setPatientTransferPreviewError("Não foi possível identificar a clínica atual para verificar os registros em aberto.");
+      setPatientTransferPreviewLoaded(false);
+      return;
+    }
 
-    if (!token || !currentClinicId) return;
-
+    const requestId = patientTransferPreviewRequestRef.current + 1;
+    patientTransferPreviewRequestRef.current = requestId;
     setIsLoadingPatientTransferPreview(true);
+    setPatientTransferPreviewError(null);
+    setPatientTransferPreviewLoaded(false);
     try {
-      const detail = await apiRequest<PatientTransferPreviewResponse>(token, `/api/patients/${patient.id}?clinicId=${encodeURIComponent(currentClinicId)}`);
+      const detail = await apiRequest<PatientTransferPreviewResponse>(token, `/api/patients/${patientId}?clinicId=${encodeURIComponent(clinicId)}`);
+      if (patientTransferPreviewRequestRef.current !== requestId) return;
       setPatientTransferPreview({
         draftAnamneses: detail.anamneses.filter((record) => record.status === "draft").length,
         draftEvolutions: detail.evolutions.filter((record) => record.status === "draft").length
       });
       setExistingPatientFiles(detail.files ?? []);
-    } catch {
+      setPatientTransferPreviewLoaded(true);
+      setMessage(null);
+    } catch (error) {
+      if (patientTransferPreviewRequestRef.current !== requestId) return;
+      const nextError = error instanceof Error ? error.message : "Não foi possível verificar os registros em aberto.";
       setPatientTransferPreview(null);
+      setPatientTransferPreviewError(nextError);
+      setMessage(nextError);
     } finally {
-      setIsLoadingPatientTransferPreview(false);
+      if (patientTransferPreviewRequestRef.current === requestId) {
+        setIsLoadingPatientTransferPreview(false);
+      }
     }
+  };
+
+  const openEditPatientModal = async (patient: Patient) => {
+    if (isSavingPatient || isLoadingPatientTransferPreview) return;
+    const currentClinicId = getEditablePatientClinicId(patient, effectivePatientClinicId);
+    patientTransferPreviewRequestRef.current += 1;
+    setEditingPatient(patient);
+    setEditingPatientClinicId(currentClinicId);
+    setPatientTransferPreview(null);
+    setPatientTransferPreviewError(null);
+    setPatientTransferPreviewLoaded(false);
+    setPatientFileSelections(createPatientFileSelections());
+    setExistingPatientFiles([]);
+    setPatientForm({ ...getPatientForm(patient), clinicId: currentClinicId });
+    setMessage(null);
+    setIsPatientModalOpen(true);
+
+    await loadPatientTransferPreview(patient.id, currentClinicId);
   };
 
   const handleSavePatient = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!token || !patientForm.name.trim() || (!editingPatient && mustChoosePatientClinic && !patientForm.clinicId)) return;
+    if (!token || savingPatientRequestRef.current || removingPatientFileRequestRef.current || !patientForm.name.trim() || (!editingPatient && mustChoosePatientClinic && !patientForm.clinicId)) return;
+    if (isChangingPatientClinic && (isLoadingPatientTransferPreview || !patientTransferPreviewLoaded || patientTransferPreviewError)) {
+      setMessage(patientTransferPreviewError ?? "Aguarde a verificação dos registros em aberto antes de trocar a clínica.");
+      return;
+    }
+
+    savingPatientRequestRef.current = true;
     setIsSavingPatient(true);
+    let patientWasSaved = false;
+    let operationStage: "patient" | "files" | "list" = "patient";
 
     try {
       let savedPatient: Patient;
@@ -635,27 +726,52 @@ export function PacientesPage() {
             ? "Paciente já estava cadastrado nesta clínica."
             : `Paciente criado.${buildTransferMessage(savedPatient.transferSummary)}`;
       }
+      patientWasSaved = true;
+      operationStage = "files";
+      setEditingPatient(savedPatient);
+      setEditingPatientClinicId(patientForm.clinicId || getEditablePatientClinicId(savedPatient));
 
       const selectedFiles = (Object.entries(patientFileSelections) as Array<[PatientFileType, File | null]>).filter(([, file]) => file);
-      await Promise.all(selectedFiles.map(([fileType, file]) => uploadPatientFile(token, savedPatient.id, fileType, file!, patientForm.clinicId)));
+      for (const [fileType, file] of selectedFiles) {
+        if (!file) continue;
+        const uploadedFile = await uploadPatientFile(token, savedPatient.id, fileType, file, patientForm.clinicId);
+        setExistingPatientFiles((files) => [...files.filter((existingFile) => existingFile.type !== fileType), uploadedFile]);
+        setPatientFileSelections((files) => ({ ...files, [fileType]: null }));
+      }
+
       setMessage(`${successMessage}${selectedFiles.length ? ` ${selectedFiles.length} arquivo(s) anexado(s).` : ""}`);
 
       setIsPatientModalOpen(false);
+      patientTransferPreviewRequestRef.current += 1;
+      setIsLoadingPatientTransferPreview(false);
       setEditingPatientClinicId("");
       setPatientTransferPreview(null);
+      setPatientTransferPreviewError(null);
+      setPatientTransferPreviewLoaded(false);
       setPatientFileSelections(createPatientFileSelections());
       setExistingPatientFiles([]);
       setPatientForm(emptyPatientForm);
-      await refreshCurrentPage();
+      operationStage = "list";
+      if (!editingPatient) setPatientPage(1);
+      await refreshCurrentPage(editingPatient ? patientPage : 1);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível salvar o paciente.");
+      const errorMessage = error instanceof Error ? error.message : "Não foi possível salvar o paciente.";
+      if (patientWasSaved && operationStage === "files") {
+        setMessage(`Paciente salvo, mas não foi possível anexar todos os arquivos: ${errorMessage}`);
+      } else if (patientWasSaved && operationStage === "list") {
+        setMessage(`Paciente salvo, mas não foi possível atualizar a lista: ${errorMessage}`);
+      } else {
+        setMessage(errorMessage);
+      }
     } finally {
+      savingPatientRequestRef.current = false;
       setIsSavingPatient(false);
     }
   };
 
   const handleRemovePatientFile = async (fileType: PatientFileType) => {
-    if (!token || !editingPatient || !canEditPatientFiles) return;
+    if (!token || !editingPatient || !canEditPatientFiles || removingPatientFileRequestRef.current || savingPatientRequestRef.current) return;
+    removingPatientFileRequestRef.current = true;
     const selectedClinicId = patientForm.clinicId || editingPatientClinicId;
     setRemovingPatientFileType(fileType);
 
@@ -666,27 +782,33 @@ export function PacientesPage() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível remover o arquivo do paciente.");
     } finally {
+      removingPatientFileRequestRef.current = false;
       setRemovingPatientFileType(null);
     }
   };
 
   const handleConfirmStatusChange = async () => {
-    if (!token || !statusConfirmation) return;
+    if (!token || !statusConfirmation || savingPatientStatusRequestRef.current || savingPatientRequestRef.current || removingPatientFileRequestRef.current) return;
     const { nextStatus, patient } = statusConfirmation;
+    savingPatientStatusRequestRef.current = true;
     setSavingStatusPatientId(patient.id);
     setIsPatientsLoading(true);
+    let statusWasUpdated = false;
 
     try {
       await apiRequest<Patient>(token, `/api/patients/${patient.id}/status`, {
         method: "PATCH",
         body: JSON.stringify({ status: nextStatus })
       });
-      await refreshCurrentPage();
+      statusWasUpdated = true;
       setStatusConfirmation(null);
       setMessage(nextStatus === "ACTIVE" ? "Paciente ativado." : "Paciente inativado no cadastro administrativo.");
+      await refreshCurrentPage();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível atualizar o status do paciente.");
+      const errorMessage = error instanceof Error ? error.message : "Não foi possível atualizar o status do paciente.";
+      setMessage(statusWasUpdated ? `Status atualizado, mas não foi possível atualizar a lista: ${errorMessage}` : errorMessage);
     } finally {
+      savingPatientStatusRequestRef.current = false;
       setSavingStatusPatientId(null);
       setIsPatientsLoading(false);
     }
@@ -716,11 +838,11 @@ export function PacientesPage() {
           <p>Consulte, cadastre e mantenha o status administrativo dos pacientes.</p>
         </div>
         <div className="list-actions">
-          {canCreatePatients ? <button className="primary-button" onClick={openCreatePatientModal} type="button"><Plus aria-hidden="true" size={16} />Novo paciente</button> : null}
+          {canCreatePatients ? <button aria-busy={isOpeningPatientModal} className="primary-button" disabled={isOpeningPatientModal || isSavingPatient} onClick={() => { void openCreatePatientModal(); }} type="button">{isOpeningPatientModal ? <ButtonSpinner label="Preparando cadastro" /> : <Plus aria-hidden="true" size={16} />}{isOpeningPatientModal ? "Carregando clínicas..." : "Novo paciente"}</button> : null}
         </div>
       </div>
 
-      {message ? <div className="access-message">{message}</div> : null}
+      {message ? <div aria-live="polite" className="access-message" role="status">{message}</div> : null}
       {isLoading ? <div className="loading-panel">Carregando pacientes...</div> : null}
 
       <div className="list-toolbar">
@@ -831,7 +953,18 @@ export function PacientesPage() {
             </tr>
           </thead>
           <tbody>
-            {patients.length === 0 ? (
+            {isPatientsLoading && patients.length === 0 ? (
+              <tr><td colSpan={8}>Carregando pacientes...</td></tr>
+            ) : patientsLoadError ? (
+              <tr>
+                <td colSpan={8}>
+                  <div role="alert">
+                    <span>{patientsLoadError}</span>
+                    <button className="table-action" onClick={() => { setMessage(null); setPatientsLoadAttempt((attempt) => attempt + 1); }} type="button">Tentar novamente</button>
+                  </div>
+                </td>
+              </tr>
+            ) : patients.length === 0 ? (
               <tr>
                 <td colSpan={8}>Nenhum paciente encontrado.</td>
               </tr>
@@ -856,13 +989,13 @@ export function PacientesPage() {
                     </td>
                     <td>
                       <div className="records-table-actions patients-table-actions">
-                        {canUpdatePatients ? <button className="table-action" onClick={() => { void openEditPatientModal(patient); }} type="button"><Edit3 aria-hidden="true" size={16} />Editar</button> : null}
+                        {canUpdatePatients ? <button className="table-action" disabled={isPatientsLoading || isSavingPatient || isLoadingPatientTransferPreview} onClick={() => { void openEditPatientModal(patient); }} type="button"><Edit3 aria-hidden="true" size={16} />Editar</button> : null}
                         {canInactivatePatients ? (
-                          <button className="table-action" disabled={savingStatusPatientId === patient.id} onClick={() => setStatusConfirmation({ patient, nextStatus })} type="button">
+                          <button className="table-action" disabled={isPatientsLoading || Boolean(savingStatusPatientId) || isSavingPatient} onClick={() => setStatusConfirmation({ patient, nextStatus })} type="button">
                             <ToggleIcon aria-hidden="true" size={16} />{savingStatusPatientId === patient.id ? "Atualizando..." : nextStatus === "ACTIVE" ? "Ativar" : "Inativar"}
                           </button>
                         ) : null}
-                        <button className="table-action" onClick={() => router.push(buildPatientDetailHref(patient.id, effectivePatientClinicId))} type="button"><Eye aria-hidden="true" size={16} />Informações adicionais</button>
+                        <button className="table-action" disabled={isPatientsLoading} onClick={() => router.push(buildPatientDetailHref(patient.id, effectivePatientClinicId))} type="button"><Eye aria-hidden="true" size={16} />Informações adicionais</button>
                       </div>
                     </td>
                   </tr>
@@ -883,7 +1016,7 @@ export function PacientesPage() {
 
       {isPatientModalOpen ? (
         <div className="confirmation-modal-layer" role="presentation">
-          <button aria-label="Cancelar edição de paciente" className="confirmation-modal-backdrop" onClick={() => setIsPatientModalOpen(false)} type="button" />
+          <button aria-label="Cancelar edição de paciente" className="confirmation-modal-backdrop" disabled={isSavingPatient || isPatientFileMutationInProgress} onClick={() => { patientTransferPreviewRequestRef.current += 1; setIsLoadingPatientTransferPreview(false); setIsPatientModalOpen(false); }} type="button" />
           <section aria-labelledby="patient-modal-title" aria-modal="true" className="confirmation-modal-panel patient-modal-panel" role="dialog">
             <div className="confirmation-modal-heading">
               <span className="confirmation-modal-icon is-primary"><UserRound aria-hidden="true" size={20} /></span>
@@ -891,14 +1024,14 @@ export function PacientesPage() {
                 <span className="eyebrow">Pacientes</span>
                 <h3 id="patient-modal-title">{editingPatient ? "Editar paciente" : "Novo paciente"}</h3>
               </div>
-              <button className="icon-button" onClick={() => setIsPatientModalOpen(false)} title="Fechar" type="button"><X aria-hidden="true" size={18} /></button>
+              <button className="icon-button" disabled={isSavingPatient || isPatientFileMutationInProgress} onClick={() => { patientTransferPreviewRequestRef.current += 1; setIsLoadingPatientTransferPreview(false); setIsPatientModalOpen(false); }} title="Fechar" type="button"><X aria-hidden="true" size={18} /></button>
             </div>
-            {message ? <div className="access-message">{message}</div> : null}
-            <form className="access-form patient-form-grid" onSubmit={handleSavePatient}>
+            {message ? <div aria-live="polite" className="access-message" role="status">{message}</div> : null}
+            <form aria-busy={isSavingPatient} className="access-form patient-form-grid" onSubmit={handleSavePatient}>
               {!editingPatient && shouldShowPatientClinicField ? (
                 <label className="patient-form-full">
                   <span>Clínica do cadastro</span>
-                  <select disabled={!mustChoosePatientClinic} onChange={(event) => setPatientForm((form) => ({ ...form, clinicId: event.target.value }))} required value={patientForm.clinicId}>
+                  <select disabled={isSavingPatient || !mustChoosePatientClinic} onChange={(event) => setPatientForm((form) => ({ ...form, clinicId: event.target.value }))} required value={patientForm.clinicId}>
                     {mustChoosePatientClinic ? <option value="">Selecione a clínica</option> : null}
                     {availablePatientClinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</option>)}
                   </select>
@@ -914,21 +1047,27 @@ export function PacientesPage() {
                       </button>
                     </span>
                   </span>
-                  <select onChange={(event) => setPatientForm((form) => ({ ...form, clinicId: event.target.value }))} required value={patientForm.clinicId}>
+                  <select disabled={isSavingPatient || isLoadingPatientTransferPreview} onChange={(event) => setPatientForm((form) => ({ ...form, clinicId: event.target.value }))} required value={patientForm.clinicId}>
                     <option value="">Selecione a clínica</option>
                     {availablePatientClinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}{clinic.code ? ` (${clinic.code})` : ""}</option>)}
                   </select>
                   {isChangingPatientClinic && isLoadingPatientTransferPreview ? <small className="patient-clinic-transfer-warning">Verificando registros em aberto na clínica atual...</small> : null}
                   {isChangingPatientClinic && patientTransferPreviewMessage ? <small className="patient-clinic-transfer-warning">{patientTransferPreviewMessage}</small> : null}
+                  {editingPatient && patientTransferPreviewError ? (
+                    <small className="patient-clinic-transfer-warning" role="alert">
+                      {patientTransferPreviewError}{" "}
+                      <button className="table-action" disabled={isLoadingPatientTransferPreview} onClick={() => { void loadPatientTransferPreview(editingPatient.id, editingPatientClinicId); }} type="button">Tentar novamente</button>
+                    </small>
+                  ) : null}
                 </label>
               ) : null}
-              <label><span>Nome completo</span><input autoFocus onChange={(event) => setPatientForm((form) => ({ ...form, name: event.target.value }))} required value={patientForm.name} /></label>
-              <label><span>Data de admissão</span><input onChange={(event) => setPatientForm((form) => ({ ...form, admissionDate: event.target.value }))} type="date" value={patientForm.admissionDate} /></label>
-              <label><span>Dia da alta</span><input onChange={(event) => setPatientForm((form) => ({ ...form, dischargeDate: event.target.value }))} type="date" value={patientForm.dischargeDate} /></label>
-              <label><span>Nascimento</span><input onChange={(event) => setPatientForm((form) => ({ ...form, birthDate: event.target.value }))} type="date" value={patientForm.birthDate} /></label>
-              <label><span>CPF</span><input onChange={(event) => setPatientForm((form) => ({ ...form, cpf: event.target.value }))} placeholder="CPF" value={patientForm.cpf} /></label>
-              <label><span>RG</span><input onChange={(event) => setPatientForm((form) => ({ ...form, rg: event.target.value }))} placeholder="RG" value={patientForm.rg} /></label>
-              <label className="patient-form-full"><span>Documento complementar</span><input onChange={(event) => setPatientForm((form) => ({ ...form, document: event.target.value }))} placeholder="Outro documento" value={patientForm.document} /></label>
+              <label><span>Nome completo</span><input autoFocus disabled={isSavingPatient} onChange={(event) => setPatientForm((form) => ({ ...form, name: event.target.value }))} required value={patientForm.name} /></label>
+              <label><span>Data de admissão</span><input disabled={isSavingPatient} onChange={(event) => setPatientForm((form) => ({ ...form, admissionDate: event.target.value }))} type="date" value={patientForm.admissionDate} /></label>
+              <label><span>Dia da alta</span><input disabled={isSavingPatient} onChange={(event) => setPatientForm((form) => ({ ...form, dischargeDate: event.target.value }))} type="date" value={patientForm.dischargeDate} /></label>
+              <label><span>Nascimento</span><input disabled={isSavingPatient} onChange={(event) => setPatientForm((form) => ({ ...form, birthDate: event.target.value }))} type="date" value={patientForm.birthDate} /></label>
+              <label><span>CPF</span><input disabled={isSavingPatient} onChange={(event) => setPatientForm((form) => ({ ...form, cpf: event.target.value }))} placeholder="CPF" value={patientForm.cpf} /></label>
+              <label><span>RG</span><input disabled={isSavingPatient} onChange={(event) => setPatientForm((form) => ({ ...form, rg: event.target.value }))} placeholder="RG" value={patientForm.rg} /></label>
+              <label className="patient-form-full"><span>Documento complementar</span><input disabled={isSavingPatient} onChange={(event) => setPatientForm((form) => ({ ...form, document: event.target.value }))} placeholder="Outro documento" value={patientForm.document} /></label>
               {canEditPatientFiles ? (
                 <div className="patient-form-full patient-files-form">
                   <div className="patient-files-form-heading">
@@ -946,13 +1085,13 @@ export function PacientesPage() {
                         <div className="patient-file-form-item" key={definition.type}>
                           <label>
                             <span>{existingFile ? `Substituir ${definition.label}` : definition.label}</span>
-                            <input accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" onChange={(event) => setPatientFileSelections((files) => ({ ...files, [definition.type]: event.target.files?.[0] ?? null }))} type="file" />
+                            <input accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" disabled={isSavingPatient || Boolean(removingPatientFileType)} key={`${definition.type}-${selectedFile?.name ?? "empty"}`} onChange={(event) => setPatientFileSelections((files) => ({ ...files, [definition.type]: event.target.files?.[0] ?? null }))} type="file" />
                           </label>
                           {selectedFile ? <small>Selecionado: {selectedFile.name} ({formatPatientFileSize(selectedFile.size)})</small> : null}
                           {canReadPatientFiles && existingFile ? (
                             <div className="patient-file-current">
                               <span>Atual: {existingFile.fileName} ({formatPatientFileSize(existingFile.size)})</span>
-                              <button className="table-action is-danger" disabled={removingPatientFileType === definition.type} onClick={() => { void handleRemovePatientFile(definition.type); }} type="button"><Trash2 aria-hidden="true" size={15} />{removingPatientFileType === definition.type ? "Removendo..." : "Remover"}</button>
+                              <button className="table-action is-danger" disabled={isSavingPatient || Boolean(removingPatientFileType)} onClick={() => { void handleRemovePatientFile(definition.type); }} type="button">{removingPatientFileType === definition.type ? <ButtonSpinner label="Removendo arquivo" /> : <Trash2 aria-hidden="true" size={15} />}{removingPatientFileType === definition.type ? "Removendo..." : "Remover"}</button>
                             </div>
                           ) : null}
                         </div>
@@ -962,8 +1101,8 @@ export function PacientesPage() {
                 </div>
               ) : null}
               <div className="confirmation-modal-actions patient-form-full">
-                <button className="secondary-button" disabled={isSavingPatient} onClick={() => { setIsPatientModalOpen(false); setEditingPatientClinicId(""); setPatientTransferPreview(null); }} type="button">Cancelar</button>
-                <button className="primary-button" disabled={isSavingPatient || !patientForm.name.trim() || !patientForm.clinicId} type="submit">{isSavingPatient ? "Salvando..." : "Salvar paciente"}</button>
+                <button className="secondary-button" disabled={isSavingPatient || isPatientFileMutationInProgress} onClick={() => { patientTransferPreviewRequestRef.current += 1; setIsLoadingPatientTransferPreview(false); setIsPatientModalOpen(false); setEditingPatientClinicId(""); setPatientTransferPreview(null); setPatientTransferPreviewError(null); setPatientTransferPreviewLoaded(false); }} type="button">Cancelar</button>
+                <button aria-busy={isSavingPatient} className="primary-button" disabled={isSavingPatient || isPatientFileMutationInProgress || !patientForm.name.trim() || !patientForm.clinicId || (isChangingPatientClinic && (isLoadingPatientTransferPreview || !patientTransferPreviewLoaded || Boolean(patientTransferPreviewError)))} type="submit">{isSavingPatient ? <><ButtonSpinner label="Salvando paciente" />Salvando...</> : "Salvar paciente"}</button>
               </div>
             </form>
           </section>
@@ -972,7 +1111,7 @@ export function PacientesPage() {
 
       {statusConfirmation ? (
         <div className="confirmation-modal-layer" role="presentation">
-          <button aria-label="Cancelar alteração de status" className="confirmation-modal-backdrop" onClick={() => setStatusConfirmation(null)} type="button" />
+          <button aria-label="Cancelar alteração de status" className="confirmation-modal-backdrop" disabled={savingStatusPatientId === statusConfirmation.patient.id} onClick={() => setStatusConfirmation(null)} type="button" />
           <section aria-labelledby="patient-status-modal-title" aria-modal="true" className="confirmation-modal-panel" role="dialog">
             <div className="confirmation-modal-heading">
               <span className={`confirmation-modal-icon ${statusConfirmation.nextStatus === "ACTIVE" ? "is-primary" : "is-danger"}`}><UserRound aria-hidden="true" size={20} /></span>
@@ -984,7 +1123,7 @@ export function PacientesPage() {
             <p>{statusConfirmation.nextStatus === "ACTIVE" ? `${statusConfirmation.patient.name} voltará aos filtros de pacientes ativos.` : `${statusConfirmation.patient.name} será removido dos fluxos operacionais de seleção de pacientes ativos. Alta continua sendo um evento do atendimento, não deste status cadastral.`}</p>
             <div className="confirmation-modal-actions">
               <button className="secondary-button" disabled={savingStatusPatientId === statusConfirmation.patient.id} onClick={() => setStatusConfirmation(null)} type="button">Cancelar</button>
-              <button className="primary-button" disabled={savingStatusPatientId === statusConfirmation.patient.id} onClick={handleConfirmStatusChange} type="button">{savingStatusPatientId === statusConfirmation.patient.id ? "Atualizando..." : statusConfirmation.nextStatus === "ACTIVE" ? "Ativar" : "Inativar"}</button>
+              <button aria-busy={savingStatusPatientId === statusConfirmation.patient.id} className="primary-button" disabled={Boolean(savingStatusPatientId)} onClick={handleConfirmStatusChange} type="button">{savingStatusPatientId === statusConfirmation.patient.id ? <><ButtonSpinner label="Atualizando status" />Atualizando...</> : statusConfirmation.nextStatus === "ACTIVE" ? "Ativar" : "Inativar"}</button>
             </div>
           </section>
         </div>

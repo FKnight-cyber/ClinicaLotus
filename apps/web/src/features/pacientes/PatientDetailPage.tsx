@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ArrowLeft, Building2, CalendarClock, ClipboardList, FileDown, FileText, ToggleLeft, ToggleRight, UserRound, X } from "lucide-react";
 import Link from "next/link";
 import { useShellTitle } from "@/components/shell/AppShell";
+import { ButtonSpinner } from "@/components/feedback/ButtonSpinner";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { downloadPatientSummaryReportPdf } from "./patientSummaryReportPdf";
 
@@ -230,12 +231,17 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
   const canGenerateReport = true;
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [patientLoadError, setPatientLoadError] = useState<{ patientId: string; message: string } | null>(null);
+  const [patientLoadAttempt, setPatientLoadAttempt] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingStatus, setIsSavingStatus] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [downloadingPatientFileType, setDownloadingPatientFileType] = useState<PatientFileType | null>(null);
   const [isReportOptionsOpen, setIsReportOptionsOpen] = useState(false);
   const [reportOptions, setReportOptions] = useState<PatientReportOptions>({ includePsychologicalPart: true, includeMedicalPart: canReadEvolutions });
+  const savingPatientStatusRequestRef = useRef(false);
+  const generatingReportRequestRef = useRef(false);
+  const downloadingPatientFileRequestRef = useRef(false);
 
   useEffect(() => {
     if (!token || !canReadPatients) return;
@@ -243,22 +249,28 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
     let isCurrent = true;
   // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true);
+    setPatientLoadError(null);
     apiRequest<PatientDetail>(token, buildPatientDetailPath(patientId, clinicId))
       .then((nextPatient) => {
         if (!isCurrent) return;
         setPatient(nextPatient);
+        setPatientLoadError(null);
+        setMessage(null);
         setIsLoading(false);
       })
       .catch((error) => {
         if (!isCurrent) return;
-        setMessage(error instanceof Error ? error.message : "Não foi possível carregar o paciente.");
+        const nextError = error instanceof Error ? error.message : "Não foi possível carregar o paciente.";
+        setPatientLoadError({ patientId, message: nextError });
+        setPatient(null);
+        setMessage(nextError);
         setIsLoading(false);
       });
 
     return () => {
       isCurrent = false;
     };
-  }, [token, canReadPatients, clinicId, patientId]);
+  }, [token, canReadPatients, clinicId, patientId, patientLoadAttempt]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -285,7 +297,8 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
   useShellTitle(patient ? `Paciente ${patient.name}` : null);
 
   async function handleStatusChange() {
-    if (!token || !patient || !canUpdatePatientStatus) return;
+    if (!token || !patient || !canUpdatePatientStatus || savingPatientStatusRequestRef.current || generatingReportRequestRef.current || downloadingPatientFileRequestRef.current) return;
+    savingPatientStatusRequestRef.current = true;
     const nextStatus = patient.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
     setIsSavingStatus(true);
 
@@ -299,12 +312,14 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível atualizar o status do paciente.");
     } finally {
+      savingPatientStatusRequestRef.current = false;
       setIsSavingStatus(false);
     }
   }
 
   async function handleDownloadReport() {
-    if (!token || !patient) return;
+    if (!token || !patient || generatingReportRequestRef.current || savingPatientStatusRequestRef.current || downloadingPatientFileRequestRef.current) return;
+    generatingReportRequestRef.current = true;
     setIsGeneratingReport(true);
     setMessage("Gerando relatório do paciente...");
 
@@ -320,12 +335,14 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível gerar o relatório do paciente.");
     } finally {
+      generatingReportRequestRef.current = false;
       setIsGeneratingReport(false);
     }
   }
 
   async function handleDownloadPatientFile(file: PatientFile) {
-    if (!token || !patient || !canReadPatientFiles) return;
+    if (!token || !patient || !canReadPatientFiles || downloadingPatientFileRequestRef.current || savingPatientStatusRequestRef.current || generatingReportRequestRef.current) return;
+    downloadingPatientFileRequestRef.current = true;
     setDownloadingPatientFileType(file.type);
 
     try {
@@ -349,6 +366,7 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível baixar o arquivo do paciente.");
     } finally {
+      downloadingPatientFileRequestRef.current = false;
       setDownloadingPatientFileType(null);
     }
   }
@@ -357,7 +375,23 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
     return <div className="loading-panel">Você não possui permissão para visualizar pacientes.</div>;
   }
 
-  if (isLoading) {
+  const currentPatientLoadError = patientLoadError?.patientId === patientId ? patientLoadError.message : null;
+
+  if (patient?.id !== patientId && !isLoading && currentPatientLoadError) {
+    return (
+      <div className="loading-panel" role="alert">
+        <p>{currentPatientLoadError}</p>
+        <button className="secondary-button" onClick={() => {
+          setPatientLoadError(null);
+          setMessage(null);
+          setIsLoading(true);
+          setPatientLoadAttempt((attempt) => attempt + 1);
+        }} type="button">Tentar novamente</button>
+      </div>
+    );
+  }
+
+  if (isLoading || patient?.id !== patientId) {
     return <div className="loading-panel">Carregando informações do paciente...</div>;
   }
 
@@ -367,7 +401,9 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
 
   const ToggleIcon = patient.status === "ACTIVE" ? ToggleLeft : ToggleRight;
   const anamnesePermissionTooltip = "Você não tem permissão para ver anamnese do paciente";
-  const activeOperationalClinicId = patient.clinics.find((clinicLink) => clinicLink.status === "ACTIVE")?.clinicId ?? patient.clinics[0]?.clinicId;
+  const activeOperationalClinicId = patient.status === "ACTIVE"
+    ? patient.clinics.find((clinicLink) => clinicLink.status === "ACTIVE")?.clinicId ?? patient.clinics[0]?.clinicId
+    : undefined;
   const linkedClinic = patient.clinics[0] ?? null;
   const clinicHistory = buildClinicHistory(patient);
   const canGenerateSelectedReport = reportOptions.includePsychologicalPart || reportOptions.includeMedicalPart;
@@ -378,18 +414,18 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
         <Link className="back-link" href="/modulos/pacientes"><ArrowLeft size={16} />Voltar para pacientes</Link>
         <span className={`table-status ${patient.status === "ACTIVE" ? "is-finalized" : "is-inactive"}`}>{patient.status === "ACTIVE" ? "Ativo" : "Inativo"}</span>
         {canUpdatePatientStatus ? (
-          <button className="secondary-button" disabled={isSavingStatus} onClick={handleStatusChange} type="button">
-            <ToggleIcon aria-hidden="true" size={17} />{isSavingStatus ? "Atualizando..." : patient.status === "ACTIVE" ? "Inativar" : "Ativar"}
+          <button aria-busy={isSavingStatus} className="secondary-button" disabled={isSavingStatus || isGeneratingReport || Boolean(downloadingPatientFileType)} onClick={handleStatusChange} type="button">
+            {isSavingStatus ? <ButtonSpinner label="Atualizando status" /> : <ToggleIcon aria-hidden="true" size={17} />}{isSavingStatus ? "Atualizando..." : patient.status === "ACTIVE" ? "Inativar" : "Ativar"}
           </button>
         ) : null}
         {canGenerateReport ? (
-          <button className="secondary-button" disabled={isGeneratingReport} onClick={() => setIsReportOptionsOpen(true)} type="button">
-            <FileDown aria-hidden="true" size={17} />{isGeneratingReport ? "Gerando..." : "Baixar relatório"}
+          <button aria-busy={isGeneratingReport} className="secondary-button" disabled={isGeneratingReport || isSavingStatus || Boolean(downloadingPatientFileType)} onClick={() => setIsReportOptionsOpen(true)} type="button">
+            {isGeneratingReport ? <ButtonSpinner label="Gerando relatório" /> : <FileDown aria-hidden="true" size={17} />}{isGeneratingReport ? "Gerando..." : "Baixar relatório"}
           </button>
         ) : null}
       </div>
 
-      {message ? <div className="access-message">{message}</div> : null}
+      {message ? <div aria-live="polite" className="access-message" role="status">{message}</div> : null}
 
       <div className="patient-detail-summary-grid">
         <section className="plain-panel patient-registration-panel">
@@ -475,7 +511,7 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
                     <strong>{definition.label}</strong>
                     <span>{file ? `${file.fileName} (${formatPatientFileSize(file.size)})` : "Não enviado"}</span>
                   </div>
-                  {file ? <button className="table-action" disabled={downloadingPatientFileType === file.type} onClick={() => { void handleDownloadPatientFile(file); }} type="button"><FileDown aria-hidden="true" size={16} />{downloadingPatientFileType === file.type ? "Baixando..." : "Baixar"}</button> : null}
+                  {file ? <button aria-busy={downloadingPatientFileType === file.type} className="table-action" disabled={Boolean(downloadingPatientFileType) || isGeneratingReport || isSavingStatus} onClick={() => { void handleDownloadPatientFile(file); }} type="button">{downloadingPatientFileType === file.type ? <ButtonSpinner label="Baixando arquivo" /> : <FileDown aria-hidden="true" size={16} />}{downloadingPatientFileType === file.type ? "Baixando..." : "Baixar"}</button> : null}
                 </div>
               );
             })}
@@ -607,7 +643,7 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
 
       {isReportOptionsOpen ? (
         <div className="confirmation-modal-layer" role="presentation">
-          <button aria-label="Cancelar geração do relatório" className="confirmation-modal-backdrop" onClick={() => setIsReportOptionsOpen(false)} type="button" />
+          <button aria-label="Cancelar geração do relatório" className="confirmation-modal-backdrop" disabled={isGeneratingReport} onClick={() => setIsReportOptionsOpen(false)} type="button" />
           <section aria-labelledby="patient-report-modal-title" aria-modal="true" className="confirmation-modal-panel report-options-modal-panel" role="dialog">
             <div className="confirmation-modal-heading">
               <span className="confirmation-modal-icon is-primary"><FileDown aria-hidden="true" size={20} /></span>
@@ -615,24 +651,24 @@ export function PatientDetailPage({ clinicId, patientId }: { clinicId?: string; 
                 <span className="eyebrow">Relatório do paciente</span>
                 <h3 id="patient-report-modal-title">Escolha o que deve entrar no relatório</h3>
               </div>
-              <button className="icon-button" onClick={() => setIsReportOptionsOpen(false)} title="Fechar" type="button"><X aria-hidden="true" size={18} /></button>
+              <button className="icon-button" disabled={isGeneratingReport} onClick={() => setIsReportOptionsOpen(false)} title="Fechar" type="button"><X aria-hidden="true" size={18} /></button>
             </div>
             <p>Os dados cadastrais, incluindo admissão, alta e histórico de clínicas, sempre serão incluídos. Selecione abaixo quais partes clínicas devem compor o PDF.</p>
             <div className="access-checklist compact-checklist report-options-checklist">
               <label className="choice-pill">
-                <input checked={reportOptions.includePsychologicalPart} onChange={(event) => setReportOptions((currentOptions) => ({ ...currentOptions, includePsychologicalPart: event.target.checked }))} type="checkbox" />
+                <input checked={reportOptions.includePsychologicalPart} disabled={isGeneratingReport} onChange={(event) => setReportOptions((currentOptions) => ({ ...currentOptions, includePsychologicalPart: event.target.checked }))} type="checkbox" />
                 <strong>Parte psicológica / acolhimento</strong>
                 <span>Inclui histórico de anamneses e o resumo vinculado ao acolhimento.</span>
               </label>
               <label className="choice-pill">
-                <input checked={reportOptions.includeMedicalPart} disabled={!canReadEvolutions} onChange={(event) => setReportOptions((currentOptions) => ({ ...currentOptions, includeMedicalPart: event.target.checked }))} type="checkbox" />
+                <input checked={reportOptions.includeMedicalPart} disabled={!canReadEvolutions || isGeneratingReport} onChange={(event) => setReportOptions((currentOptions) => ({ ...currentOptions, includeMedicalPart: event.target.checked }))} type="checkbox" />
                 <strong>Parte médica</strong>
                 <span>{canReadEvolutions ? "Inclui evoluções finalizadas e o resumo médico do paciente." : "Seu usuário não possui permissão para incluir evoluções no relatório."}</span>
               </label>
             </div>
             <div className="confirmation-modal-actions">
               <button className="secondary-button" disabled={isGeneratingReport} onClick={() => setIsReportOptionsOpen(false)} type="button">Cancelar</button>
-              <button className="primary-button" disabled={isGeneratingReport || !canGenerateSelectedReport} onClick={handleDownloadReport} type="button">{isGeneratingReport ? "Gerando..." : "Gerar relatório"}</button>
+              <button aria-busy={isGeneratingReport} className="primary-button" disabled={isGeneratingReport || !canGenerateSelectedReport} onClick={handleDownloadReport} type="button">{isGeneratingReport ? <><ButtonSpinner label="Gerando relatório" />Gerando...</> : "Gerar relatório"}</button>
             </div>
           </section>
         </div>

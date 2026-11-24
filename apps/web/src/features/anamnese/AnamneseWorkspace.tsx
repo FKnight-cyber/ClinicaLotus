@@ -555,6 +555,9 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
   const canUpdateAnamneseOptions = canUpdateAnamnese;
   const canUpdateAnamneseQuestions = canUpdateAnamnese;
   const [currentRecord, setCurrentRecord] = useState<AnamneseRecord | null>(null);
+  const [isRecordLoading, setIsRecordLoading] = useState(true);
+  const [recordLoadError, setRecordLoadError] = useState<{ recordId: string; message: string } | null>(null);
+  const [recordLoadAttempt, setRecordLoadAttempt] = useState(0);
   const [templates, setTemplates] = useState<FormTemplate[]>(fallbackTemplates);
   const [activeTemplateId, setActiveTemplateId] = useState<TemplateId>("nursing-admission");
   const [activeSectionIndex, setActiveSectionIndex] = useState(0);
@@ -580,6 +583,9 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
   const [patients, setPatients] = useState<PatientSummary[]>([]);
   const [patientSearch, setPatientSearch] = useState("");
   const [debouncedPatientSearch, setDebouncedPatientSearch] = useState("");
+  const [isPatientOptionsLoading, setIsPatientOptionsLoading] = useState(false);
+  const [patientOptionsError, setPatientOptionsError] = useState<string | null>(null);
+  const [patientSearchAttempt, setPatientSearchAttempt] = useState(0);
   const [isPatientOptionsOpen, setIsPatientOptionsOpen] = useState(false);
   const [isEvolutionHistoryOpen, setIsEvolutionHistoryOpen] = useState(false);
   const [evolutionHistory, setEvolutionHistory] = useState<MedicalEvolution[]>([]);
@@ -587,14 +593,28 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
   const [evolutionHistoryPage, setEvolutionHistoryPage] = useState(1);
   const [isEvolutionHistoryLoading, setIsEvolutionHistoryLoading] = useState(false);
   const [printingEvolutionId, setPrintingEvolutionId] = useState<string | null>(null);
+  const [pdfAction, setPdfAction] = useState<"record" | "template" | null>(null);
   const [evolutionHistoryMessage, setEvolutionHistoryMessage] = useState("Histórico não carregado.");
+  const currentRecordRef = useRef(currentRecord);
   const lastSavedSnapshotRef = useRef<string | null>(null);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autosaveSequenceRef = useRef(0);
+  const autosaveInFlightRef = useRef<Promise<void> | null>(null);
+  const savingActionRef = useRef(false);
+  const pdfActionRef = useRef<"record" | "template" | null>(null);
 
   useEffect(() => {
     if (!token || !canReadAnamnese) return;
     let isCurrent = true;
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+    }
+    autosaveSequenceRef.current += 1;
+    Promise.resolve().then(() => {
+      if (!isCurrent) return;
+      setIsRecordLoading(true);
+      setRecordLoadError(null);
+    });
 
     Promise.all([fetchAnamneseRecord(token, recordId, clinicId), fetchAnamneseTemplates(token)])
       .then(([record, nextTemplates]) => {
@@ -602,17 +622,27 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
         lastSavedSnapshotRef.current = getRecordSnapshot(record);
         setCurrentRecord(record);
         setTemplates(nextTemplates);
+        setRecordLoadError(null);
         setMessage("Anamnese carregada do banco");
       })
       .catch((error) => {
         if (!isCurrent) return;
-        setMessage(error instanceof Error ? error.message : "Não foi possível carregar a anamnese.");
+        const nextError = error instanceof Error ? error.message : "Não foi possível carregar a anamnese.";
+        setRecordLoadError({ recordId, message: nextError });
+        setMessage(nextError);
+      })
+      .finally(() => {
+        if (isCurrent) setIsRecordLoading(false);
       });
 
     return () => {
       isCurrent = false;
     };
-  }, [canReadAnamnese, clinicId, recordId, token]);
+  }, [canReadAnamnese, clinicId, recordId, recordLoadAttempt, token]);
+
+  useEffect(() => {
+    currentRecordRef.current = currentRecord;
+  }, [currentRecord]);
 
   useEffect(() => {
     const timeout = setTimeout(() => setDebouncedPatientSearch(patientSearch), 350);
@@ -622,17 +652,27 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
   useEffect(() => {
     if (!token || !canReadPatients) return;
     let isCurrent = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsPatientOptionsLoading(true);
+    setPatientOptionsError(null);
 
     fetchPatients(token, debouncedPatientSearch, clinicId)
       .then((nextPatients) => {
         if (isCurrent) setPatients(nextPatients);
       })
-      .catch(() => undefined);
+      .catch((error) => {
+        if (!isCurrent) return;
+        setPatients([]);
+        setPatientOptionsError(error instanceof Error ? error.message : "Não foi possível carregar os pacientes.");
+      })
+      .finally(() => {
+        if (isCurrent) setIsPatientOptionsLoading(false);
+      });
 
     return () => {
       isCurrent = false;
     };
-  }, [canReadPatients, clinicId, debouncedPatientSearch, token]);
+  }, [canReadPatients, clinicId, debouncedPatientSearch, patientSearchAttempt, token]);
 
   useEffect(() => {
     if (!token || !canReadEvolutionHistory || !isEvolutionHistoryOpen || !currentRecord?.patientId) return;
@@ -663,7 +703,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
   }, [canReadEvolutionHistory, clinicId, currentRecord?.patientId, evolutionHistoryPage, isEvolutionHistoryOpen, token]);
 
   useEffect(() => {
-    if (!token || !currentRecord || !canUpdateAnamnese || currentRecord.status === "finalized") return;
+    if (!token || !currentRecord || currentRecord.id !== recordId || !canUpdateAnamnese || currentRecord.status === "finalized" || savingAction) return;
 
     const nextSnapshot = getRecordSnapshot(currentRecord);
 
@@ -681,19 +721,41 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
     const sequence = autosaveSequenceRef.current + 1;
     autosaveSequenceRef.current = sequence;
     autosaveTimerRef.current = setTimeout(() => {
-      setMessage("Salvando rascunho automaticamente...");
-      const payload = getRecordSavePayload(currentRecord);
-      void saveAnamneseRecord(token, currentRecord.id, payload, clinicId)
-        .then((savedRecord) => {
-          if (autosaveSequenceRef.current !== sequence) return;
-          lastSavedSnapshotRef.current = getRecordSnapshot(savedRecord);
-          setCurrentRecord((record) => record?.id === savedRecord.id ? savedRecord : record);
-          setMessage("Rascunho salvo automaticamente");
-        })
-        .catch((error) => {
-          if (autosaveSequenceRef.current !== sequence) return;
-          setMessage(error instanceof Error ? error.message : "Não foi possível salvar automaticamente.");
-        });
+      void (async () => {
+        if (autosaveInFlightRef.current) {
+          await autosaveInFlightRef.current;
+        }
+
+        if (autosaveSequenceRef.current !== sequence || savingActionRef.current) return;
+
+        const recordToSave = currentRecordRef.current;
+        if (!recordToSave) return;
+        const snapshot = getRecordSnapshot(recordToSave);
+        if (snapshot === lastSavedSnapshotRef.current) return;
+
+        setMessage("Salvando rascunho automaticamente...");
+        const savePromise = saveAnamneseRecord(token, recordToSave.id, getRecordSavePayload(recordToSave), clinicId)
+          .then((savedRecord) => {
+            if (currentRecordRef.current?.id !== savedRecord.id) return;
+            lastSavedSnapshotRef.current = getRecordSnapshot(savedRecord);
+            if (autosaveSequenceRef.current !== sequence) return;
+            setCurrentRecord((record) => record?.id === savedRecord.id && getRecordSnapshot(record) === snapshot ? savedRecord : record);
+            setMessage("Rascunho salvo automaticamente");
+          })
+          .catch((error) => {
+            if (autosaveSequenceRef.current === sequence) {
+              setMessage(error instanceof Error ? error.message : "Não foi possível salvar automaticamente.");
+            }
+          });
+        autosaveInFlightRef.current = savePromise;
+        try {
+          await savePromise;
+        } finally {
+          if (autosaveInFlightRef.current === savePromise) {
+            autosaveInFlightRef.current = null;
+          }
+        }
+      })();
     }, 800);
 
     return () => {
@@ -701,7 +763,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
         clearTimeout(autosaveTimerRef.current);
       }
     };
-  }, [canUpdateAnamnese, clinicId, currentRecord, token]);
+  }, [canUpdateAnamnese, clinicId, currentRecord, recordId, savingAction, token]);
 
   useEffect(() => () => {
     if (autosaveTimerRef.current) {
@@ -713,8 +775,24 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
     return <div className="loading-panel">Você não possui permissão para visualizar anamneses.</div>;
   }
 
-  if (!currentRecord) {
-    return <div className="loading-panel">Carregando anamnese...</div>;
+  if (!currentRecord || currentRecord.id !== recordId) {
+    const currentLoadError = recordLoadError?.recordId === recordId ? recordLoadError.message : null;
+    if (isRecordLoading || !currentLoadError) {
+      return <div className="loading-panel">Carregando anamnese...</div>;
+    }
+
+    return (
+      <div className="loading-panel" role="alert">
+        <p>{currentLoadError}</p>
+        <button className="secondary-button" onClick={() => {
+          setRecordLoadError(null);
+          setIsRecordLoading(true);
+          setRecordLoadAttempt((attempt) => attempt + 1);
+        }} type="button">
+          Tentar novamente
+        </button>
+      </div>
+    );
   }
 
   const loadedRecord = currentRecord;
@@ -746,8 +824,8 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
   const hasLinkedPatient = Boolean(loadedRecord.patientId);
   const linkedPatientName = selectedPatient?.name ?? (hasLinkedPatient ? getPatientName(loadedRecord) : "Sem paciente vinculado");
   const canEditCurrentRecord = canUpdateAnamnese && loadedRecord.status !== "finalized";
-  const canEditActiveTemplate = canEditCurrentRecord && !isActiveTemplateCompleted;
-  const canLinkPatient = canEditCurrentRecord && canReadPatients;
+  const canEditActiveTemplate = canEditCurrentRecord && !isActiveTemplateCompleted && !savingAction;
+  const canLinkPatient = canEditCurrentRecord && canReadPatients && !savingAction;
   const shouldShowPatientOptions = canLinkPatient && isPatientOptionsOpen;
   const evolutionHistoryOffset = (evolutionHistoryPage - 1) * evolutionHistoryPageSize;
   const canOpenEvolutionHistory = canReadEvolutionHistory && Boolean(loadedRecord.patientId);
@@ -765,7 +843,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
 
   function updateField(templateId: TemplateId, fieldId: string, value: FieldValue) {
     setCurrentRecord((record) => {
-      if (!record) {
+      if (!record || savingActionRef.current) {
         return record;
       }
 
@@ -794,73 +872,99 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
 
   async function persistDraft(record: AnamneseRecord) {
     if (!token) return record;
+    const requestSnapshot = getRecordSnapshot(record);
     const savedRecord = await saveAnamneseRecord(token, record.id, getRecordSavePayload(record), clinicId);
-    lastSavedSnapshotRef.current = getRecordSnapshot(savedRecord);
-    setCurrentRecord(savedRecord);
+    const savedSnapshot = getRecordSnapshot(savedRecord);
+    lastSavedSnapshotRef.current = savedSnapshot;
+    if (currentRecordRef.current?.id === savedRecord.id && getRecordSnapshot(currentRecordRef.current) === requestSnapshot) {
+      currentRecordRef.current = savedRecord;
+      setCurrentRecord((current) => current?.id === savedRecord.id && getRecordSnapshot(current) === requestSnapshot ? savedRecord : current);
+    }
     return savedRecord;
   }
 
   async function saveRecord(status: "draft" | "finalized") {
-    if (!token || savingAction) return;
+    if (!token || savingActionRef.current) return;
     if (status === "draft" && !canUpdateAnamnese) return;
     if (status === "finalized" && !canFinalizeAnamnese) return;
+    savingActionRef.current = true;
     if (autosaveTimerRef.current) {
       clearTimeout(autosaveTimerRef.current);
     }
-    const validationIssues = status === "finalized" ? validateRecord(loadedRecord, effectiveTemplates) : [];
-    setIssues(validationIssues);
-
-    if (validationIssues.length > 0) {
-      setMessage("Existem campos obrigatórios pendentes");
-      return;
-    }
-
-    if (status === "finalized" && !allTemplatesCompleted) {
-      setMessage("Conclua todas as fichas antes de finalizar a anamnese completa");
-      return;
-    }
-
+    autosaveSequenceRef.current += 1;
     setSavingAction(status);
     setMessage(status === "finalized" ? "Salvando e finalizando anamnese..." : "Salvando rascunho no banco...");
     try {
-      const savedRecord = await persistDraft(loadedRecord);
+      if (autosaveInFlightRef.current) {
+        await autosaveInFlightRef.current;
+      }
+
+      const recordToSave = loadedRecord;
+      const validationIssues = status === "finalized" ? validateRecord(recordToSave, effectiveTemplates) : [];
+      setIssues(validationIssues);
+
+      if (validationIssues.length > 0) {
+        setMessage("Existem campos obrigatórios pendentes");
+        return;
+      }
+
+      if (status === "finalized" && !effectiveTemplates.every((template) => recordToSave.templateStatuses?.[template.id]?.status === "completed")) {
+        setMessage("Conclua todas as fichas antes de finalizar a anamnese completa");
+        return;
+      }
+
+      const savedRecord = getRecordSnapshot(recordToSave) === lastSavedSnapshotRef.current
+        ? recordToSave
+        : await persistDraft(recordToSave);
       const nextRecord = status === "finalized" ? await finalizeAnamneseRecord(token, savedRecord.id, clinicId) : savedRecord;
       lastSavedSnapshotRef.current = getRecordSnapshot(nextRecord);
       setCurrentRecord(nextRecord);
+      currentRecordRef.current = nextRecord;
       setMessage(status === "finalized" ? "Anamnese finalizada no banco" : "Rascunho salvo no banco");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível salvar a anamnese.");
     } finally {
+      savingActionRef.current = false;
       setSavingAction(null);
     }
   }
 
   async function completeActiveTemplate() {
-    if (!token || !canFinalizeAnamnese || loadedRecord.status === "finalized" || savingAction) return;
+    if (!token || !canFinalizeAnamnese || loadedRecord.status === "finalized" || savingActionRef.current) return;
+    savingActionRef.current = true;
     setIsTemplateCompletionConfirmOpen(false);
     if (autosaveTimerRef.current) {
       clearTimeout(autosaveTimerRef.current);
     }
-
-    const validationIssues = validateTemplateRecord(loadedRecord, activeTemplate);
-    setIssues(validationIssues);
-
-    if (validationIssues.length > 0) {
-      setMessage("Existem campos obrigatórios pendentes nesta ficha");
-      return;
-    }
-
+    autosaveSequenceRef.current += 1;
     setSavingAction("complete-template");
     setMessage(`Concluindo ficha ${activeTemplate.shortTitle}...`);
     try {
-      const savedRecord = await persistDraft(loadedRecord);
+      if (autosaveInFlightRef.current) {
+        await autosaveInFlightRef.current;
+      }
+
+      const recordToSave = loadedRecord;
+      const validationIssues = validateTemplateRecord(recordToSave, activeTemplate);
+      setIssues(validationIssues);
+
+      if (validationIssues.length > 0) {
+        setMessage("Existem campos obrigatórios pendentes nesta ficha");
+        return;
+      }
+
+      const savedRecord = getRecordSnapshot(recordToSave) === lastSavedSnapshotRef.current
+        ? recordToSave
+        : await persistDraft(recordToSave);
       const completedRecord = await completeAnamneseTemplate(token, savedRecord.id, activeTemplate.id, clinicId);
       lastSavedSnapshotRef.current = getRecordSnapshot(completedRecord);
       setCurrentRecord(completedRecord);
+      currentRecordRef.current = completedRecord;
       setMessage(`Ficha ${activeTemplate.shortTitle} concluída`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível concluir a ficha.");
     } finally {
+      savingActionRef.current = false;
       setSavingAction(null);
     }
   }
@@ -886,7 +990,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
   }
 
   function linkPatient(patientId: string) {
-    if (!canLinkPatient) return;
+    if (!canLinkPatient || savingActionRef.current) return;
     const patient = patients.find((item) => item.id === patientId);
     setCurrentRecord((record) => record ? {
       ...record,
@@ -935,24 +1039,42 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
   }
 
   async function handleDownloadPdf() {
-    if (!token || !canPrintAnamnese) return;
+    if (!token || !canPrintAnamnese || pdfActionRef.current) return;
+    pdfActionRef.current = "record";
+    setPdfAction("record");
     setMessage("Gerando PDF...");
-    const document = await emitAnamnesePdfDocument(token, loadedRecord.id, clinicId);
-    await downloadAnamnesePdf(loadedRecord, effectiveTemplates);
-    setMessage(`PDF ${document.code} gerado.`);
+    try {
+      const document = await emitAnamnesePdfDocument(token, loadedRecord.id, clinicId);
+      await downloadAnamnesePdf(loadedRecord, effectiveTemplates);
+      setMessage(`PDF ${document.code} gerado.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível gerar o PDF da anamnese.");
+    } finally {
+      pdfActionRef.current = null;
+      setPdfAction(null);
+    }
   }
 
   async function handleDownloadTemplatePdf() {
-    if (!token || !canPrintAnamnese || !isActiveTemplateCompleted) return;
+    if (!token || !canPrintAnamnese || !isActiveTemplateCompleted || pdfActionRef.current) return;
+    pdfActionRef.current = "template";
+    setPdfAction("template");
     setMessage(`Gerando PDF da ficha ${activeTemplate.shortTitle}...`);
-    const document = await emitAnamneseTemplatePdfDocument(token, loadedRecord.id, activeTemplate.id, clinicId);
-    await downloadAnamnesePdf(loadedRecord, effectiveTemplates, {
-      templateId: activeTemplate.id,
-      title: "FICHA DE ANAMNESE",
-      summaryStatus: `Documento parcial - ${activeTemplate.shortTitle} concluída`,
-      fileNameSuffix: activeTemplate.id
-    });
-    setMessage(`PDF parcial ${document.code} gerado.`);
+    try {
+      const document = await emitAnamneseTemplatePdfDocument(token, loadedRecord.id, activeTemplate.id, clinicId);
+      await downloadAnamnesePdf(loadedRecord, effectiveTemplates, {
+        templateId: activeTemplate.id,
+        title: "FICHA DE ANAMNESE",
+        summaryStatus: `Documento parcial - ${activeTemplate.shortTitle} concluída`,
+        fileNameSuffix: activeTemplate.id
+      });
+      setMessage(`PDF parcial ${document.code} gerado.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível gerar o PDF da ficha.");
+    } finally {
+      pdfActionRef.current = null;
+      setPdfAction(null);
+    }
   }
 
   function addCustomQuestion() {
@@ -1416,6 +1538,15 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
               </label>
               {shouldShowPatientOptions ? (
                 <div className="patient-link-options" aria-label="Opções de pacientes">
+                  {isPatientOptionsLoading ? <div role="status">Buscando pacientes...</div> : null}
+                  {!isPatientOptionsLoading && patientOptionsError ? (
+                    <div role="alert">
+                      <span>{patientOptionsError}</span>
+                      <button className="table-action" onClick={() => setPatientSearchAttempt((attempt) => attempt + 1)} type="button">Tentar novamente</button>
+                    </div>
+                  ) : null}
+                  {!isPatientOptionsLoading && !patientOptionsError ? (
+                    <>
                   {hasLinkedPatient ? (
                     <button className="is-unlink" onClick={() => linkPatient("")} type="button">
                       <strong>Sem vínculo</strong>
@@ -1433,6 +1564,8 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
                     );
                   })}
                   {patients.length === 0 ? <div className="empty-state">Nenhum paciente encontrado.</div> : null}
+                    </>
+                  ) : null}
                 </div>
               ) : null}
             </div> : null}
@@ -1960,7 +2093,7 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
               </button>
             ) : null}
             {canUpdateAnamnese && !isActiveTemplateCompleted ? (
-              <button className="secondary-button" disabled={loadedRecord.status === "finalized" || Boolean(savingAction)} onClick={() => saveRecord("draft")} type="button">
+              <button aria-busy={savingAction === "draft"} className="secondary-button" disabled={loadedRecord.status === "finalized" || Boolean(savingAction)} onClick={() => saveRecord("draft")} type="button">
                 {savingAction === "draft" ? <ButtonSpinner label="Salvando rascunho" /> : <><Save size={17} />Salvar rascunho</>}
               </button>
             ) : null}
@@ -1971,25 +2104,22 @@ export function AnamneseWorkspace({ clinicId, recordId }: AnamneseWorkspaceProps
               </button>
             ) : null}
             {canPrintAnamnese ? (
-              <button className="secondary-button" disabled={loadedRecord.status !== "finalized"} onClick={() => { void handleDownloadPdf(); }} type="button">
-                <Printer size={17} />
-                Baixar PDF
+              <button aria-busy={pdfAction === "record"} className="secondary-button" disabled={loadedRecord.status !== "finalized" || Boolean(pdfAction)} onClick={() => { void handleDownloadPdf(); }} type="button">
+                {pdfAction === "record" ? <ButtonSpinner label="Gerando PDF" /> : <><Printer size={17} />Baixar PDF</>}
               </button>
             ) : null}
             {canPrintAnamnese ? (
-              <button className="secondary-button" disabled={!isActiveTemplateCompleted} onClick={() => { void handleDownloadTemplatePdf(); }} type="button">
-                <Printer size={17} />
-                PDF da ficha
+              <button aria-busy={pdfAction === "template"} className="secondary-button" disabled={!isActiveTemplateCompleted || Boolean(pdfAction)} onClick={() => { void handleDownloadTemplatePdf(); }} type="button">
+                {pdfAction === "template" ? <ButtonSpinner label="Gerando PDF da ficha" /> : <><Printer size={17} />PDF da ficha</>}
               </button>
             ) : null}
             {canFinalizeAnamnese && !isActiveTemplateCompleted ? (
-              <button className="secondary-button" disabled={loadedRecord.status === "finalized" || Boolean(savingAction)} onClick={() => setIsTemplateCompletionConfirmOpen(true)} type="button">
-                <CheckCircle2 size={17} />
-                Concluir ficha
+              <button aria-busy={savingAction === "complete-template"} className="secondary-button" disabled={loadedRecord.status === "finalized" || Boolean(savingAction)} onClick={() => setIsTemplateCompletionConfirmOpen(true)} type="button">
+                {savingAction === "complete-template" ? <ButtonSpinner label="Concluindo ficha" /> : <><CheckCircle2 size={17} />Concluir ficha</>}
               </button>
             ) : null}
             {canFinalizeAnamnese ? (
-              <button className="primary-button" disabled={loadedRecord.status === "finalized" || !allTemplatesCompleted || Boolean(savingAction)} onClick={() => saveRecord("finalized")} type="button">
+              <button aria-busy={savingAction === "finalized"} className="primary-button" disabled={loadedRecord.status === "finalized" || !allTemplatesCompleted || Boolean(savingAction)} onClick={() => saveRecord("finalized")} type="button">
                 {savingAction === "finalized" ? <ButtonSpinner label="Finalizando" /> : <><FileCheck2 size={17} />Finalizar completa</>}
               </button>
             ) : null}

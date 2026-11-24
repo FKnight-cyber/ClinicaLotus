@@ -1,9 +1,9 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, CheckCircle2, Save, ShieldCheck, UserCheck } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { ButtonSpinner } from "@/components/feedback/ButtonSpinner";
 import { useAuth } from "@/features/auth/AuthProvider";
 
 type AccessGroup = {
@@ -69,11 +69,29 @@ async function apiRequest<T>(token: string, path: string, options: RequestInit =
 
 export function UserDetailPage({ userId }: { userId: string }) {
   const { hasPermission, refreshProfile, token, user } = useAuth();
-  const router = useRouter();
   const canReadUsers = hasPermission("access.users.read");
   const canManageUsers = hasPermission("access.users.manage");
   const canManageUserClinics = hasPermission("access.users.clinics.manage");
-  const isSelf = user?.id === userId;
+  const authUserId = user?.id;
+  const authUserLogin = user?.login;
+  const authUserName = user?.name;
+  const authUserEmail = user?.email;
+  const authUserType = user?.userType;
+  const authProfessionalArea = user?.professionalArea;
+  const authMustChangePassword = user?.mustChangePassword;
+  const currentUser = useMemo(() => {
+    if (!authUserId || authUserLogin === undefined || authUserName === undefined) return null;
+    return {
+      id: authUserId,
+      login: authUserLogin,
+      name: authUserName,
+      email: authUserEmail,
+      userType: authUserType,
+      professionalArea: authProfessionalArea,
+      mustChangePassword: authMustChangePassword
+    };
+  }, [authMustChangePassword, authProfessionalArea, authUserEmail, authUserId, authUserLogin, authUserName, authUserType]);
+  const isSelf = currentUser?.id === userId;
   const [targetUser, setTargetUser] = useState<AccessUser | null>(null);
   const [groups, setGroups] = useState<AccessGroup[]>([]);
   const [availableClinics, setAvailableClinics] = useState<Clinic[]>([]);
@@ -82,11 +100,15 @@ export function UserDetailPage({ userId }: { userId: string }) {
   const [clinicDraft, setClinicDraft] = useState<string[]>([]);
   const [statusDraft, setStatusDraft] = useState<AccessUser["status"]>("PENDING");
   const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isSavingStatus, setIsSavingStatus] = useState(false);
+  const [isSavingGroups, setIsSavingGroups] = useState(false);
   const [isSavingClinics, setIsSavingClinics] = useState(false);
 
   useEffect(() => {
-    if (!token || !user) return;
+    if (!token || !currentUser) return;
 
     let isCurrent = true;
     Promise.resolve().then(async () => {
@@ -114,14 +136,14 @@ export function UserDetailPage({ userId }: { userId: string }) {
 
       if (isSelf) {
         const nextUser: AccessUser = {
-          id: user.id,
-          login: user.login,
-          name: user.name,
-          email: user.email,
-          userType: user.userType ?? "MANAGER",
-          professionalArea: user.professionalArea,
+          id: currentUser.id,
+          login: currentUser.login,
+          name: currentUser.name,
+          email: currentUser.email,
+          userType: currentUser.userType ?? "MANAGER",
+          professionalArea: currentUser.professionalArea,
           status: "ACTIVE",
-          mustChangePassword: Boolean(user.mustChangePassword),
+          mustChangePassword: Boolean(currentUser.mustChangePassword),
           groups: [],
           clinics: []
         };
@@ -145,7 +167,7 @@ export function UserDetailPage({ userId }: { userId: string }) {
     return () => {
       isCurrent = false;
     };
-  }, [token, user, userId, canReadUsers, canManageUsers, canManageUserClinics, isSelf]);
+  }, [token, currentUser, userId, canReadUsers, canManageUsers, canManageUserClinics, isSelf]);
 
   const toggleGroup = (groupId: string) => {
     setGroupDraft((current) => current.includes(groupId) ? current.filter((id) => id !== groupId) : [...current, groupId]);
@@ -164,49 +186,81 @@ export function UserDetailPage({ userId }: { userId: string }) {
       email: String(formData.get("email") ?? draft.email)
     };
 
-    if (canManageUsers) {
-      const updatedUser = await apiRequest<AccessUser>(token, `/api/access/users/${targetUser.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ name: nextDraft.name, email: nextDraft.email || undefined })
-      });
-      setTargetUser(updatedUser);
-      setDraft({ name: updatedUser.name, email: updatedUser.email ?? "" });
-      if (isSelf) await refreshProfile();
-    } else if (isSelf) {
-      await apiRequest(token, "/api/auth/me", {
-        method: "PATCH",
-        body: JSON.stringify({ name: nextDraft.name, email: nextDraft.email || undefined })
-      });
-      await refreshProfile();
-      setDraft(nextDraft);
-    }
+    setMessage(null);
+    setError(null);
+    setIsSavingProfile(true);
+    try {
+      if (canManageUsers) {
+        const updatedUser = await apiRequest<AccessUser>(token, `/api/access/users/${targetUser.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ name: nextDraft.name, email: nextDraft.email || undefined })
+        });
+        setTargetUser(updatedUser);
+        setDraft({ name: updatedUser.name, email: updatedUser.email ?? "" });
+        if (isSelf) await refreshProfile();
+      } else if (isSelf) {
+        await apiRequest(token, "/api/auth/me", {
+          method: "PATCH",
+          body: JSON.stringify({ name: nextDraft.name, email: nextDraft.email || undefined })
+        });
+        const refreshedUser = await refreshProfile();
+        if (refreshedUser) {
+          setTargetUser((current) => current ? { ...current, name: refreshedUser.name, email: refreshedUser.email ?? "" } : current);
+        }
+        setDraft(nextDraft);
+      }
 
-    setMessage("Dados do usuário atualizados.");
+      setMessage("Dados do usuário atualizados.");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Não foi possível atualizar os dados do usuário.");
+    } finally {
+      setIsSavingProfile(false);
+    }
   };
 
   const handleSaveStatus = async (nextStatus = statusDraft) => {
     if (!token || !targetUser || !canManageUsers) return;
-    const updatedUser = await apiRequest<AccessUser>(token, `/api/access/users/${targetUser.id}/status`, {
-      method: "PATCH",
-      body: JSON.stringify({ status: nextStatus })
-    });
-    setTargetUser(updatedUser);
-    setStatusDraft(updatedUser.status);
-    setMessage(nextStatus === "ACTIVE" ? "Usuário aprovado e liberado para login." : "Status do usuário atualizado.");
+    setMessage(null);
+    setError(null);
+    setIsSavingStatus(true);
+    try {
+      const updatedUser = await apiRequest<AccessUser>(token, `/api/access/users/${targetUser.id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: nextStatus })
+      });
+      setTargetUser(updatedUser);
+      setStatusDraft(updatedUser.status);
+      setMessage(nextStatus === "ACTIVE" ? "Usuário aprovado e liberado para login." : "Status do usuário atualizado.");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Não foi possível atualizar o status do usuário.");
+    } finally {
+      setIsSavingStatus(false);
+    }
   };
 
   const handleSaveGroups = async () => {
     if (!token || !targetUser || !canManageUsers) return;
-    const updatedUser = await apiRequest<AccessUser>(token, `/api/access/users/${targetUser.id}/groups`, {
-      method: "PATCH",
-      body: JSON.stringify({ groupIds: groupDraft })
-    });
-    setTargetUser(updatedUser);
-    setMessage("Grupos de acesso atualizados.");
+    setMessage(null);
+    setError(null);
+    setIsSavingGroups(true);
+    try {
+      const updatedUser = await apiRequest<AccessUser>(token, `/api/access/users/${targetUser.id}/groups`, {
+        method: "PATCH",
+        body: JSON.stringify({ groupIds: groupDraft })
+      });
+      setTargetUser(updatedUser);
+      setMessage("Grupos de acesso atualizados.");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Não foi possível atualizar os grupos do usuário.");
+    } finally {
+      setIsSavingGroups(false);
+    }
   };
 
   const handleSaveClinics = async () => {
     if (!token || !targetUser || !canManageUserClinics) return;
+    setMessage(null);
+    setError(null);
     setIsSavingClinics(true);
 
     try {
@@ -218,8 +272,8 @@ export function UserDetailPage({ userId }: { userId: string }) {
       setClinicDraft(updatedUser.clinics.map((clinic) => clinic.clinic.id));
       if (isSelf) await refreshProfile();
       setMessage("Clínicas vinculadas ao usuário atualizadas.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível atualizar as clínicas do usuário.");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Não foi possível atualizar as clínicas do usuário.");
     } finally {
       setIsSavingClinics(false);
     }
@@ -252,15 +306,16 @@ export function UserDetailPage({ userId }: { userId: string }) {
       </div>
 
       {message ? <div className="access-message">{message}</div> : null}
+      {error ? <div className="login-error" role="alert">{error}</div> : null}
 
       <div className="access-grid">
         <section className="plain-panel">
           <h3>Dados do usuário</h3>
           <form className="access-form" onSubmit={handleSaveProfile}>
             <label><span>Login</span><input disabled value={targetUser.login} /></label>
-            <label><span>Nome</span><input name="name" onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} required value={draft.name} /></label>
-            <label><span>Email</span><input name="email" onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} type="email" value={draft.email} /></label>
-            {isSelf || canManageUsers ? <button className="primary-button" type="submit"><Save aria-hidden="true" size={17} />Salvar dados</button> : null}
+            <label><span>Nome</span><input disabled={isSavingProfile} name="name" onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} required value={draft.name} /></label>
+            <label><span>Email</span><input disabled={isSavingProfile} name="email" onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} type="email" value={draft.email} /></label>
+            {isSelf || canManageUsers ? <button aria-busy={isSavingProfile} className="primary-button" disabled={isSavingProfile} type="submit">{isSavingProfile ? <ButtonSpinner label="Salvando dados" /> : <Save aria-hidden="true" size={17} />}{isSavingProfile ? "Salvando..." : "Salvar dados"}</button> : null}
           </form>
         </section>
 
@@ -268,13 +323,13 @@ export function UserDetailPage({ userId }: { userId: string }) {
           <section className="plain-panel">
             <h3>Aprovacao e status</h3>
             <div className="access-form">
-              <label><span>Status</span><select onChange={(event) => setStatusDraft(event.target.value as AccessUser["status"])} value={statusDraft}>
+              <label><span>Status</span><select disabled={isSavingStatus} onChange={(event) => setStatusDraft(event.target.value as AccessUser["status"])} value={statusDraft}>
                 <option value="PENDING">Pendente</option>
                 <option value="ACTIVE">Ativo</option>
                 <option value="INACTIVE">Inativo</option>
               </select></label>
-              <button className="secondary-button" onClick={() => handleSaveStatus()} type="button"><Save aria-hidden="true" size={17} />Salvar status</button>
-              {targetUser.status === "PENDING" ? <button className="primary-button" onClick={() => handleSaveStatus("ACTIVE")} type="button"><CheckCircle2 aria-hidden="true" size={17} />Aprovar cadastro</button> : null}
+              <button aria-busy={isSavingStatus} className="secondary-button" disabled={isSavingStatus} onClick={() => handleSaveStatus()} type="button">{isSavingStatus ? <ButtonSpinner label="Salvando status" /> : <Save aria-hidden="true" size={17} />}{isSavingStatus ? "Salvando..." : "Salvar status"}</button>
+              {targetUser.status === "PENDING" ? <button aria-busy={isSavingStatus} className="primary-button" disabled={isSavingStatus} onClick={() => handleSaveStatus("ACTIVE")} type="button">{isSavingStatus ? <ButtonSpinner label="Aprovando cadastro" /> : <CheckCircle2 aria-hidden="true" size={17} />}{isSavingStatus ? "Aprovando..." : "Aprovar cadastro"}</button> : null}
             </div>
           </section>
         ) : null}
@@ -298,7 +353,7 @@ export function UserDetailPage({ userId }: { userId: string }) {
               ))}
               {availableClinics.length === 0 ? <div className="empty-state">Nenhuma clínica ativa encontrada.</div> : null}
             </div>
-            <button className="primary-button" disabled={isSavingClinics} onClick={handleSaveClinics} type="button"><Save aria-hidden="true" size={17} />{isSavingClinics ? "Salvando..." : "Salvar clínicas"}</button>
+            <button aria-busy={isSavingClinics} className="primary-button" disabled={isSavingClinics} onClick={handleSaveClinics} type="button">{isSavingClinics ? <ButtonSpinner label="Salvando clínicas" /> : <Save aria-hidden="true" size={17} />}{isSavingClinics ? "Salvando..." : "Salvar clínicas"}</button>
           </div>
         ) : (
           <div className="access-checklist compact-checklist">
@@ -314,12 +369,12 @@ export function UserDetailPage({ userId }: { userId: string }) {
               <h3>Grupos e funcionalidades</h3>
               <p>Os acessos efetivos do usuário são definidos pelos grupos vinculados aqui.</p>
             </div>
-            <button className="primary-button" onClick={handleSaveGroups} type="button"><ShieldCheck aria-hidden="true" size={17} />Salvar acessos</button>
+            <button aria-busy={isSavingGroups} className="primary-button" disabled={isSavingGroups} onClick={handleSaveGroups} type="button">{isSavingGroups ? <ButtonSpinner label="Salvando acessos" /> : <ShieldCheck aria-hidden="true" size={17} />}{isSavingGroups ? "Salvando..." : "Salvar acessos"}</button>
           </div>
           <div className="access-checklist">
             {groups.map((group) => (
               <label className="choice-pill" key={group.id}>
-                <input checked={groupDraft.includes(group.id)} onChange={() => toggleGroup(group.id)} type="checkbox" />
+                <input checked={groupDraft.includes(group.id)} disabled={isSavingGroups} onChange={() => toggleGroup(group.id)} type="checkbox" />
                 {group.name}
               </label>
             ))}

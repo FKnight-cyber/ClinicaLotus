@@ -1,8 +1,9 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Save, UserCircle } from "lucide-react";
 import { AppShell } from "@/components/shell/AppShell";
+import { ButtonSpinner } from "@/components/feedback/ButtonSpinner";
 import { useAuth } from "@/features/auth/AuthProvider";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
@@ -113,15 +114,19 @@ export default function MeuPerfilPage() {
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [availableClinics, setAvailableClinics] = useState<Clinic[]>([]);
+  const [isLoadingAvailableClinics, setIsLoadingAvailableClinics] = useState(false);
   const [clinicIds, setClinicIds] = useState<string[]>([]);
   const [isSavingClinics, setIsSavingClinics] = useState(false);
+  const profileSaveInFlightRef = useRef(false);
+  const clinicsSaveInFlightRef = useRef(false);
+  const profileFormDirtyRef = useRef(false);
+  const clinicDraftDirtyRef = useRef(false);
   const canViewMedicalInfo = hasPermission("profile.medical_info.read");
   const canManageUserClinics = hasPermission("access.users.clinics.manage");
   const accessibleClinics = clinics.filter((clinic) => clinic.status === "ACTIVE");
 
   useEffect(() => {
-    if (!user) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!user || profileFormDirtyRef.current) return;
     setForm({
       login: user.login,
       name: user.name,
@@ -136,18 +141,26 @@ export default function MeuPerfilPage() {
   }, [user]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setClinicIds(clinics.filter((clinic) => clinic.status === "ACTIVE").map((clinic) => clinic.id));
+    if (clinicDraftDirtyRef.current) return;
+    const nextClinicIds = clinics.filter((clinic) => clinic.status === "ACTIVE").map((clinic) => clinic.id);
+    setClinicIds((currentClinicIds) => currentClinicIds.length === nextClinicIds.length && currentClinicIds.every((clinicId) => nextClinicIds.includes(clinicId))
+      ? currentClinicIds
+      : nextClinicIds);
   }, [clinics]);
 
   useEffect(() => {
     if (!token || !canManageUserClinics) return;
 
     let isCurrent = true;
+    Promise.resolve().then(() => {
+      if (isCurrent) setIsLoadingAvailableClinics(true);
+    });
     fetchAvailableClinics(token).then((nextClinics) => {
       if (isCurrent) setAvailableClinics(nextClinics);
     }).catch((caughtError) => {
       if (isCurrent) setError(caughtError instanceof Error ? caughtError.message : "Não foi possível carregar as clínicas.");
+    }).finally(() => {
+      if (isCurrent) setIsLoadingAvailableClinics(false);
     });
 
     return () => {
@@ -163,36 +176,58 @@ export default function MeuPerfilPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!token) return;
+    if (!token || profileSaveInFlightRef.current) return;
+    profileSaveInFlightRef.current = true;
     setMessage(null);
     setError(null);
     setIsSaving(true);
 
     try {
       await updateProfile(token, form);
-      await refreshProfile();
-      setForm((currentForm) => ({ ...currentForm, password: "" }));
+      const refreshedProfile = await refreshProfile();
+      if (refreshedProfile) {
+        setForm({
+          login: refreshedProfile.login,
+          name: refreshedProfile.name,
+          email: refreshedProfile.email ?? "",
+          professionalArea: refreshedProfile.professionalArea ?? getDefaultProfessionalArea(refreshedProfile.userType),
+          professionalCouncil: refreshedProfile.professionalCouncil ?? getDefaultProfessionalCouncil(refreshedProfile.userType),
+          professionalRegistration: refreshedProfile.professionalRegistration ?? "",
+          professionalCouncilState: refreshedProfile.professionalCouncilState ?? "",
+          professionalSpecialty: refreshedProfile.professionalSpecialty ?? "",
+          password: ""
+        });
+      } else {
+        setForm((currentForm) => ({ ...currentForm, password: "" }));
+      }
+      profileFormDirtyRef.current = false;
       setMessage("Perfil atualizado.");
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Não foi possível atualizar o perfil.");
     } finally {
+      profileSaveInFlightRef.current = false;
       setIsSaving(false);
     }
   }
 
   async function handleSaveClinics() {
-    if (!token || !canManageUserClinics) return;
+    if (!token || !canManageUserClinics || clinicsSaveInFlightRef.current) return;
+    clinicsSaveInFlightRef.current = true;
     setMessage(null);
     setError(null);
     setIsSavingClinics(true);
 
     try {
       await updateUserClinics(token, clinicIds);
-      await refreshProfile();
+      const refreshedProfile = await refreshProfile();
+      const nextClinicIds = refreshedProfile?.clinics?.filter((clinic) => clinic.status === "ACTIVE").map((clinic) => clinic.id) ?? clinicIds;
+      setClinicIds(nextClinicIds);
+      clinicDraftDirtyRef.current = false;
       setMessage("Clínicas com acesso atualizadas.");
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Não foi possível atualizar as clínicas.");
     } finally {
+      clinicsSaveInFlightRef.current = false;
       setIsSavingClinics(false);
     }
   }
@@ -215,7 +250,7 @@ export default function MeuPerfilPage() {
         <div className="access-single-panel-layout">
           <section className="plain-panel">
             <h3>Dados do cadastro</h3>
-            <form className="access-form" onSubmit={handleSubmit}>
+            <form className="access-form" onChange={() => { profileFormDirtyRef.current = true; }} onSubmit={handleSubmit}>
               <label><span>Login</span><input autoComplete="username" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, login: event.target.value }))} required value={form.login} /></label>
               <label><span>Nome completo</span><input autoComplete="name" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required value={form.name} /></label>
               <label><span>Email</span><input autoComplete="email" disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} type="email" value={form.email} /></label>
@@ -225,13 +260,13 @@ export default function MeuPerfilPage() {
                   <div className="access-checklist">
                     {availableClinics.map((clinic) => (
                       <label className="choice-pill" key={clinic.id} title={clinic.code ?? clinic.name}>
-                        <input checked={clinicIds.includes(clinic.id)} disabled={isSavingClinics} onChange={() => toggleClinic(clinic.id)} type="checkbox" />
+                        <input checked={clinicIds.includes(clinic.id)} disabled={isLoadingAvailableClinics || isSavingClinics} onChange={() => { clinicDraftDirtyRef.current = true; toggleClinic(clinic.id); }} type="checkbox" />
                         {clinic.name}{clinic.code ? ` (${clinic.code})` : ""}
                       </label>
                     ))}
-                    {availableClinics.length === 0 ? <span>Nenhuma clínica ativa encontrada.</span> : null}
+                    {isLoadingAvailableClinics ? <span>Carregando clínicas...</span> : availableClinics.length === 0 ? <span>Nenhuma clínica ativa encontrada.</span> : null}
                   </div>
-                  <button className="secondary-button" disabled={isSavingClinics} onClick={handleSaveClinics} type="button"><Save aria-hidden="true" size={17} />{isSavingClinics ? "Salvando..." : "Salvar clínicas"}</button>
+                  <button aria-busy={isSavingClinics} className="secondary-button" disabled={isLoadingAvailableClinics || isSavingClinics} onClick={handleSaveClinics} type="button">{isSavingClinics ? <ButtonSpinner label="Salvando clínicas" /> : <Save aria-hidden="true" size={17} />}{isSavingClinics ? "Salvando..." : "Salvar clínicas"}</button>
                 </fieldset>
               ) : (
                 <div className="profile-readonly-field">
@@ -257,7 +292,7 @@ export default function MeuPerfilPage() {
                 <label><span>Especialidade</span><input disabled={isSaving} onChange={(event) => setForm((current) => ({ ...current, professionalSpecialty: event.target.value }))} placeholder="Ex.: Psiquiatria" value={form.professionalSpecialty} /></label>
               </> : null}
               <label><span>Nova senha</span><input autoComplete="new-password" disabled={isSaving} minLength={6} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} placeholder="Deixe em branco para manter a senha atual" type="password" value={form.password} /></label>
-              <button className="primary-button" disabled={isSaving} type="submit"><Save aria-hidden="true" size={17} />{isSaving ? "Salvando..." : "Salvar perfil"}</button>
+              <button aria-busy={isSaving} className="primary-button" disabled={isSaving} type="submit">{isSaving ? <ButtonSpinner label="Salvando perfil" /> : <Save aria-hidden="true" size={17} />}{isSaving ? "Salvando..." : "Salvar perfil"}</button>
             </form>
           </section>
         </div>

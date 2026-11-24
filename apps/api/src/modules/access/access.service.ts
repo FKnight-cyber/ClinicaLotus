@@ -108,6 +108,8 @@ export class AccessService {
 
   listGroups(query: ListAccessGroupsQueryDto = {}) {
     const limit = this.normalizeGroupLimit(query.limit);
+    const page = this.normalizePage(query.page);
+    const skip = (page - 1) * limit;
     const search = query.search?.trim();
     const where = search ? {
       OR: [
@@ -116,18 +118,19 @@ export class AccessService {
       ]
     } : undefined;
 
-    return this.cache.getOrSet(`access:groups:${limit}:${search ?? ""}`, 60 * 1000, async () => {
+    return this.cache.getOrSet(`access:groups:${limit}:${page}:${search ?? ""}`, 60 * 1000, async () => {
       const [items, total] = await this.prisma.$transaction([
         this.prisma.accessGroup.findMany({
           where,
           orderBy: { name: "asc" },
+          skip,
           take: limit,
           include: { permissions: { include: { permission: true } }, users: true }
         }),
         this.prisma.accessGroup.count({ where })
       ]);
 
-      return { items, limit, total };
+      return { items, limit, page, total, totalPages: Math.max(1, Math.ceil(total / limit)) };
     });
   }
 
@@ -219,6 +222,8 @@ export class AccessService {
 
   listUsers(query: ListAccessUsersQueryDto = {}) {
     const limit = this.normalizeListLimit(query.limit);
+    const page = this.normalizePage(query.page);
+    const skip = (page - 1) * limit;
     const search = query.search?.trim();
     const groupId = query.groupId?.trim();
     const clinicId = query.clinicId?.trim();
@@ -246,11 +251,12 @@ export class AccessService {
       ...(status ? { status } : {})
     };
 
-    return this.cache.getOrSet(`access:users:${limit}:${search ?? ""}:${groupId ?? ""}:${clinicId ?? ""}:${status ?? ""}`, 30 * 1000, async () => {
+    return this.cache.getOrSet(`access:users:${limit}:${page}:${search ?? ""}:${groupId ?? ""}:${clinicId ?? ""}:${status ?? ""}`, 30 * 1000, async () => {
       const [items, total] = await this.prisma.$transaction([
         this.prisma.user.findMany({
           where,
           orderBy: { name: "asc" },
+          skip,
           take: limit,
           select: {
             id: true,
@@ -268,7 +274,7 @@ export class AccessService {
         this.prisma.user.count({ where })
       ]);
 
-      return { items, limit, total };
+      return { items, limit, page, total, totalPages: Math.max(1, Math.ceil(total / limit)) };
     });
   }
 

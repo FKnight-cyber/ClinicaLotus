@@ -156,28 +156,36 @@ export function ProntuarioPage() {
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(initialSelectedPatient?.id ?? null);
   const [selectedPatient, setSelectedPatient] = useState<PatientSummary | null>(initialSelectedPatient);
   const selectedPatientIdRef = useRef<string | null>(initialSelectedPatient?.id ?? null);
+  const [patientListError, setPatientListError] = useState<string | null>(null);
+  const [patientSearchAttempt, setPatientSearchAttempt] = useState(0);
   const [evolutions, setEvolutions] = useState<MedicalEvolution[]>([]);
   const [evolutionsPatientId, setEvolutionsPatientId] = useState<string | null>(null);
   const [evolutionsTotal, setEvolutionsTotal] = useState(0);
   const [evolutionsPage, setEvolutionsPage] = useState(1);
+  const [evolutionsLoadError, setEvolutionsLoadError] = useState<string | null>(null);
+  const [evolutionsLoadAttempt, setEvolutionsLoadAttempt] = useState(0);
   const [form, setForm] = useState<FormState>(emptyFormState);
   const [message, setMessage] = useState(initialSelectedPatient ? "Carregando evoluções do paciente." : "Selecione um paciente para visualizar as evoluções.");
   const [evolutionMessage, setEvolutionMessage] = useState("Selecione um paciente para registrar evoluções.");
   const [patientListLoading, setPatientListLoading] = useState(false);
   const [evolutionsLoading, setEvolutionsLoading] = useState(false);
   const [savingEvolution, setSavingEvolution] = useState(false);
+  const savingEvolutionRequestRef = useRef(false);
   const [isEvolutionModalOpen, setIsEvolutionModalOpen] = useState(false);
   const [finalizingEvolutionId, setFinalizingEvolutionId] = useState<string | null>(null);
   const [cancelingEvolutionId, setCancelingEvolutionId] = useState<string | null>(null);
   const [printingEvolutionId, setPrintingEvolutionId] = useState<string | null>(null);
   const [pendingCancelEvolutionId, setPendingCancelEvolutionId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState("");
+  const evolutionStatusRequestRef = useRef(false);
+  const printingEvolutionRequestRef = useRef(false);
 
   const evolutionsOffset = (evolutionsPage - 1) * evolutionsPageSize;
   const visibleEvolutions = useMemo(() => evolutionsPatientId === selectedPatientId ? evolutions : [], [evolutions, evolutionsPatientId, selectedPatientId]);
   const recordsTotal = evolutionsTotal;
   const recordsLoading = evolutionsLoading;
-  const shouldShowPatientOptions = Boolean(search.trim() && !selectedPatient && (patientListLoading || patients.length > 0 || debouncedSearch.trim()));
+  const isEvolutionActionInProgress = savingEvolution || Boolean(finalizingEvolutionId || cancelingEvolutionId || printingEvolutionId);
+  const shouldShowPatientOptions = Boolean(search.trim() && !selectedPatient && (patientListLoading || patientListError || patients.length > 0 || debouncedSearch.trim()));
 
   useEffect(() => {
     const timeout = setTimeout(() => setDebouncedSearch(search), 350);
@@ -185,6 +193,7 @@ export function ProntuarioPage() {
   }, [search]);
 
   function selectPatient(patient: PatientSummary | null) {
+    if (savingEvolutionRequestRef.current || evolutionStatusRequestRef.current || printingEvolutionRequestRef.current) return;
     const patientId = patient?.id ?? null;
     selectedPatientIdRef.current = patientId;
     setSelectedPatientId(patientId);
@@ -194,6 +203,7 @@ export function ProntuarioPage() {
     setPendingCancelEvolutionId(null);
     setCancelReason("");
     setEvolutionsPatientId(null);
+    setEvolutionsLoadError(null);
     setEvolutionsPage(1);
     setMessage(patientId ? "Carregando evoluções do paciente." : "Selecione um paciente para visualizar as evoluções.");
     writeStoredSelectedPatient(patient);
@@ -214,6 +224,7 @@ export function ProntuarioPage() {
     let isCurrent = true;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPatientListLoading(true);
+    setPatientListError(null);
 
     fetchProntuarioPatients(token, debouncedSearch, { limit: patientSearchLimit, offset: 0, scopeKey: prontuarioScopeKey })
       .then((response) => {
@@ -221,7 +232,9 @@ export function ProntuarioPage() {
         setPatients(response.items);
       })
       .catch((error) => {
-        if (isCurrent) setMessage(error instanceof Error ? error.message : "Não foi possível carregar pacientes.");
+        if (!isCurrent) return;
+        setPatients([]);
+        setPatientListError(error instanceof Error ? error.message : "Não foi possível carregar pacientes.");
       })
       .finally(() => {
         if (isCurrent) setPatientListLoading(false);
@@ -230,7 +243,7 @@ export function ProntuarioPage() {
     return () => {
       isCurrent = false;
     };
-  }, [canReadPatients, debouncedSearch, prontuarioScopeKey, token]);
+  }, [canReadPatients, debouncedSearch, patientSearchAttempt, prontuarioScopeKey, token]);
 
   useEffect(() => {
     if (!token || !selectedPatientId || !canReadEvolutions) {
@@ -240,6 +253,7 @@ export function ProntuarioPage() {
     }
     let isCurrent = true;
     setEvolutionsLoading(true);
+    setEvolutionsLoadError(null);
 
     fetchMedicalEvolutions(token, selectedPatientId, { limit: evolutionsPageSize, offset: evolutionsOffset, scopeKey: prontuarioScopeKey })
       .then((response) => {
@@ -253,6 +267,7 @@ export function ProntuarioPage() {
         if (!isCurrent) return;
         const errorMessage = error instanceof Error ? error.message : "Não foi possível carregar evoluções.";
         setEvolutionMessage(errorMessage);
+        setEvolutionsLoadError(errorMessage);
         setEvolutions([]);
         setEvolutionsPatientId(null);
         setEvolutionsTotal(0);
@@ -268,7 +283,7 @@ export function ProntuarioPage() {
     return () => {
       isCurrent = false;
     };
-  }, [canReadEvolutions, evolutionsOffset, prontuarioScopeKey, selectedPatientId, token]);
+  }, [canReadEvolutions, evolutionsLoadAttempt, evolutionsOffset, prontuarioScopeKey, selectedPatientId, token]);
 
   const activeEvolution = useMemo(() => form.id ? visibleEvolutions.find((evolution) => evolution.id === form.id) ?? null : null, [form.id, visibleEvolutions]);
   const isLockedEvolution = Boolean(activeEvolution && activeEvolution.status !== "draft");
@@ -276,20 +291,21 @@ export function ProntuarioPage() {
   const isEvolutionFormDisabled = !selectedPatient || savingEvolution || !canEditEvolutionForm;
   const hasEvolutionFormContent = Boolean(form.id || form.text.trim() || form.evolutionDate || form.professionalArea || form.professionalName.trim());
   const canSaveEvolution = Boolean(selectedPatient && form.text.trim() && form.professionalArea && canEditEvolutionForm && !savingEvolution);
-  const evolutionModalTitle = form.id && !canEditEvolutionForm ? "Visualizar evolução" : activeEvolution?.status === "draft" || !form.id ? form.id ? "Editar evolução" : "Nova evolução" : "Visualizar evolução";
+  const evolutionModalTitle = !form.id ? "Nova evolução" : canEditEvolutionForm ? "Editar evolução" : "Visualizar evolução";
 
-  async function refreshSelectedPatientData(patientId = selectedPatientId) {
+  async function refreshSelectedPatientData(patientId = selectedPatientId, offset = evolutionsOffset) {
     if (!token || !patientId) return;
     const nextEvolutions = canReadEvolutions
-      ? await fetchMedicalEvolutions(token, patientId, { limit: evolutionsPageSize, offset: evolutionsOffset, scopeKey: prontuarioScopeKey })
-      : { items: [], total: 0, limit: evolutionsPageSize, offset: evolutionsOffset };
+      ? await fetchMedicalEvolutions(token, patientId, { limit: evolutionsPageSize, offset, scopeKey: prontuarioScopeKey })
+      : { items: [], total: 0, limit: evolutionsPageSize, offset };
     setEvolutions(nextEvolutions.items);
     setEvolutionsPatientId(patientId);
     setEvolutionsTotal(nextEvolutions.total);
+    setEvolutionsLoadError(null);
   }
 
   function startNewEvolution() {
-    if (!canCreateEvolutions) return;
+    if (!canCreateEvolutions || !selectedPatient || isEvolutionActionInProgress || savingEvolutionRequestRef.current || evolutionStatusRequestRef.current || printingEvolutionRequestRef.current) return;
     const profileProfessionalArea = getProfileProfessionalArea(user?.professionalArea);
     setForm({
       ...emptyFormState,
@@ -302,6 +318,7 @@ export function ProntuarioPage() {
   }
 
   function editEvolution(evolution: MedicalEvolution) {
+    if (isEvolutionActionInProgress || evolutionStatusRequestRef.current || printingEvolutionRequestRef.current) return;
     setForm({
       id: evolution.id,
       text: evolution.text,
@@ -314,12 +331,16 @@ export function ProntuarioPage() {
   }
 
   async function saveEvolution() {
-    if (!token || !selectedPatientId || !canSaveEvolution) return;
+    if (!token || !selectedPatientId || !canSaveEvolution || savingEvolutionRequestRef.current || evolutionStatusRequestRef.current || printingEvolutionRequestRef.current) return;
+    savingEvolutionRequestRef.current = true;
     setSavingEvolution(true);
+    let mutationPersisted = false;
+    const isCreating = !form.id;
     try {
       const savedEvolution = form.id
         ? await updateMedicalEvolution(token, form.id, selectedPatientId, toPayload(form))
         : await createMedicalEvolution(token, selectedPatientId, toPayload(form));
+      mutationPersisted = true;
       setForm({
         id: savedEvolution.id,
         text: savedEvolution.text,
@@ -327,54 +348,70 @@ export function ProntuarioPage() {
         professionalArea: savedEvolution.professionalArea ?? "",
         professionalName: savedEvolution.professionalName ?? ""
       });
-      await refreshSelectedPatientData(selectedPatientId);
+      if (isCreating) setEvolutionsPage(1);
+      await refreshSelectedPatientData(selectedPatientId, isCreating ? 0 : evolutionsOffset);
       setIsEvolutionModalOpen(false);
       setForm(emptyFormState);
       setEvolutionMessage("Rascunho salvo.");
     } catch (error) {
-      setEvolutionMessage(error instanceof Error ? error.message : "Não foi possível salvar a evolução.");
+      const errorMessage = error instanceof Error ? error.message : "Não foi possível salvar a evolução.";
+      setEvolutionMessage(mutationPersisted ? `Evolução salva, mas não foi possível atualizar a lista: ${errorMessage}` : errorMessage);
     } finally {
+      savingEvolutionRequestRef.current = false;
       setSavingEvolution(false);
     }
   }
 
   async function finalizeEvolution(evolution: MedicalEvolution) {
-    if (!token || !canFinalizeEvolutions) return;
+    if (!token || !canFinalizeEvolutions || evolutionStatusRequestRef.current || savingEvolutionRequestRef.current || printingEvolutionRequestRef.current) return;
+    evolutionStatusRequestRef.current = true;
     setFinalizingEvolutionId(evolution.id);
+    let mutationPersisted = false;
     try {
       await finalizeMedicalEvolution(token, evolution);
-      setForm(emptyFormState);
-      setIsEvolutionModalOpen(false);
+      mutationPersisted = true;
+      if (form.id === evolution.id) {
+        setForm(emptyFormState);
+        setIsEvolutionModalOpen(false);
+      }
       await refreshSelectedPatientData(evolution.patientId);
       setEvolutionMessage("Evolução finalizada.");
     } catch (error) {
-      setEvolutionMessage(error instanceof Error ? error.message : "Não foi possível finalizar a evolução.");
+      const errorMessage = error instanceof Error ? error.message : "Não foi possível finalizar a evolução.";
+      setEvolutionMessage(mutationPersisted ? `Evolução finalizada, mas não foi possível atualizar a lista: ${errorMessage}` : errorMessage);
     } finally {
+      evolutionStatusRequestRef.current = false;
       setFinalizingEvolutionId(null);
     }
   }
 
   async function cancelEvolution(evolution: MedicalEvolution) {
-    if (!token || !canCancelEvolutions) return;
+    if (!token || !canCancelEvolutions || evolutionStatusRequestRef.current || savingEvolutionRequestRef.current || printingEvolutionRequestRef.current) return;
     const reason = cancelReason.trim();
     if (!reason) return;
+    evolutionStatusRequestRef.current = true;
     setCancelingEvolutionId(evolution.id);
+    let mutationPersisted = false;
     try {
       await cancelMedicalEvolution(token, evolution, reason);
+      mutationPersisted = true;
       setForm((currentForm) => currentForm.id === evolution.id ? emptyFormState : currentForm);
       setPendingCancelEvolutionId(null);
       setCancelReason("");
       await refreshSelectedPatientData(evolution.patientId);
       setEvolutionMessage("Evolução cancelada.");
     } catch (error) {
-      setEvolutionMessage(error instanceof Error ? error.message : "Não foi possível cancelar a evolução.");
+      const errorMessage = error instanceof Error ? error.message : "Não foi possível cancelar a evolução.";
+      setEvolutionMessage(mutationPersisted ? `Evolução cancelada, mas não foi possível atualizar a lista: ${errorMessage}` : errorMessage);
     } finally {
+      evolutionStatusRequestRef.current = false;
       setCancelingEvolutionId(null);
     }
   }
 
   async function downloadEvolutionPdf(evolution: MedicalEvolution) {
-    if (!token || !selectedPatient || !canPrintEvolutions) return;
+    if (!token || !selectedPatient || !canPrintEvolutions || printingEvolutionRequestRef.current || savingEvolutionRequestRef.current || evolutionStatusRequestRef.current) return;
+    printingEvolutionRequestRef.current = true;
     setPrintingEvolutionId(evolution.id);
     try {
       setEvolutionMessage("Gerando PDF...");
@@ -385,6 +422,7 @@ export function ProntuarioPage() {
     } catch (error) {
       setEvolutionMessage(error instanceof Error ? error.message : "Não foi possível gerar o PDF da evolução.");
     } finally {
+      printingEvolutionRequestRef.current = false;
       setPrintingEvolutionId(null);
     }
   }
@@ -420,20 +458,39 @@ export function ProntuarioPage() {
           <span>Paciente</span>
           <div>
             <Search aria-hidden="true" size={16} />
-            <input onChange={(event) => { setSearch(event.target.value); setPatients([]); selectPatient(null); }} placeholder="Digite o nome, CPF ou RG do paciente" value={search} />
+            <input
+              disabled={isEvolutionActionInProgress}
+              onChange={(event) => {
+                if (isEvolutionActionInProgress || savingEvolutionRequestRef.current || evolutionStatusRequestRef.current || printingEvolutionRequestRef.current) return;
+                const nextSearch = event.target.value;
+                setSearch(nextSearch);
+                setPatients([]);
+                setPatientListError(null);
+                setPatientListLoading(Boolean(nextSearch.trim()));
+                selectPatient(null);
+              }}
+              placeholder="Digite o nome, CPF ou RG do paciente"
+              value={search}
+            />
           </div>
         </label>
 
         {shouldShowPatientOptions ? (
           <div className="prontuario-patient-options" aria-label="Opções de pacientes">
-            {patients.map((patient) => (
+            {patientListLoading ? <div className="empty-state" role="status">Carregando pacientes...</div> : null}
+            {!patientListLoading && patientListError ? (
+              <div role="alert">
+                <span>{patientListError}</span>
+                <button className="table-action" onClick={() => setPatientSearchAttempt((attempt) => attempt + 1)} type="button">Tentar novamente</button>
+              </div>
+            ) : null}
+            {!patientListLoading && !patientListError ? patients.map((patient) => (
               <button key={patient.id} onClick={() => { setSearch(patient.name); setPatients([]); selectPatient(patient); }} type="button">
                 <strong>{patient.name}</strong>
                 <span>{formatPatientDocuments(patient)} • {getClinicLabel(getPatientClinicId(patient), clinics)}</span>
               </button>
-            ))}
-            {patientListLoading ? <div className="empty-state">Carregando pacientes...</div> : null}
-            {patients.length === 0 && !patientListLoading ? <div className="empty-state">Nenhum paciente encontrado.</div> : null}
+            )) : null}
+            {!patientListLoading && !patientListError && patients.length === 0 ? <div className="empty-state">Nenhum paciente encontrado.</div> : null}
           </div>
         ) : null}
       </section>
@@ -451,8 +508,8 @@ export function ProntuarioPage() {
               <span>{formatPatientDocuments(selectedPatient)}</span>
             </div>
             <div className="list-actions">
-              <span>{recordsLoading ? "Atualizando evoluções..." : evolutionMessage}</span>
-              {canCreateEvolutions ? <button className="primary-button" onClick={startNewEvolution} type="button"><Plus aria-hidden="true" size={17} />Nova evolução</button> : null}
+              <span aria-live="polite" role="status">{recordsLoading ? "Atualizando evoluções..." : evolutionMessage}</span>
+              {canCreateEvolutions ? <button className="primary-button" disabled={isEvolutionActionInProgress} onClick={startNewEvolution} type="button"><Plus aria-hidden="true" size={17} />Nova evolução</button> : null}
             </div>
           </div>
 
@@ -473,7 +530,14 @@ export function ProntuarioPage() {
               <tbody>
                 {visibleEvolutions.length === 0 ? (
                   <tr>
-                    <td colSpan={8}>{recordsLoading ? "Carregando evoluções do paciente..." : "Nenhuma evolução registrada para este paciente."}</td>
+                    <td colSpan={8}>
+                      {recordsLoading ? "Carregando evoluções do paciente..." : evolutionsLoadError ? (
+                        <div role="alert">
+                          <span>{evolutionsLoadError}</span>
+                          <button className="table-action" onClick={() => setEvolutionsLoadAttempt((attempt) => attempt + 1)} type="button">Tentar novamente</button>
+                        </div>
+                      ) : "Nenhuma evolução registrada para este paciente."}
+                    </td>
                   </tr>
                 ) : visibleEvolutions.map((evolution) => (
                   <tr key={evolution.id}>
@@ -486,20 +550,20 @@ export function ProntuarioPage() {
                     <td>{getSimpleSignatureLabel(evolution) ?? "-"}</td>
                     <td>
                       <div className="evolution-table-actions">
-                        <button className="table-action" onClick={() => editEvolution(evolution)} type="button">{evolution.status === "draft" && canUpdateEvolutions ? <FilePenLine aria-hidden="true" size={15} /> : <Eye aria-hidden="true" size={15} />}{evolution.status === "draft" && canUpdateEvolutions ? "Editar" : "Visualizar"}</button>
-                        {evolution.status === "draft" && canFinalizeEvolutions ? <button className="table-action is-primary" disabled={finalizingEvolutionId === evolution.id} onClick={() => void finalizeEvolution(evolution)} type="button">{finalizingEvolutionId === evolution.id ? <ButtonSpinner label="Finalizando" /> : <><CheckCircle2 aria-hidden="true" size={15} />Finalizar</>}</button> : null}
-                        {evolution.status === "finalized" && canPrintEvolutions ? <button className="table-action" disabled={printingEvolutionId === evolution.id} onClick={() => void downloadEvolutionPdf(evolution)} type="button"><Printer aria-hidden="true" size={15} />PDF</button> : null}
-                        {evolution.status === "draft" && canCancelEvolutions ? <button className="table-action is-danger" disabled={cancelingEvolutionId === evolution.id} onClick={() => { setPendingCancelEvolutionId(evolution.id); setCancelReason(""); }} type="button"><XCircle aria-hidden="true" size={15} />Cancelar</button> : null}
+                        <button className="table-action" disabled={isEvolutionActionInProgress} onClick={() => editEvolution(evolution)} type="button">{evolution.status === "draft" && canUpdateEvolutions ? <FilePenLine aria-hidden="true" size={15} /> : <Eye aria-hidden="true" size={15} />}{evolution.status === "draft" && canUpdateEvolutions ? "Editar" : "Visualizar"}</button>
+                        {evolution.status === "draft" && canFinalizeEvolutions ? <button aria-busy={finalizingEvolutionId === evolution.id} className="table-action is-primary" disabled={isEvolutionActionInProgress} onClick={() => void finalizeEvolution(evolution)} type="button">{finalizingEvolutionId === evolution.id ? <ButtonSpinner label="Finalizando evolução" /> : <CheckCircle2 aria-hidden="true" size={15} />}{finalizingEvolutionId === evolution.id ? "Finalizando..." : "Finalizar"}</button> : null}
+                        {evolution.status === "finalized" && canPrintEvolutions ? <button aria-busy={printingEvolutionId === evolution.id} className="table-action" disabled={isEvolutionActionInProgress} onClick={() => void downloadEvolutionPdf(evolution)} type="button">{printingEvolutionId === evolution.id ? <ButtonSpinner label="Gerando PDF" /> : <Printer aria-hidden="true" size={15} />}{printingEvolutionId === evolution.id ? "Gerando..." : "PDF"}</button> : null}
+                        {evolution.status === "draft" && canCancelEvolutions ? <button className="table-action is-danger" disabled={isEvolutionActionInProgress} onClick={() => { setPendingCancelEvolutionId(evolution.id); setCancelReason(""); }} type="button"><XCircle aria-hidden="true" size={15} />Cancelar</button> : null}
                       </div>
                       {canCancelEvolutions && pendingCancelEvolutionId === evolution.id ? (
                         <div className="evolution-cancel-reason">
                           <label>
                             <span>Motivo do cancelamento</span>
-                            <input onChange={(event) => setCancelReason(event.target.value)} value={cancelReason} />
+                            <input disabled={isEvolutionActionInProgress} onChange={(event) => setCancelReason(event.target.value)} value={cancelReason} />
                           </label>
                           <div>
-                            <button className="danger-button" disabled={!cancelReason.trim() || cancelingEvolutionId === evolution.id} onClick={() => void cancelEvolution(evolution)} type="button"><XCircle aria-hidden="true" size={15} />Confirmar</button>
-                            <button className="secondary-button" disabled={cancelingEvolutionId === evolution.id} onClick={() => { setPendingCancelEvolutionId(null); setCancelReason(""); }} type="button">Voltar</button>
+                            <button aria-busy={cancelingEvolutionId === evolution.id} className="danger-button" disabled={!cancelReason.trim() || isEvolutionActionInProgress} onClick={() => void cancelEvolution(evolution)} type="button">{cancelingEvolutionId === evolution.id ? <ButtonSpinner label="Cancelando evolução" /> : <XCircle aria-hidden="true" size={15} />}{cancelingEvolutionId === evolution.id ? "Cancelando..." : "Confirmar"}</button>
+                            <button className="secondary-button" disabled={isEvolutionActionInProgress} onClick={() => { setPendingCancelEvolutionId(null); setCancelReason(""); }} type="button">Voltar</button>
                           </div>
                         </div>
                       ) : null}
@@ -513,8 +577,8 @@ export function ProntuarioPage() {
           <div className="pagination-bar" aria-label="Paginação de evoluções">
             <span>{recordsLoading ? "Atualizando evoluções..." : formatPageSummary(recordsTotal, evolutionsOffset, visibleEvolutions.length, recordsTotal === 1 ? "evolução" : "evoluções")}</span>
             <div>
-              <button disabled={recordsLoading || evolutionsPage === 1} onClick={() => setRecordsPage((currentPage) => currentPage - 1)} type="button"><ChevronLeft aria-hidden="true" size={15} />Anterior</button>
-              <button disabled={recordsLoading || evolutionsOffset + visibleEvolutions.length >= recordsTotal} onClick={() => setRecordsPage((currentPage) => currentPage + 1)} type="button">Próxima<ChevronRight aria-hidden="true" size={15} /></button>
+              <button disabled={recordsLoading || isEvolutionActionInProgress || evolutionsPage === 1} onClick={() => setRecordsPage((currentPage) => currentPage - 1)} type="button"><ChevronLeft aria-hidden="true" size={15} />Anterior</button>
+              <button disabled={recordsLoading || isEvolutionActionInProgress || evolutionsOffset + visibleEvolutions.length >= recordsTotal} onClick={() => setRecordsPage((currentPage) => currentPage + 1)} type="button">Próxima<ChevronRight aria-hidden="true" size={15} /></button>
             </div>
           </div>
         </>
@@ -534,7 +598,7 @@ export function ProntuarioPage() {
               <button aria-label="Fechar" className="icon-button" disabled={savingEvolution} onClick={() => { setIsEvolutionModalOpen(false); setForm(emptyFormState); }} type="button"><X aria-hidden="true" size={18} /></button>
             </div>
 
-            <form className="evolution-form" onSubmit={(event) => { event.preventDefault(); void saveEvolution(); }}>
+            <form aria-busy={savingEvolution} className="evolution-form" onSubmit={(event) => { event.preventDefault(); void saveEvolution(); }}>
               <div className="evolution-form-grid">
                 <label>
                   <span>Data e hora</span>
@@ -557,10 +621,10 @@ export function ProntuarioPage() {
                 <textarea disabled={isEvolutionFormDisabled} onChange={(event) => setForm((currentForm) => ({ ...currentForm, text: event.target.value }))} placeholder="Registre a evolução clínica" rows={7} value={form.text} />
               </label>
               <div className="evolution-actions">
-                <span>{savingEvolution ? "Salvando evolução..." : evolutionMessage}</span>
+                <span aria-live="polite" role="status">{savingEvolution ? "Salvando evolução..." : evolutionMessage}</span>
                 <div>
                   {canEditEvolutionForm ? <button className="secondary-button" disabled={savingEvolution || !hasEvolutionFormContent} onClick={() => setForm(emptyFormState)} type="button">Limpar</button> : null}
-                  {canEditEvolutionForm ? <button className="primary-button" disabled={!canSaveEvolution} type="submit">{savingEvolution ? <ButtonSpinner label="Salvando" /> : <><Save aria-hidden="true" size={16} />Salvar rascunho</>}</button> : null}
+                  {canEditEvolutionForm ? <button aria-busy={savingEvolution} className="primary-button" disabled={!canSaveEvolution} type="submit">{savingEvolution ? <ButtonSpinner label="Salvando evolução" /> : <Save aria-hidden="true" size={16} />}{savingEvolution ? "Salvando..." : "Salvar rascunho"}</button> : null}
                 </div>
               </div>
             </form>

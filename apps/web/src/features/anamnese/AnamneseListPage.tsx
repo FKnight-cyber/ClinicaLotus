@@ -2,7 +2,7 @@
 
 import { ChevronLeft, ChevronRight, Eye, Filter, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { createAnamneseRecord, deleteAnamneseDraftRecord, fetchAnamneseRecords, fetchAnamneseTemplates, fetchPatients, formatDateTime, getPatientName, requiredProgress } from "./storage";
 import { anamneseTemplates as fallbackTemplates } from "./templates";
@@ -121,7 +121,11 @@ export function AnamneseListPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isCreatingRecord, setIsCreatingRecord] = useState(false);
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [message, setMessage] = useState("Registros disponíveis para consulta");
+  const creatingRecordRef = useRef(false);
+  const deletingRecordRef = useRef<string | null>(null);
   const effectiveAnamneseClinicId = canFilterByClinic && clinics.some((clinic) => clinic.id === filters.clinicId) ? filters.clinicId : "";
 
   useEffect(() => {
@@ -138,17 +142,21 @@ export function AnamneseListPage() {
     let isCurrent = true;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true);
+    setLoadError(null);
 
     Promise.all([fetchAnamneseRecords(token, effectiveAnamneseClinicId), fetchAnamneseTemplates(token)])
       .then(([nextRecords, nextTemplates]) => {
         if (!isCurrent) return;
         setRecords(nextRecords);
         setTemplates(nextTemplates);
+        setLoadError(null);
         setMessage("Registros carregados do banco");
       })
       .catch((error) => {
         if (!isCurrent) return;
-        setMessage(error instanceof Error ? error.message : "Não foi possível carregar os registros.");
+        const nextError = error instanceof Error ? error.message : "Não foi possível carregar os registros.";
+        setLoadError(nextError);
+        setMessage(nextError);
       })
       .finally(() => {
         if (isCurrent) setIsLoading(false);
@@ -157,7 +165,7 @@ export function AnamneseListPage() {
     return () => {
       isCurrent = false;
     };
-  }, [canReadAnamnese, effectiveAnamneseClinicId, token]);
+  }, [canReadAnamnese, effectiveAnamneseClinicId, loadAttempt, token]);
 
   useEffect(() => {
     if (!token || !canReadPatients || !isCreatePatientModalOpen) return;
@@ -220,7 +228,8 @@ export function AnamneseListPage() {
   }).length + (pageSize !== DEFAULT_PAGE_SIZE ? 1 : 0);
 
   async function createRecord(patient: PatientSummary) {
-    if (!token || isCreatingRecord || !canCreateAnamnese) return;
+    if (!token || creatingRecordRef.current || !canCreateAnamnese) return;
+    creatingRecordRef.current = true;
     setIsCreatingRecord(true);
     setMessage("Criando rascunho no banco...");
     try {
@@ -233,6 +242,7 @@ export function AnamneseListPage() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível criar o rascunho.");
     } finally {
+      creatingRecordRef.current = false;
       setIsCreatingRecord(false);
     }
   }
@@ -252,8 +262,9 @@ export function AnamneseListPage() {
   }
 
   async function confirmDeleteDraft() {
-    if (!token || !canDeleteDraftAnamnese || !recordPendingDeletion || recordPendingDeletion.status !== "draft") return;
+    if (!token || deletingRecordRef.current || !canDeleteDraftAnamnese || !recordPendingDeletion || recordPendingDeletion.status !== "draft") return;
 
+    deletingRecordRef.current = recordPendingDeletion.id;
     setDeletingRecordId(recordPendingDeletion.id);
     try {
       await deleteAnamneseDraftRecord(token, recordPendingDeletion.id);
@@ -263,6 +274,7 @@ export function AnamneseListPage() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível excluir o rascunho.");
     } finally {
+      deletingRecordRef.current = null;
       setDeletingRecordId(null);
     }
   }
@@ -290,6 +302,17 @@ export function AnamneseListPage() {
 
   if (isLoading) {
     return <div className="loading-panel">Carregando registros do banco...</div>;
+  }
+
+  if (loadError) {
+    return (
+      <div className="loading-panel" role="alert">
+        <p>{loadError}</p>
+        <button className="secondary-button" onClick={() => setLoadAttempt((attempt) => attempt + 1)} type="button">
+          Tentar novamente
+        </button>
+      </div>
+    );
   }
 
   return (

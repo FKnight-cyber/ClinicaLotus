@@ -295,7 +295,7 @@ export class AuthService {
       }
     });
 
-    this.cache.deleteByPrefix(`auth:profile:${userId}:`);
+    this.cache.delete(`auth:profile:${userId}`);
     this.cache.delete("access:users");
     this.cache.delete(`access:user:${userId}`);
     const updatedProfile = await this.getProfile(userId);

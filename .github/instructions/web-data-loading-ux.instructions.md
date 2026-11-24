@@ -9,7 +9,7 @@ applyTo: "apps/web/src/**/*.{ts,tsx,css}"
 - Label list-size controls in user language, such as `Grupos exibidos`, not generic labels like `Quantidade`.
 - Cache stable reference data in component refs when it does not need to reload for every interaction, for example permissions or static option lists.
 - Cache repeated list results by every input that affects the result, such as `limit + search`. Clear that cache after creates, updates, deletes, or permission changes that can affect the list.
-- Persist applied filters in `localStorage` for operational list screens where users repeatedly return to the same working set, including patient lists. Store only non-sensitive UI filter state such as `search`, `status`, and `limit`, and load it before the first API request.
+- Persist applied filters in `localStorage` for operational list screens where users repeatedly return to the same working set, including patient lists. Store only non-sensitive UI filter state such as `status` and `limit`, and load it before the first API request. Patient search may contain names, CPF, RG, or other identifying details; do not persist its raw value.
 - Any patient lookup outside the dedicated patient administration page must request or rely on active patients only. Do not show inactive patients in Anamnese, Prontuario, scheduling, attendance, or other operational patient selectors.
 - Debounce text search before calling the API. Use a short delay around `300-400ms` unless the product needs instant server-side search.
 - Separate loading states by interaction:

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Building2, CheckCircle2, Clock3, Save, UserRound, UserX, UsersRound, X } from "lucide-react";
+import { Building2, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Save, UserRound, UserX, UsersRound, X } from "lucide-react";
 import { ClearFiltersButton, FilterButton } from "@/components/filters/FilterActionButtons";
 import { useAuth } from "@/features/auth/AuthProvider";
 
@@ -32,7 +32,9 @@ type AccessUser = {
 type PaginatedAccessUsers = {
   items: AccessUser[];
   limit: number;
+  page: number;
   total: number;
+  totalPages: number;
 };
 
 type UserFilters = {
@@ -79,8 +81,8 @@ function readStoredFilters(): UserFilters {
   }
 }
 
-function buildUsersPath(filters: UserFilters) {
-  const params = new URLSearchParams({ limit: String(filters.limit) });
+function buildUsersPath(filters: UserFilters, page: number) {
+  const params = new URLSearchParams({ limit: String(filters.limit), page: String(page) });
   const search = filters.search.trim();
   if (search) params.set("search", search);
   if (filters.clinicId) params.set("clinicId", filters.clinicId);
@@ -88,8 +90,8 @@ function buildUsersPath(filters: UserFilters) {
   return `/api/access/users/clinic-assignments?${params.toString()}`;
 }
 
-function buildUsersCacheKey(filters: UserFilters) {
-  return `${filters.limit}:${filters.search.trim().toLowerCase()}:${filters.clinicId}:${filters.status}`;
+function buildUsersCacheKey(filters: UserFilters, page: number) {
+  return `${filters.limit}:${page}:${filters.search.trim().toLowerCase()}:${filters.clinicId}:${filters.status}`;
 }
 
 function getStatusBadge(status: AccessUser["status"]) {
@@ -128,6 +130,7 @@ export function UserClinicAssignmentsPage() {
   const [users, setUsers] = useState<AccessUser[]>([]);
   const [clinics, setClinics] = useState<Clinic[]>([]);
   const [userTotal, setUserTotal] = useState(0);
+  const [userPage, setUserPage] = useState(1);
   const [clinicDrafts, setClinicDrafts] = useState<Record<string, string[]>>({});
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -138,12 +141,14 @@ export function UserClinicAssignmentsPage() {
   const clinicId = filters.clinicId;
   const limit = filters.limit;
   const status = filters.status;
+  const totalPages = Math.max(1, Math.ceil(userTotal / limit));
   const activeFilterCount = [filters.search.trim(), filters.clinicId, filters.status, filters.limit !== DEFAULT_LIMIT ? String(filters.limit) : ""].filter(Boolean).length;
   const hasActiveFilters = activeFilterCount > 0;
 
   const applyUsersPage = useCallback((page: PaginatedAccessUsers) => {
     setUsers(page.items);
     setUserTotal(page.total);
+    setUserPage(page.page);
     setClinicDrafts(Object.fromEntries(page.items.map((user) => [user.id, user.clinics.map(({ clinic }) => clinic.id)])));
   }, []);
 
@@ -156,16 +161,16 @@ export function UserClinicAssignmentsPage() {
     return nextClinics;
   }, [token]);
 
-  const fetchUsers = useCallback(async (nextFilters: UserFilters, bypassCache = false) => {
-    if (!token) return { items: [], limit: nextFilters.limit, total: 0 };
+  const fetchUsers = useCallback(async (nextFilters: UserFilters, page: number, bypassCache = false) => {
+    if (!token) return { items: [], limit: nextFilters.limit, page, total: 0, totalPages: 1 };
 
-    const cacheKey = buildUsersCacheKey(nextFilters);
+    const cacheKey = buildUsersCacheKey(nextFilters, page);
     const cachedPage = usersCacheRef.current.get(cacheKey);
     if (!bypassCache && cachedPage) return cachedPage;
 
-    const page = await apiRequest<PaginatedAccessUsers>(token, buildUsersPath(nextFilters));
-    usersCacheRef.current.set(cacheKey, page);
-    return page;
+    const usersPage = await apiRequest<PaginatedAccessUsers>(token, buildUsersPath(nextFilters, page));
+    usersCacheRef.current.set(cacheKey, usersPage);
+    return usersPage;
   }, [token]);
 
   useEffect(() => {
@@ -182,7 +187,7 @@ export function UserClinicAssignmentsPage() {
 
     let isCurrent = true;
     const appliedFilters: UserFilters = { search: debouncedSearch, clinicId, status, limit };
-    const cacheKey = buildUsersCacheKey(appliedFilters);
+    const cacheKey = buildUsersCacheKey(appliedFilters, userPage);
     const cachedPage = usersCacheRef.current.get(cacheKey);
 
     Promise.resolve().then(() => {
@@ -191,10 +196,10 @@ export function UserClinicAssignmentsPage() {
       if (!cachedPage) setIsLoading(true);
     });
 
-    Promise.all([fetchClinics(), fetchUsers(appliedFilters)]).then(([nextClinics, page]) => {
+    Promise.all([fetchClinics(), fetchUsers(appliedFilters, userPage)]).then(([nextClinics, nextUsersPage]) => {
       if (!isCurrent) return;
       setClinics(nextClinics);
-      applyUsersPage(page);
+      applyUsersPage(nextUsersPage);
       setIsLoading(false);
       setIsUsersLoading(false);
     }).catch((error) => {
@@ -207,7 +212,7 @@ export function UserClinicAssignmentsPage() {
     return () => {
       isCurrent = false;
     };
-  }, [applyUsersPage, canManageUserClinics, clinicId, debouncedSearch, fetchClinics, fetchUsers, limit, status, token]);
+  }, [applyUsersPage, canManageUserClinics, clinicId, debouncedSearch, fetchClinics, fetchUsers, limit, status, token, userPage]);
 
   function openFilters() {
     setDraftFilters(filters);
@@ -217,6 +222,7 @@ export function UserClinicAssignmentsPage() {
   function applyFilters() {
     setFilters(draftFilters);
     setDebouncedSearch(draftFilters.search);
+    setUserPage(1);
     setIsFiltersOpen(false);
   }
 
@@ -225,6 +231,7 @@ export function UserClinicAssignmentsPage() {
     setFilters(clearedFilters);
     setDraftFilters(clearedFilters);
     setDebouncedSearch("");
+    setUserPage(1);
   }
 
   function toggleClinic(userId: string, clinicId: string) {
@@ -382,6 +389,16 @@ export function UserClinicAssignmentsPage() {
             })}
             {users.length === 0 ? <div className="empty-state">Nenhum usuário encontrado com os filtros atuais.</div> : null}
           </div>
+          {totalPages > 1 ? (
+            <div className="pagination-bar" aria-label="Paginação de usuários e clínicas">
+              <span>{(userPage - 1) * limit + 1}-{Math.min(userPage * limit, userTotal)} de {userTotal} usuários</span>
+              <div>
+                <button disabled={isUsersLoading || userPage === 1} onClick={() => setUserPage((page) => Math.max(1, page - 1))} type="button"><ChevronLeft aria-hidden="true" size={15} />Anterior</button>
+                <span>Página {userPage} de {totalPages}</span>
+                <button disabled={isUsersLoading || userPage >= totalPages} onClick={() => setUserPage((page) => Math.min(totalPages, page + 1))} type="button">Próxima<ChevronRight aria-hidden="true" size={15} /></button>
+              </div>
+            </div>
+          ) : null}
         </section>
       </div>
     </section>

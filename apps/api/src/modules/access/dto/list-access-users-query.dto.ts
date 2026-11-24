@@ -8,6 +8,11 @@ export class ListAccessUsersQueryDto {
   limit?: number;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  page?: number;
+
+  @IsOptional()
   @IsString()
   search?: string;
 

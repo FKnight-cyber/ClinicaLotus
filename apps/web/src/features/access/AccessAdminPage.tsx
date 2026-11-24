@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Clock3, Eye, KeyRound, ShieldCheck, ToggleLeft, ToggleRight, Trash2, UserX, UsersRound, X, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Clock3, Eye, KeyRound, ShieldCheck, ToggleLeft, ToggleRight, Trash2, UserX, UsersRound, X, XCircle } from "lucide-react";
 import Link from "next/link";
 import { ClearFiltersButton, FilterButton } from "@/components/filters/FilterActionButtons";
 import { useAuth } from "@/features/auth/AuthProvider";
@@ -48,13 +48,17 @@ type AccessUser = {
 type PaginatedAccessGroups = {
   items: AccessGroup[];
   limit: number;
+  page: number;
   total: number;
+  totalPages: number;
 };
 
 type PaginatedAccessUsers = {
   items: AccessUser[];
   limit: number;
+  page: number;
   total: number;
+  totalPages: number;
 };
 
 type PaginatedClinics = {
@@ -123,7 +127,7 @@ function getPermissionModuleLabel(module: string) {
 
 function normalizeGroupsPage(payload: PaginatedAccessGroups | AccessGroup[], fallbackLimit: number): PaginatedAccessGroups {
   if (Array.isArray(payload)) {
-    return { items: payload.slice(0, fallbackLimit), limit: fallbackLimit, total: payload.length };
+    return { items: payload.slice(0, fallbackLimit), limit: fallbackLimit, page: 1, total: payload.length, totalPages: 1 };
   }
 
   return payload;
@@ -131,7 +135,7 @@ function normalizeGroupsPage(payload: PaginatedAccessGroups | AccessGroup[], fal
 
 function normalizeUsersPage(payload: PaginatedAccessUsers | AccessUser[], fallbackLimit: number): PaginatedAccessUsers {
   if (Array.isArray(payload)) {
-    return { items: payload.slice(0, fallbackLimit), limit: fallbackLimit, total: payload.length };
+    return { items: payload.slice(0, fallbackLimit), limit: fallbackLimit, page: 1, total: payload.length, totalPages: 1 };
   }
 
   return payload;
@@ -189,19 +193,19 @@ function writeStoredUserFilters(search: string, groupId: string, clinicId: strin
   window.localStorage.setItem(USER_FILTERS_STORAGE_KEY, JSON.stringify({ search, groupId, clinicId, status, limit }));
 }
 
-function buildGroupsPath(limit: number, search: string) {
-  const params = new URLSearchParams({ limit: String(limit) });
+function buildGroupsPath(limit: number, page: number, search: string) {
+  const params = new URLSearchParams({ limit: String(limit), page: String(page) });
   const normalizedSearch = search.trim();
   if (normalizedSearch) params.set("search", normalizedSearch);
   return `/api/access/groups?${params.toString()}`;
 }
 
-function buildGroupsCacheKey(limit: number, search: string) {
-  return `${limit}:${search.trim().toLowerCase()}`;
+function buildGroupsCacheKey(limit: number, page: number, search: string) {
+  return `${limit}:${page}:${search.trim().toLowerCase()}`;
 }
 
-function buildUsersPath(limit: number, search: string, groupId: string, clinicId: string, status: string) {
-  const params = new URLSearchParams({ limit: String(limit) });
+function buildUsersPath(limit: number, page: number, search: string, groupId: string, clinicId: string, status: string) {
+  const params = new URLSearchParams({ limit: String(limit), page: String(page) });
   const normalizedSearch = search.trim();
   if (normalizedSearch) params.set("search", normalizedSearch);
   if (groupId) params.set("groupId", groupId);
@@ -210,8 +214,8 @@ function buildUsersPath(limit: number, search: string, groupId: string, clinicId
   return `/api/access/users?${params.toString()}`;
 }
 
-function buildUsersCacheKey(limit: number, search: string, groupId: string, clinicId: string, status: string) {
-  return `${limit}:${search.trim().toLowerCase()}:${groupId}:${clinicId}:${status}`;
+function buildUsersCacheKey(limit: number, page: number, search: string, groupId: string, clinicId: string, status: string) {
+  return `${limit}:${page}:${search.trim().toLowerCase()}:${groupId}:${clinicId}:${status}`;
 }
 
 function buildClinicsPath() {
@@ -314,6 +318,7 @@ export function AccessGroupsPage() {
   const [groups, setGroups] = useState<AccessGroup[]>([]);
   const [groupTotal, setGroupTotal] = useState(0);
   const [groupLimit, setGroupLimit] = useState(DEFAULT_GROUP_LIMIT);
+  const [groupPage, setGroupPage] = useState(1);
   const [groupDrafts, setGroupDrafts] = useState<Record<string, string[]>>({});
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [groupSearch, setGroupSearch] = useState("");
@@ -337,11 +342,13 @@ export function AccessGroupsPage() {
   }, [permissions]);
 
   const selectedGroup = groups.find((group) => group.id === selectedGroupId) ?? groups[0] ?? null;
+  const groupTotalPages = Math.max(1, Math.ceil(groupTotal / groupLimit));
 
   const applyGroupsPage = useCallback((nextGroupsPage: PaginatedAccessGroups) => {
     setGroups(nextGroupsPage.items);
     setGroupTotal(nextGroupsPage.total);
     setGroupLimit(nextGroupsPage.limit);
+    setGroupPage(nextGroupsPage.page);
     setGroupDrafts(Object.fromEntries(
       nextGroupsPage.items.map((group) => [group.id, group.permissions.map((item) => item.permission.key)])
     ));
@@ -357,29 +364,37 @@ export function AccessGroupsPage() {
     return nextPermissions;
   }, [token]);
 
-  const fetchGroupsPage = useCallback(async (limit: number, search: string, bypassCache = false) => {
-    if (!token) return { items: [], limit, total: 0 };
+  const fetchGroupsPage = useCallback(async (limit: number, page: number, search: string, bypassCache = false) => {
+    if (!token) return { items: [], limit, page, total: 0, totalPages: 1 };
 
-    const cacheKey = buildGroupsCacheKey(limit, search);
+    const cacheKey = buildGroupsCacheKey(limit, page, search);
     const cachedGroupsPage = groupsCacheRef.current.get(cacheKey);
     if (!bypassCache && cachedGroupsPage) return cachedGroupsPage;
 
-    const nextGroupsPayload = await apiRequest<PaginatedAccessGroups | AccessGroup[]>(token, buildGroupsPath(limit, search));
+    const nextGroupsPayload = await apiRequest<PaginatedAccessGroups | AccessGroup[]>(token, buildGroupsPath(limit, page, search));
     const nextGroupsPage = normalizeGroupsPage(nextGroupsPayload, limit);
     groupsCacheRef.current.set(cacheKey, nextGroupsPage);
     return nextGroupsPage;
   }, [token]);
 
-  const loadAccessData = async (limit = groupLimit, search = groupSearch) => {
+  const loadAccessData = async (limit = groupLimit, search = groupSearch, requestedPage = groupPage) => {
     if (!token) return;
     setIsLoading(true);
     setIsGroupsLoading(true);
-    const [nextPermissions, nextGroupsPage] = await Promise.all([fetchPermissions(), fetchGroupsPage(limit, search, true)]);
+    try {
+      const [nextPermissions, requestedGroupsPage] = await Promise.all([fetchPermissions(), fetchGroupsPage(limit, requestedPage, search, true)]);
+      const nextPage = Math.min(requestedPage, Math.max(1, requestedGroupsPage.totalPages));
+      const nextGroupsPage = nextPage === requestedPage
+        ? requestedGroupsPage
+        : await fetchGroupsPage(limit, nextPage, search, true);
 
-    setPermissions(nextPermissions);
-    applyGroupsPage(nextGroupsPage);
-    setIsGroupsLoading(false);
-    setIsLoading(false);
+      setPermissions(nextPermissions);
+      setGroupPage(nextPage);
+      applyGroupsPage(nextGroupsPage);
+    } finally {
+      setIsGroupsLoading(false);
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -394,7 +409,7 @@ export function AccessGroupsPage() {
     if (!token) return;
 
     let isCurrent = true;
-    const cacheKey = buildGroupsCacheKey(groupLimit, debouncedGroupSearch);
+    const cacheKey = buildGroupsCacheKey(groupLimit, groupPage, debouncedGroupSearch);
     const cachedGroupsPage = groupsCacheRef.current.get(cacheKey);
 
     Promise.resolve().then(() => {
@@ -403,7 +418,7 @@ export function AccessGroupsPage() {
       if (!permissionsCacheRef.current) setIsLoading(true);
     });
 
-    Promise.all([fetchPermissions(), fetchGroupsPage(groupLimit, debouncedGroupSearch)]).then(([nextPermissions, nextGroupsPage]) => {
+    Promise.all([fetchPermissions(), fetchGroupsPage(groupLimit, groupPage, debouncedGroupSearch)]).then(([nextPermissions, nextGroupsPage]) => {
       if (!isCurrent) return;
       setPermissions(nextPermissions);
       applyGroupsPage(nextGroupsPage);
@@ -418,7 +433,7 @@ export function AccessGroupsPage() {
     return () => {
       isCurrent = false;
     };
-  }, [token, groupLimit, debouncedGroupSearch, applyGroupsPage, fetchGroupsPage, fetchPermissions]);
+  }, [token, groupLimit, groupPage, debouncedGroupSearch, applyGroupsPage, fetchGroupsPage, fetchPermissions]);
 
   const handleCreateGroup = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -437,11 +452,11 @@ export function AccessGroupsPage() {
       setNewGroupName("");
       setNewGroupDescription("");
       setSelectedGroupId(createdGroup.id);
-      setGroupSearch("");
-      setDebouncedGroupSearch("");
-      const nextLimit = Math.min(MAX_GROUP_LIMIT, Math.max(groupLimit, groupTotal + 1));
+      setGroupSearch(createdGroup.name);
+      setDebouncedGroupSearch(createdGroup.name);
+      setGroupPage(1);
       setStatusMessage("Grupo criado com sucesso.");
-      await loadAccessData(nextLimit, "");
+      await loadAccessData(groupLimit, createdGroup.name, 1);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Não foi possível criar o grupo.");
     } finally {
@@ -538,13 +553,16 @@ export function AccessGroupsPage() {
           ) : null}
 
           <div className="access-search-box">
-            <input onChange={(event) => setGroupSearch(event.target.value)} placeholder="Buscar grupo" value={groupSearch} />
+            <input onChange={(event) => { setGroupSearch(event.target.value); setGroupPage(1); }} placeholder="Buscar grupo" value={groupSearch} />
             <label className="access-limit-field">
               <span>Nº de Grupos exibidos</span>
               <input
                 max={MAX_GROUP_LIMIT}
                 min={1}
-                onChange={(event) => setGroupLimit(Math.min(Math.max(Number(event.target.value) || DEFAULT_GROUP_LIMIT, 1), MAX_GROUP_LIMIT))}
+                onChange={(event) => {
+                  setGroupLimit(Math.min(Math.max(Number(event.target.value) || DEFAULT_GROUP_LIMIT, 1), MAX_GROUP_LIMIT));
+                  setGroupPage(1);
+                }}
                 type="number"
                 value={groupLimit}
               />
@@ -575,6 +593,16 @@ export function AccessGroupsPage() {
             })}
             {groups.length === 0 ? <div className="empty-state">Nenhum grupo encontrado.</div> : null}
           </div>
+          {groupTotalPages > 1 ? (
+            <div className="pagination-bar" aria-label="Paginação de grupos">
+              <span>{(groupPage - 1) * groupLimit + 1}-{Math.min(groupPage * groupLimit, groupTotal)} de {groupTotal} grupos</span>
+              <div>
+                <button disabled={isGroupsLoading || groupPage === 1} onClick={() => setGroupPage((page) => Math.max(1, page - 1))} type="button"><ChevronLeft aria-hidden="true" size={15} />Anterior</button>
+                <span>Página {groupPage} de {groupTotalPages}</span>
+                <button disabled={isGroupsLoading || groupPage >= groupTotalPages} onClick={() => setGroupPage((page) => Math.min(groupTotalPages, page + 1))} type="button">Próxima<ChevronRight aria-hidden="true" size={15} /></button>
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="plain-panel access-permissions-panel">
@@ -621,6 +649,7 @@ export function AccessUsersAdminPage() {
   const [userClinics, setUserClinics] = useState<Clinic[]>([]);
   const [userTotal, setUserTotal] = useState(0);
   const [userLimit, setUserLimit] = useState(initialUserFilters.limit);
+  const [userPage, setUserPage] = useState(1);
   const [userSearch, setUserSearch] = useState(initialUserFilters.search);
   const [debouncedUserSearch, setDebouncedUserSearch] = useState(initialUserFilters.search);
   const [selectedUserGroupId, setSelectedUserGroupId] = useState(initialUserFilters.groupId);
@@ -643,11 +672,13 @@ export function AccessUsersAdminPage() {
   const pendingUsersCount = users.filter((user) => user.status === "PENDING").length;
   const activeUserFilterCount = [userSearch.trim(), selectedUserGroupId, selectedUserClinicId, selectedUserStatus, userLimit !== DEFAULT_USER_LIMIT ? String(userLimit) : ""].filter(Boolean).length;
   const hasActiveUserFilters = activeUserFilterCount > 0;
+  const userTotalPages = Math.max(1, Math.ceil(userTotal / userLimit));
 
   const applyUsersPage = useCallback((nextUsersPage: PaginatedAccessUsers) => {
     setUsers(nextUsersPage.items);
     setUserTotal(nextUsersPage.total);
     setUserLimit(nextUsersPage.limit);
+    setUserPage(nextUsersPage.page);
   }, []);
 
   const fetchUserGroups = useCallback(async () => {
@@ -670,14 +701,14 @@ export function AccessUsersAdminPage() {
     return nextClinicsPage.items;
   }, [token]);
 
-  const fetchUsersPage = useCallback(async (limit: number, search: string, groupId: string, clinicId: string, status: string, bypassCache = false) => {
-    if (!token) return { items: [], limit, total: 0 };
+  const fetchUsersPage = useCallback(async (limit: number, page: number, search: string, groupId: string, clinicId: string, status: string, bypassCache = false) => {
+    if (!token) return { items: [], limit, page, total: 0, totalPages: 1 };
 
-    const cacheKey = buildUsersCacheKey(limit, search, groupId, clinicId, status);
+    const cacheKey = buildUsersCacheKey(limit, page, search, groupId, clinicId, status);
     const cachedUsersPage = usersCacheRef.current.get(cacheKey);
     if (!bypassCache && cachedUsersPage) return cachedUsersPage;
 
-    const nextUsersPayload = await apiRequest<PaginatedAccessUsers | AccessUser[]>(token, buildUsersPath(limit, search, groupId, clinicId, status));
+    const nextUsersPayload = await apiRequest<PaginatedAccessUsers | AccessUser[]>(token, buildUsersPath(limit, page, search, groupId, clinicId, status));
     const nextUsersPage = normalizeUsersPage(nextUsersPayload, limit);
     usersCacheRef.current.set(cacheKey, nextUsersPage);
     return nextUsersPage;
@@ -699,7 +730,7 @@ export function AccessUsersAdminPage() {
     if (!token) return;
 
     let isCurrent = true;
-    const cacheKey = buildUsersCacheKey(userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus);
+    const cacheKey = buildUsersCacheKey(userLimit, userPage, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus);
     const cachedUsersPage = usersCacheRef.current.get(cacheKey);
 
     Promise.resolve().then(() => {
@@ -708,7 +739,7 @@ export function AccessUsersAdminPage() {
       if (!cachedUsersPage) setIsLoading(true);
     });
 
-    Promise.all([fetchUserGroups(), fetchUserClinics(), fetchUsersPage(userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus)]).then(([nextGroups, nextClinics, nextUsersPage]) => {
+    Promise.all([fetchUserGroups(), fetchUserClinics(), fetchUsersPage(userLimit, userPage, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus)]).then(([nextGroups, nextClinics, nextUsersPage]) => {
       if (!isCurrent) return;
       setUserGroups(nextGroups);
       setUserClinics(nextClinics);
@@ -724,7 +755,19 @@ export function AccessUsersAdminPage() {
     return () => {
       isCurrent = false;
     };
-  }, [token, userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus, applyUsersPage, fetchUserClinics, fetchUserGroups, fetchUsersPage]);
+  }, [token, userLimit, userPage, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus, applyUsersPage, fetchUserClinics, fetchUserGroups, fetchUsersPage]);
+
+  const refreshUsersPage = async (requestedPage = userPage) => {
+    usersCacheRef.current.clear();
+    let page = Math.max(1, requestedPage);
+    let nextUsersPage = await fetchUsersPage(userLimit, page, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus, true);
+    if (page > nextUsersPage.totalPages) {
+      page = nextUsersPage.totalPages;
+      nextUsersPage = await fetchUsersPage(userLimit, page, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus, true);
+    }
+    setUserPage(page);
+    applyUsersPage(nextUsersPage);
+  };
 
   const handleClearUserFilters = () => {
     setUserSearch("");
@@ -733,6 +776,7 @@ export function AccessUsersAdminPage() {
     setSelectedUserClinicId("");
     setSelectedUserStatus("");
     setUserLimit(DEFAULT_USER_LIMIT);
+    setUserPage(1);
     setDraftUserSearch("");
     setDraftSelectedUserGroupId("");
     setDraftSelectedUserClinicId("");
@@ -756,6 +800,7 @@ export function AccessUsersAdminPage() {
     setSelectedUserClinicId(draftSelectedUserClinicId);
     setSelectedUserStatus(draftSelectedUserStatus);
     setUserLimit(draftUserLimit);
+    setUserPage(1);
     setIsUserFiltersOpen(false);
   };
 
@@ -776,9 +821,7 @@ export function AccessUsersAdminPage() {
         method: "PATCH",
         body: JSON.stringify({ status: nextStatus })
       });
-      usersCacheRef.current.clear();
-      const nextUsersPage = await fetchUsersPage(userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus, true);
-      applyUsersPage(nextUsersPage);
+      await refreshUsersPage();
       setStatusConfirmation(null);
       setStatusMessage(nextStatus === "ACTIVE" ? "Usuário ativado e disponível nos fluxos do sistema." : "Usuário inativado e removido dos fluxos operacionais do sistema.");
     } catch (error) {
@@ -799,9 +842,7 @@ export function AccessUsersAdminPage() {
       await apiRequest<{ id: string }>(token, `/api/access/users/${deleteConfirmation.id}`, {
         method: "DELETE"
       });
-      usersCacheRef.current.clear();
-      const nextUsersPage = await fetchUsersPage(userLimit, debouncedUserSearch, selectedUserGroupId, selectedUserClinicId, selectedUserStatus, true);
-      applyUsersPage(nextUsersPage);
+      await refreshUsersPage();
       setStatusMessage("Usuário excluído.");
       setDeleteConfirmation(null);
     } catch (error) {
@@ -930,6 +971,16 @@ export function AccessUsersAdminPage() {
             ))}
             {users.length === 0 ? <div className="empty-state">Nenhum usuário encontrado.</div> : null}
           </div>
+          {userTotalPages > 1 ? (
+            <div className="pagination-bar" aria-label="Paginação de usuários">
+              <span>{(userPage - 1) * userLimit + 1}-{Math.min(userPage * userLimit, userTotal)} de {userTotal} usuários</span>
+              <div>
+                <button disabled={isUsersLoading || userPage === 1} onClick={() => setUserPage((page) => Math.max(1, page - 1))} type="button"><ChevronLeft aria-hidden="true" size={15} />Anterior</button>
+                <span>Página {userPage} de {userTotalPages}</span>
+                <button disabled={isUsersLoading || userPage >= userTotalPages} onClick={() => setUserPage((page) => Math.min(userTotalPages, page + 1))} type="button">Próxima<ChevronRight aria-hidden="true" size={15} /></button>
+              </div>
+            </div>
+          ) : null}
         </section>
       </div>
       {statusConfirmation ? (
